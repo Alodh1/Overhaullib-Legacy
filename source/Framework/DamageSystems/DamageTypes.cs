@@ -1,0 +1,329 @@
+﻿using CombatOverhaul.Utils;
+using OpenTK.Mathematics;
+using Vintagestory.API.Common;
+using Vintagestory.API.MathTools;
+
+namespace CombatOverhaul.DamageSystems;
+
+public interface IWeaponDamageSource
+{
+    ItemStack? Weapon { get; set; }
+}
+
+public interface ITypedDamage
+{
+    DamageData DamageTypeData { get; set; }
+}
+
+public class DamageDataJson
+{
+    public string DamageType { get; set; } = "PiercingAttack";
+    [Obsolete]
+    public float Strength { get => Tier; set => Tier = (int)value; } // Tier, left for compatibility reasons
+    public int Tier { get; set; }
+    public float Damage { get; set; }
+    public int ArmorPiercingTier { get; set; }
+
+    public DamageDataJson() { }
+}
+
+public class ProjectileDamageDataJson
+{
+    public string DamageType { get; set; } = "PiercingAttack";
+    public float Damage { get; set; }
+
+    public ProjectileDamageDataJson() { }
+}
+
+public readonly struct DamageData
+{
+    public readonly EnumDamageType DamageType;
+    public readonly int Tier;
+    public readonly int ArmorPiercingTier;
+
+    public DamageData(EnumDamageType damageType, int tier, int armorPiercingTier)
+    {
+        DamageType = damageType;
+        Tier = tier;
+        ArmorPiercingTier = armorPiercingTier;
+    }
+}
+
+public interface ILocationalDamage
+{
+    public Vector3d Position { get; set; }
+    public string Collider { get; set; }
+}
+
+public class DirectionalTypedDamageSource : DamageSource, ILocationalDamage, ITypedDamage, IWeaponDamageSource, IArmorPiercing
+{
+    public Vector3d Position { get; set; }
+    public string Collider { get; set; } = "";
+    public DamageData DamageTypeData { get; set; }
+    public ItemStack? Weapon { get; set; }
+    public int ArmorPiercingTier => DamageTypeData.ArmorPiercingTier;
+}
+
+public class TypedDamageSource : DamageSource, ITypedDamage, IWeaponDamageSource
+{
+    public DamageData DamageTypeData { get; set; }
+    public ItemStack? Weapon { get; set; }
+}
+
+public sealed class DamageResistData
+{
+    public Dictionary<EnumDamageType, float> Resists { get; }
+    public Dictionary<EnumDamageType, float> FlatDamageReduction { get; }
+    public IEnumerable<DirectionConstrain> DirectionsCoverage { get; }
+
+
+    public static int MaxAttackTier { get; set; } = 9;
+    public static int MaxArmorTier { get; set; } = 24;
+    public static float[][] DamageReduction { get; set; } =
+    [
+        [0.75f, 1.00f, 1.00f, 1.00f, 1.00f, 1.00f, 1.00f, 1.00f, 1.00f],
+        [0.50f, 0.75f, 1.00f, 1.00f, 1.00f, 1.00f, 1.00f, 1.00f, 1.00f],
+        [0.25f, 0.50f, 0.75f, 1.00f, 1.00f, 1.00f, 1.00f, 1.00f, 1.00f],
+        [0.10f, 0.25f, 0.50f, 0.75f, 1.00f, 1.00f, 1.00f, 1.00f, 1.00f],
+        [0.05f, 0.15f, 0.33f, 0.50f, 0.75f, 1.00f, 1.00f, 1.00f, 1.00f],
+        [0.03f, 0.10f, 0.25f, 0.40f, 0.50f, 0.75f, 1.00f, 1.00f, 1.00f],
+        [0.02f, 0.05f, 0.20f, 0.33f, 0.40f, 0.50f, 0.75f, 1.00f, 1.00f],
+        [0.01f, 0.03f, 0.15f, 0.25f, 0.35f, 0.45f, 0.50f, 0.75f, 1.00f],
+        [0.01f, 0.02f, 0.10f, 0.20f, 0.30f, 0.40f, 0.45f, 0.50f, 0.75f],
+        [0.01f, 0.01f, 0.05f, 0.15f, 0.25f, 0.35f, 0.40f, 0.45f, 0.50f],
+        [0.01f, 0.01f, 0.03f, 0.10f, 0.20f, 0.30f, 0.35f, 0.41f, 0.46f],
+        [0.01f, 0.01f, 0.02f, 0.07f, 0.15f, 0.25f, 0.30f, 0.37f, 0.42f],
+        [0.01f, 0.01f, 0.01f, 0.05f, 0.10f, 0.20f, 0.25f, 0.33f, 0.39f],
+        [0.01f, 0.01f, 0.01f, 0.03f, 0.07f, 0.15f, 0.20f, 0.29f, 0.36f],
+        [0.01f, 0.01f, 0.01f, 0.02f, 0.06f, 0.10f, 0.17f, 0.25f, 0.33f],
+        [0.01f, 0.01f, 0.01f, 0.01f, 0.05f, 0.08f, 0.15f, 0.21f, 0.30f],
+        [0.01f, 0.01f, 0.01f, 0.01f, 0.03f, 0.07f, 0.12f, 0.18f, 0.27f],
+        [0.01f, 0.01f, 0.01f, 0.01f, 0.02f, 0.06f, 0.10f, 0.15f, 0.24f],
+        [0.01f, 0.01f, 0.01f, 0.01f, 0.01f, 0.05f, 0.08f, 0.12f, 0.21f],
+        [0.01f, 0.01f, 0.01f, 0.01f, 0.01f, 0.03f, 0.07f, 0.10f, 0.18f],
+        [0.01f, 0.01f, 0.01f, 0.01f, 0.01f, 0.02f, 0.06f, 0.08f, 0.15f],
+        [0.01f, 0.01f, 0.01f, 0.01f, 0.01f, 0.01f, 0.05f, 0.07f, 0.12f],
+        [0.01f, 0.01f, 0.01f, 0.01f, 0.01f, 0.01f, 0.03f, 0.06f, 0.10f],
+        [0.01f, 0.01f, 0.01f, 0.01f, 0.01f, 0.01f, 0.02f, 0.05f, 0.08f]
+    ];
+    public static float EntityProtectionFactor { get; set; } = 0.5f;
+
+    public DamageResistData(Dictionary<EnumDamageType, float> resists, Dictionary<EnumDamageType, float> flatDamageReduction, IEnumerable<DirectionConstrain> directionsCoverage)
+    {
+        Resists = resists;
+        FlatDamageReduction = flatDamageReduction;
+        DirectionsCoverage = directionsCoverage;
+    }
+    public DamageResistData(Dictionary<EnumDamageType, float> resists, Dictionary<EnumDamageType, float> flatDamageReduction)
+    {
+        Resists = resists;
+        FlatDamageReduction = flatDamageReduction;
+        DirectionsCoverage = [];
+    }
+    public DamageResistData(Dictionary<EnumDamageType, float> resists)
+    {
+        Resists = resists;
+        FlatDamageReduction = (new Dictionary<EnumDamageType, float>());
+        DirectionsCoverage = [];
+    }
+    public DamageResistData()
+    {
+        Resists = (new Dictionary<EnumDamageType, float>());
+        FlatDamageReduction = (new Dictionary<EnumDamageType, float>());
+        DirectionsCoverage = [];
+    }
+
+    public static DamageResistData Empty => new();
+
+    public bool CheckDirection(DirectionOffset direction)
+    {
+        if (!DirectionsCoverage.Any())
+        {
+            return true;
+        }
+        
+        return DirectionsCoverage.Any(constraint => constraint.Check(direction));
+    }
+    public DamageData ApplyResist(DamageData damageData, ref float damage)
+    {
+        float protectionLevel = 0;
+        if (Resists.TryGetValue(damageData.DamageType, out float value))
+        {
+            protectionLevel = value;
+            damage *= DamageMultiplier(protectionLevel, damageData);
+        }
+
+        if (FlatDamageReduction.TryGetValue(damageData.DamageType, out float flatReduction))
+        {
+            damage = Math.Clamp(damage - flatReduction, 0, damage);
+        }
+
+        return new(
+            damageType: damageData.DamageType,
+            tier: (int)(damageData.Tier - protectionLevel),
+            armorPiercingTier: damageData.ArmorPiercingTier
+            );
+    }
+    public DamageData ApplyPlayerResist(DamageData damageData, ref float damage, out int durabilityDamage)
+    {
+        float protectionLevel = 0;
+        float initialDamage = damage;
+
+        if (FlatDamageReduction.TryGetValue(damageData.DamageType, out float flatReduction))
+        {
+            damage = Math.Clamp(damage - flatReduction, 0, damage);
+        }
+
+        if (Resists.TryGetValue(damageData.DamageType, out float value))
+        {
+            protectionLevel = value;
+            damage *= DamageMultiplierPlayer(protectionLevel, damageData);
+        }
+
+        durabilityDamage = (int)Math.Clamp(initialDamage - flatReduction, 0, initialDamage);
+
+        return new(
+            damageType: damageData.DamageType,
+            tier: (int)(damageData.Tier - protectionLevel),
+            armorPiercingTier: damageData.ArmorPiercingTier
+            );
+    }
+    public DamageData ApplyNonPlayerResist(DamageData damageData, ref float damage)
+    {
+        float protectionLevel = 0;
+
+        if (FlatDamageReduction.TryGetValue(damageData.DamageType, out float flatReduction))
+        {
+            damage = Math.Clamp(damage - flatReduction, 0, damage);
+        }
+
+        if (Resists.TryGetValue(damageData.DamageType, out float value))
+        {
+            protectionLevel = value;
+            damage *= DamageMultiplierNonPlayer(protectionLevel, damageData);
+        }
+
+        return new(
+            damageType: damageData.DamageType,
+            tier: (int)(damageData.Tier - protectionLevel),
+            armorPiercingTier: damageData.ArmorPiercingTier
+            );
+    }
+
+    public static DamageResistData Combine(IEnumerable<DamageResistData> resists)
+    {
+        Dictionary<EnumDamageType, float> combinedResists = new();
+        foreach ((EnumDamageType damageType, float protectionLevel) in resists.SelectMany(element => element.Resists))
+        {
+            if (!combinedResists.ContainsKey(damageType))
+            {
+                combinedResists[damageType] = protectionLevel;
+            }
+            else
+            {
+                combinedResists[damageType] += protectionLevel;
+            }
+        }
+
+        Dictionary<EnumDamageType, float> combinedFlat = new();
+        foreach ((EnumDamageType damageType, float protectionLevel) in resists.SelectMany(element => element.FlatDamageReduction))
+        {
+            if (!combinedFlat.ContainsKey(damageType))
+            {
+                combinedFlat[damageType] = protectionLevel;
+            }
+            else
+            {
+                combinedFlat[damageType] += protectionLevel;
+            }
+        }
+
+        IEnumerable<DirectionConstrain> directionsCoverage = resists.SelectMany(element => element.DirectionsCoverage);
+
+        return new(combinedResists, combinedFlat, directionsCoverage);
+    }
+
+    private static float DamageMultiplier(float protectionLevel, DamageData damageData)
+    {
+        return damageData.DamageType switch
+        {
+            EnumDamageType.Gravity => Percentage(protectionLevel, damageData.Tier),
+            EnumDamageType.Fire => Percentage(protectionLevel, damageData.Tier),
+            EnumDamageType.BluntAttack => LookupTableMultiplier(protectionLevel, damageData.Tier),
+            EnumDamageType.SlashingAttack => LookupTableMultiplier(protectionLevel, damageData.Tier),
+            EnumDamageType.PiercingAttack => LookupTableMultiplier(protectionLevel, damageData.Tier),
+            EnumDamageType.Suffocation => Percentage(protectionLevel, damageData.Tier),
+            EnumDamageType.Heal => 1 + damageData.Tier + protectionLevel,
+            EnumDamageType.Poison => Percentage(protectionLevel, damageData.Tier),
+            EnumDamageType.Hunger => Percentage(protectionLevel, damageData.Tier),
+            EnumDamageType.Crushing => Percentage(protectionLevel, damageData.Tier),
+            EnumDamageType.Frost => Percentage(protectionLevel, damageData.Tier),
+            EnumDamageType.Electricity => Percentage(protectionLevel, damageData.Tier),
+            EnumDamageType.Heat => Percentage(protectionLevel, damageData.Tier),
+            EnumDamageType.Injury => 1,
+            _ => 1
+        };
+    }
+    private static float DamageMultiplierPlayer(float protectionLevel, DamageData damageData)
+    {
+        return damageData.DamageType switch
+        {
+            EnumDamageType.Gravity => Percentage(protectionLevel, damageData.Tier),
+            EnumDamageType.Fire => Percentage(protectionLevel, damageData.Tier),
+            EnumDamageType.BluntAttack => LookupTableMultiplier(protectionLevel, damageData.Tier + damageData.ArmorPiercingTier),
+            EnumDamageType.SlashingAttack => LookupTableMultiplier(protectionLevel, damageData.Tier + damageData.ArmorPiercingTier),
+            EnumDamageType.PiercingAttack => LookupTableMultiplier(protectionLevel, damageData.Tier + damageData.ArmorPiercingTier),
+            EnumDamageType.Suffocation => Percentage(protectionLevel, damageData.Tier),
+            EnumDamageType.Heal => 1 + damageData.Tier + protectionLevel,
+            EnumDamageType.Poison => Percentage(protectionLevel, damageData.Tier),
+            EnumDamageType.Hunger => Percentage(protectionLevel, damageData.Tier),
+            EnumDamageType.Crushing => Percentage(protectionLevel, damageData.Tier),
+            EnumDamageType.Frost => Percentage(protectionLevel, damageData.Tier),
+            EnumDamageType.Electricity => Percentage(protectionLevel, damageData.Tier),
+            EnumDamageType.Heat => Percentage(protectionLevel, damageData.Tier),
+            EnumDamageType.Injury => 1,
+            _ => 1
+        };
+    }
+    private static float DamageMultiplierNonPlayer(float protectionLevel, DamageData damageData)
+    {
+        return damageData.DamageType switch
+        {
+            EnumDamageType.Gravity => Percentage(protectionLevel, damageData.Tier),
+            EnumDamageType.Fire => Percentage(protectionLevel, damageData.Tier),
+            EnumDamageType.BluntAttack => FlatMultiplier(protectionLevel, damageData.Tier),
+            EnumDamageType.SlashingAttack => FlatMultiplier(protectionLevel, damageData.Tier),
+            EnumDamageType.PiercingAttack => FlatMultiplier(protectionLevel, damageData.Tier),
+            EnumDamageType.Suffocation => Percentage(protectionLevel, damageData.Tier),
+            EnumDamageType.Heal => 1 + damageData.Tier + protectionLevel,
+            EnumDamageType.Poison => Percentage(protectionLevel, damageData.Tier),
+            EnumDamageType.Hunger => Percentage(protectionLevel, damageData.Tier),
+            EnumDamageType.Crushing => Percentage(protectionLevel, damageData.Tier),
+            EnumDamageType.Frost => Percentage(protectionLevel, damageData.Tier),
+            EnumDamageType.Electricity => Percentage(protectionLevel, damageData.Tier),
+            EnumDamageType.Heat => Percentage(protectionLevel, damageData.Tier),
+            EnumDamageType.Injury => 1,
+            _ => 1
+        };
+    }
+
+    private static float Percentage(float protection, float strength) => Math.Clamp(1 + strength - protection, 0, 1);
+    private static float LookupTableMultiplier(float protection, float attackTier) => LookupTableMultiplier((int)protection, (int)attackTier);
+    private static float LookupTableMultiplier(int protection, int attackTier)
+    {
+        if (protection == 0)
+        {
+            return 1;
+        }
+        else if (attackTier == 0 && protection > 0)
+        {
+            return 0;
+        }
+
+        return DamageReduction[GameMath.Clamp(protection - 1, 0, MaxArmorTier - 1)][GameMath.Clamp(attackTier - 1, 0, MaxAttackTier - 1)];
+    }
+    private static float FlatMultiplier(float protection, float attackTier)
+    {
+        return attackTier >= protection ? 1 : EntityProtectionFactor;
+    }
+}

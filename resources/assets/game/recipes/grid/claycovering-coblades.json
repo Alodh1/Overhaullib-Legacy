@@ -1,0 +1,127 @@
+﻿[
+    {
+        "ingredientPattern":  "TC",
+        "ingredients":  {
+                            "T":  {
+                                      "type":  "item",
+                                      "code":  "game:blade-falx-iron"
+                                  },
+                            "C":  {
+                                      "type":  "item",
+                                      "code":  "clay-fire"
+                                  }
+                        },
+        "name":  "claycovering-coblades",
+        "shapeless":  true,
+        "copyAttributesFrom":  "T",
+        "width":  2,
+        "height":  1,
+        "output":  {
+                       "type":  "item",
+                       "code":  "game:blade-falx-iron",
+                       "attributes":  {
+                                          "clayCovered":  true
+                                      }
+                   }
+    },
+    {
+        "ingredientPattern":  "TC",
+        "ingredients":  {
+                            "T":  {
+                                      "type":  "item",
+                                      "code":  "game:blade-falx-meteoriciron"
+                                  },
+                            "C":  {
+                                      "type":  "item",
+                                      "code":  "clay-fire"
+                                  }
+                        },
+        "name":  "claycovering-coblades",
+        "shapeless":  true,
+        "copyAttributesFrom":  "T",
+        "width":  2,
+        "height":  1,
+        "output":  {
+                       "type":  "item",
+                       "code":  "game:blade-falx-meteoriciron",
+                       "attributes":  {
+                                          "clayCovered":  true
+                                      }
+                   }
+    },
+    {
+        "ingredientPattern":  "TC",
+        "ingredients":  {
+                            "T":  {
+                                      "type":  "item",
+                                      "code":  "game:blade-falx-steel"
+                                  },
+                            "C":  {
+                                      "type":  "item",
+                                      "code":  "clay-fire"
+                                  }
+                        },
+        "name":  "claycovering-coblades",
+        "shapeless":  true,
+        "copyAttributesFrom":  "T",
+        "width":  2,
+        "height":  1,
+        "output":  {
+                       "type":  "item",
+                       "code":  "game:blade-falx-steel",
+                       "attributes":  {
+                                          "clayCovered":  true
+                                      }
+                   }
+    },
+    {
+        "ingredientPattern":  "TC",
+        "ingredients":  {
+                            "T":  {
+                                      "type":  "item",
+                                      "code":  "game:blade-blackguard-iron"
+                                  },
+                            "C":  {
+                                      "type":  "item",
+                                      "code":  "clay-fire"
+                                  }
+                        },
+        "name":  "claycovering-coblades",
+        "shapeless":  true,
+        "copyAttributesFrom":  "T",
+        "width":  2,
+        "height":  1,
+        "output":  {
+                       "type":  "item",
+                       "code":  "game:blade-blackguard-iron",
+                       "attributes":  {
+                                          "clayCovered":  true
+                                      }
+                   }
+    },
+    {
+        "ingredientPattern":  "TC",
+        "ingredients":  {
+                            "T":  {
+                                      "type":  "item",
+                                      "code":  "game:blade-forlorn-iron"
+                                  },
+                            "C":  {
+                                      "type":  "item",
+                                      "code":  "clay-fire"
+                                  }
+                        },
+        "name":  "claycovering-coblades",
+        "shapeless":  true,
+        "copyAttributesFrom":  "T",
+        "width":  2,
+        "height":  1,
+        "output":  {
+                       "type":  "item",
+                       "code":  "game:blade-forlorn-iron",
+                       "attributes":  {
+                                          "clayCovered":  true
+                                      }
+                   }
+    }
+]
