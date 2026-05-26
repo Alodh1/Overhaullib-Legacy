@@ -1,5 +1,4 @@
 using CombatOverhaul.DamageSystems;
-using CombatOverhaul.Utils;
 using Vintagestory.API.Client;
 using Vintagestory.API.Common;
 using Vintagestory.API.Common.Entities;
@@ -11,16 +10,17 @@ namespace CombatOverhaul.Armor;
 
 public class EntityCOArmorStand : EntityHumanoid
 {
-    EntityBehaviorCOArmorStandInventory? invbh;
-    float fireDamage;
+    private EntityBehaviorCOArmorStandInventory? invbh;
+    private float fireDamage;
+    private readonly string[] poses = ["idle", "lefthandup", "righthandup", "twohandscross"];
 
     public override bool IsCreature => false;
     public override bool IsInteractable => true;
 
-    int CurPose
+    private int CurPose
     {
-        get { return WatchedAttributes.GetInt("curPose"); }
-        set { WatchedAttributes.SetInt("curPose", value); }
+        get => WatchedAttributes.GetInt("curPose");
+        set => WatchedAttributes.SetInt("curPose", value);
     }
 
     public EntityCOArmorStand() { }
@@ -34,27 +34,22 @@ public class EntityCOArmorStand : EntityHumanoid
         invbh = GetBehavior<EntityBehaviorCOArmorStandInventory>();
     }
 
-    string[] poses = new string[] { "idle", "lefthandup", "righthandup", "twohandscross" };
-
     public override void OnInteract(EntityAgent byEntity, ItemSlot slot, Vec3d hitPosition, EnumInteractMode mode)
     {
-        if (!Alive || mode == 0)
+        if (!Alive || mode == EnumInteractMode.Attack)
         {
             return;
         }
 
-        // Critical multiplayer dupe fix:
-        // Never mutate the armor stand inventory, player inventory, spawn items, or despawn the stand on the client.
-        // The server performs the real transfer and syncs the watched attributes/inventories back to clients.
         if (World.Side == EnumAppSide.Client)
         {
             return;
         }
 
-        IPlayer? plr = (byEntity as EntityPlayer)?.Player;
-        if (plr != null && !byEntity.World.Claims.TryAccess(plr, Pos.AsBlockPos, EnumBlockAccessFlags.Use))
+        IPlayer? player = (byEntity as EntityPlayer)?.Player;
+        if (player != null && !byEntity.World.Claims.TryAccess(player, Pos.AsBlockPos, EnumBlockAccessFlags.Use))
         {
-            plr.InventoryManager.ActiveHotbarSlot.MarkDirty();
+            player.InventoryManager.ActiveHotbarSlot.MarkDirty();
             WatchedAttributes.MarkAllDirty();
             return;
         }
@@ -72,131 +67,120 @@ public class EntityCOArmorStand : EntityHumanoid
             return;
         }
 
-        if (mode == EnumInteractMode.Interact && handslot.Itemstack?.Collectible is ItemWrench)
+        if (mode != EnumInteractMode.Interact)
+        {
+            base.OnInteract(byEntity, slot, hitPosition, mode);
+            return;
+        }
+
+        if (handslot.Itemstack?.Collectible is ItemWrench)
         {
             AnimManager.StopAnimation(poses[CurPose]);
             CurPose = (CurPose + 1) % poses.Length;
-            AnimManager.StartAnimation(new AnimationMetaData() { Animation = poses[CurPose], Code = poses[CurPose] }.Init());
+            AnimManager.StartAnimation(new AnimationMetaData { Animation = poses[CurPose], Code = poses[CurPose] }.Init());
             WatchedAttributes.MarkPathDirty("curPose");
             return;
         }
 
-        if (mode == EnumInteractMode.Interact)
+        int selectionBoxIndex = player?.CurrentEntitySelection?.SelectionBoxIndex ?? -1;
+
+        if (handslot.Empty)
         {
-            if (handslot.Empty)
+            if (invbh.TryTakeSelected(byEntity, handslot, selectionBoxIndex))
             {
-                // Take the first available item from the stand into the player's hand.
-                for (int i = 0; i < invbh.Inventory.Count; i++)
-                {
-                    ItemSlot gslot = invbh.Inventory[i];
-                    if (gslot.Empty) continue;
-                    if (gslot.Itemstack?.Collectible?.Code == null)
-                    {
-                        gslot.Itemstack = null;
-                        gslot.MarkDirty();
-                        continue;
-                    }
-
-                    if (gslot.TryPutInto(byEntity.World, handslot) > 0)
-                    {
-                        byEntity.World.Logger.Audit("{0} Took 1x{1} from Armor Stand at {2}.",
-                            byEntity.GetName(),
-                            handslot.Itemstack?.Collectible.Code,
-                            ServerPos.AsBlockPos
-                        );
-                        return;
-                    }
-                }
-            }
-            else
-            {
-                // Tool/toolrack item placement. Use handslot, not the method parameter slot.
-                if (handslot.Itemstack?.Collectible?.Tool != null || handslot.Itemstack?.ItemAttributes?["toolrackTransform"].Exists == true)
-                {
-                    var collectibleCode = handslot.Itemstack.Collectible.Code;
-                    int moved = 0;
-
-                    if (RightHandItemSlot != null)
-                    {
-                        moved = handslot.TryPutInto(byEntity.World, RightHandItemSlot);
-                    }
-                    if (moved == 0 && LeftHandItemSlot != null)
-                    {
-                        moved = handslot.TryPutInto(byEntity.World, LeftHandItemSlot);
-                    }
-
-                    if (moved > 0)
-                    {
-                        byEntity.World.Logger.Audit("{0} Put 1x{1} onto Armor Stand at {2}.",
-                            byEntity.GetName(),
-                            collectibleCode,
-                            ServerPos.AsBlockPos
-                        );
-                        return;
-                    }
-                }
-
-                // Armor placement. Use handslot, not the method parameter slot.
-                if (!ItemSlotCharacter.IsDressType(handslot.Itemstack, EnumCharacterDressType.ArmorBody)
-                    && !ItemSlotCharacter.IsDressType(handslot.Itemstack, EnumCharacterDressType.ArmorHead)
-                    && !ItemSlotCharacter.IsDressType(handslot.Itemstack, EnumCharacterDressType.ArmorLegs))
-                {
-                    return;
-                }
-
-                WeightedSlot sinkslot = invbh.Inventory.GetBestSuitedSlot(handslot);
-                if (sinkslot.weight > 0 && sinkslot.slot != null)
-                {
-                    var collectibleCode = handslot.Itemstack?.Collectible.Code;
-                    if (handslot.TryPutInto(byEntity.World, sinkslot.slot) > 0)
-                    {
-                        byEntity.World.Logger.Audit("{0} Put 1x{1} onto Armor Stand at {2}.",
-                            byEntity.GetName(),
-                            collectibleCode,
-                            ServerPos.AsBlockPos
-                        );
-                        return;
-                    }
-                }
+                MarkShapeModified();
+                return;
             }
 
-            bool empty = true;
-            for (int i = 0; i < invbh.Inventory.Count; i++)
-            {
-                empty &= invbh.Inventory[i].Empty;
-            }
-
-            if (empty && byEntity.Controls.ShiftKey)
+            if (byEntity.Controls.ShiftKey && invbh.IsEmptyIncludingLegacy())
             {
                 Item? standItem = byEntity.World.GetItem(Code);
                 if (standItem != null)
                 {
-                    ItemStack stack = new ItemStack(standItem);
+                    ItemStack stack = new(standItem);
                     if (!byEntity.TryGiveItemStack(stack))
                     {
                         byEntity.World.SpawnItemEntity(stack, ServerPos.XYZ);
                     }
-                    byEntity.World.Logger.Audit("{0} Took 1x{1} from Armor Stand at {2}.",
-                        byEntity.GetName(),
-                        stack.Collectible.Code,
-                        ServerPos.AsBlockPos
-                    );
+                    byEntity.World.Logger.Audit("{0} Took 1x{1} from Armor Stand at {2}.", byEntity.GetName(), stack.Collectible.Code, ServerPos.AsBlockPos);
                 }
 
-                // Inventory is known empty here. Despawning after giving the stand item is now server-only,
-                // preventing client/server double pickup duplication.
                 Die();
                 return;
             }
+
+            return;
         }
 
-        base.OnInteract(byEntity, slot, hitPosition, mode);
+        ItemStack? heldStack = handslot.Itemstack;
+        if (heldStack?.Collectible == null || heldStack.StackSize <= 0)
+        {
+            handslot.Itemstack = null;
+            handslot.MarkDirty();
+            return;
+        }
+
+        if (IsToolOrToolrackItem(heldStack))
+        {
+            if (invbh.LegacyHandSlotBlocksPlacement(selectionBoxIndex))
+            {
+                return;
+            }
+
+            AssetLocation code = heldStack.Collectible.Code;
+            int moved = invbh.TryPutToolIntoCoHandSlots(handslot, selectionBoxIndex);
+            if (moved > 0)
+            {
+                MarkShapeModified();
+                byEntity.World.Logger.Audit("{0} Put 1x{1} onto Armor Stand at {2}.", byEntity.GetName(), code, ServerPos.AsBlockPos);
+            }
+            return;
+        }
+
+        if (!IsArmorStandArmor(heldStack))
+        {
+            return;
+        }
+
+        if (invbh.LegacyArmorSlotBlocksPlacement(heldStack, selectionBoxIndex))
+        {
+            return;
+        }
+
+        WeightedSlot sinkslot = invbh.Inventory.GetBestSuitedSlot(handslot);
+        if (sinkslot.weight > 0 && sinkslot.slot != null)
+        {
+            AssetLocation? code = heldStack.Collectible.Code;
+            if (handslot.TryPutInto(byEntity.World, sinkslot.slot) > 0)
+            {
+                MarkShapeModified();
+                byEntity.World.Logger.Audit("{0} Put 1x{1} onto Armor Stand at {2}.", byEntity.GetName(), code, ServerPos.AsBlockPos);
+            }
+        }
+    }
+
+    private static bool IsToolOrToolrackItem(ItemStack stack)
+    {
+        return stack.Collectible.Tool != null || stack.ItemAttributes?["toolrackTransform"].Exists == true;
+    }
+
+    private static bool IsArmorStandArmor(ItemStack stack)
+    {
+        return ItemSlotCharacter.IsDressType(stack, EnumCharacterDressType.ArmorBody)
+            || ItemSlotCharacter.IsDressType(stack, EnumCharacterDressType.ArmorHead)
+            || ItemSlotCharacter.IsDressType(stack, EnumCharacterDressType.ArmorLegs);
     }
 
     public override bool ReceiveDamage(DamageSource damageSource, float damage)
     {
-        if (damageSource.Source == EnumDamageSource.Internal && damageSource.Type == EnumDamageType.Fire) fireDamage += damage;
-        if (fireDamage > 4) Die();
+        if (damageSource.Source == EnumDamageSource.Internal && damageSource.Type == EnumDamageType.Fire)
+        {
+            fireDamage += damage;
+        }
+        if (fireDamage > 4)
+        {
+            Die();
+        }
 
         return base.ReceiveDamage(damageSource, damage);
     }
@@ -204,18 +188,60 @@ public class EntityCOArmorStand : EntityHumanoid
 
 public class EntityBehaviorCOArmorStandInventory : EntityBehavior
 {
-    private const string WearablesTreeKey = "wearablesInv";
+    private const string LegacyTreeKey = "wearablesInv";
+    private const string CoTreeKey = "coArmorStandInv";
+    private const int LegacySlotCount = 5;
+    private const int LegacyHeadSlot = 0;
+    private const int LegacyBodySlot = 1;
+    private const int LegacyLegsSlot = 2;
+    private const int LegacyRightHandSlot = 3;
+    private const int LegacyLeftHandSlot = 4;
 
     private readonly EntityAgent eagent;
-    private readonly ArmorStandArmorInventory inv;
+    private readonly ArmorStandArmorInventory coInventory;
+    private readonly ArmorStandLegacyInventory legacyInventory;
+    private bool loadingCoInventory;
+    private bool loadingLegacyInventory;
+    private bool hasPersistentCoTree;
+    private bool hasPersistentLegacyTree;
 
-    public InventoryBase Inventory => inv;
+    private static readonly Dictionary<string, StepParentElementTo> HeadStepParent = new()
+    {
+        [""] = new StepParentElementTo { ElementName = "Head" }
+    };
+
+    private static readonly Dictionary<string, StepParentElementTo> BodyStepParent = new()
+    {
+        [""] = new StepParentElementTo { ElementName = "ASUpperBody" }
+    };
+
+    private static readonly Dictionary<string, StepParentElementTo> LegsStepParent = new()
+    {
+        [""] = new StepParentElementTo { ElementName = "Legs" }
+    };
+
+    private static readonly Dictionary<string, StepParentElementTo> RightHandStepParent = new()
+    {
+        [""] = new StepParentElementTo { ElementName = "RightHandAP" },
+        ["OarStorage"] = new StepParentElementTo { ElementName = "LowerArmR_R_Oar" },
+        ["LowerArmL"] = new StepParentElementTo { ElementName = "LowerArmR_R" }
+    };
+
+    private static readonly Dictionary<string, StepParentElementTo> LeftHandStepParent = new()
+    {
+        [""] = new StepParentElementTo { ElementName = "LeftHandAP" },
+        ["OarStorage"] = new StepParentElementTo { ElementName = "LowerArmL_R_Oar" },
+        ["LowerArmR"] = new StepParentElementTo { ElementName = "LowerArmL" }
+    };
+
+    public InventoryBase Inventory => coInventory;
     public string InventoryClassName => "inventory";
 
     public EntityBehaviorCOArmorStandInventory(Entity entity) : base(entity)
     {
         eagent = entity as EntityAgent ?? throw new Exception("Armor stand inventory behavior requires EntityAgent");
-        inv = new ArmorStandArmorInventory(null, null);
+        coInventory = new ArmorStandArmorInventory(null, null);
+        legacyInventory = new ArmorStandLegacyInventory(null, null);
     }
 
     public override string PropertyName() => "coarmorstandinventory";
@@ -224,55 +250,471 @@ public class EntityBehaviorCOArmorStandInventory : EntityBehavior
     {
         base.Initialize(properties, attributes);
 
-        inv.LateInitialize("gearinv-" + entity.EntityId, entity.World.Api);
-        inv.SlotModified += OnInventorySlotModified;
+        coInventory.LateInitialize("coarmorstand-" + entity.EntityId, entity.World.Api);
+        legacyInventory.LateInitialize("legacyarmorstand-" + entity.EntityId, entity.World.Api);
+        coInventory.SlotModified += OnCoInventorySlotModified;
+        legacyInventory.SlotModified += OnLegacyInventorySlotModified;
 
-        LoadInv();
-        eagent.WatchedAttributes.RegisterModifiedListener(WearablesTreeKey, WearablesModified);
+        LoadCoInventory();
+        LoadLegacyInventory();
+        eagent.WatchedAttributes.RegisterModifiedListener(CoTreeKey, CoWearablesModified);
+        eagent.WatchedAttributes.RegisterModifiedListener(LegacyTreeKey, LegacyWearablesModified);
     }
 
-    private void WearablesModified()
+    private void CoWearablesModified()
     {
-        LoadInv();
+        LoadCoInventory();
         eagent.MarkShapeModified();
     }
 
-    private void OnInventorySlotModified(int slotId)
+    private void LegacyWearablesModified()
     {
-        SaveInv();
+        LoadLegacyInventory();
         eagent.MarkShapeModified();
     }
 
-    private void LoadInv()
+    private void OnCoInventorySlotModified(int slotId)
     {
-        ITreeAttribute? tree = eagent.WatchedAttributes.GetTreeAttribute(WearablesTreeKey);
-        if (tree == null)
+        if (loadingCoInventory) return;
+        SaveCoInventory();
+        eagent.MarkShapeModified();
+    }
+
+    private void OnLegacyInventorySlotModified(int slotId)
+    {
+        if (loadingLegacyInventory) return;
+        SaveLegacyInventory();
+        eagent.MarkShapeModified();
+    }
+
+    private void LoadCoInventory()
+    {
+        ITreeAttribute? tree = eagent.WatchedAttributes.GetTreeAttribute(CoTreeKey);
+        hasPersistentCoTree |= tree != null;
+        loadingCoInventory = true;
+        try
         {
-            tree = new TreeAttribute();
-            eagent.WatchedAttributes[WearablesTreeKey] = tree;
+            coInventory.FromTreeAttributes(tree ?? new TreeAttribute());
+        }
+        finally
+        {
+            loadingCoInventory = false;
+        }
+    }
+
+    private void LoadLegacyInventory()
+    {
+        ITreeAttribute? tree = eagent.WatchedAttributes.GetTreeAttribute(LegacyTreeKey);
+        hasPersistentLegacyTree |= tree != null;
+        loadingLegacyInventory = true;
+        try
+        {
+            legacyInventory.FromTreeAttributes(tree ?? new TreeAttribute());
+        }
+        finally
+        {
+            loadingLegacyInventory = false;
+        }
+    }
+
+    private void SaveCoInventory()
+    {
+        if (entity.World.Side != EnumAppSide.Server || (!hasPersistentCoTree && coInventory.Empty)) return;
+        TreeAttribute tree = new();
+        coInventory.ToTreeAttributes(tree);
+        eagent.WatchedAttributes[CoTreeKey] = tree;
+        eagent.WatchedAttributes.MarkPathDirty(CoTreeKey);
+        hasPersistentCoTree = true;
+    }
+
+    private void SaveLegacyInventory()
+    {
+        if (entity.World.Side != EnumAppSide.Server || (!hasPersistentLegacyTree && legacyInventory.Empty)) return;
+        TreeAttribute tree = new();
+        legacyInventory.ToTreeAttributes(tree);
+        eagent.WatchedAttributes[LegacyTreeKey] = tree;
+        eagent.WatchedAttributes.MarkPathDirty(LegacyTreeKey);
+        hasPersistentLegacyTree = true;
+    }
+
+    public bool TryTakeSelected(EntityAgent byEntity, ItemSlot handslot, int selectionBoxIndex)
+    {
+        if (!handslot.Empty) return false;
+
+        foreach (int legacyIndex in OrderedLegacySlots(selectionBoxIndex))
+        {
+            if (TryMoveWholeStackToEmptyHand(legacyInventory[legacyIndex], handslot, out int moved))
+            {
+                SaveLegacyInventory();
+                eagent.MarkShapeModified();
+                byEntity.World.Logger.Audit("{0} Took {1}x{2} from vanilla Armor Stand slot at {3}.", byEntity.GetName(), moved, handslot.Itemstack?.Collectible.Code, entity.ServerPos.AsBlockPos);
+                return true;
+            }
         }
 
-        inv.FromTreeAttributes(tree);
+        foreach (int coIndex in OrderedCoSlots(selectionBoxIndex))
+        {
+            if (coIndex < 0 || coIndex >= coInventory.Count) continue;
+            if (TryMoveWholeStackToEmptyHand(coInventory[coIndex], handslot, out int moved))
+            {
+                SaveCoInventory();
+                eagent.MarkShapeModified();
+                byEntity.World.Logger.Audit("{0} Took {1}x{2} from Armor Stand at {3}.", byEntity.GetName(), moved, handslot.Itemstack?.Collectible.Code, entity.ServerPos.AsBlockPos);
+                return true;
+            }
+        }
+
+        return false;
     }
 
-    private void SaveInv()
+    public bool IsEmptyIncludingLegacy()
     {
-        TreeAttribute tree = new TreeAttribute();
-        inv.ToTreeAttributes(tree);
-        eagent.WatchedAttributes[WearablesTreeKey] = tree;
-        eagent.WatchedAttributes.MarkPathDirty(WearablesTreeKey);
+        ClearInvalidGhostStacks(coInventory, saveCo: true);
+        ClearInvalidGhostStacks(legacyInventory, saveCo: false);
+        return coInventory.Empty && legacyInventory.Empty;
+    }
+
+    public bool LegacyArmorSlotBlocksPlacement(ItemStack stack, int selectionBoxIndex)
+    {
+        int legacySlot = GetLegacyArmorSlot(stack);
+        if (legacySlot < 0) return false;
+        if (selectionBoxIndex >= 0 && selectionBoxIndex <= LegacyLeftHandSlot && selectionBoxIndex != legacySlot) return false;
+        return !legacyInventory[legacySlot].Empty;
+    }
+
+    public bool LegacyHandSlotBlocksPlacement(int selectionBoxIndex)
+    {
+        if (selectionBoxIndex == LegacyRightHandSlot) return !legacyInventory[LegacyRightHandSlot].Empty;
+        if (selectionBoxIndex == LegacyLeftHandSlot) return !legacyInventory[LegacyLeftHandSlot].Empty;
+        return !legacyInventory[LegacyRightHandSlot].Empty && !legacyInventory[LegacyLeftHandSlot].Empty;
+    }
+
+    public int TryPutToolIntoCoHandSlots(ItemSlot handslot, int selectionBoxIndex)
+    {
+        if (selectionBoxIndex == LegacyRightHandSlot)
+        {
+            return handslot.TryPutInto(entity.World, coInventory[ArmorInventory._totalSlotsNumber]);
+        }
+        if (selectionBoxIndex == LegacyLeftHandSlot)
+        {
+            return handslot.TryPutInto(entity.World, coInventory[ArmorInventory._totalSlotsNumber + 1]);
+        }
+
+        int moved = handslot.TryPutInto(entity.World, coInventory[ArmorInventory._totalSlotsNumber]);
+        if (moved == 0)
+        {
+            moved = handslot.TryPutInto(entity.World, coInventory[ArmorInventory._totalSlotsNumber + 1]);
+        }
+        return moved;
+    }
+
+    private static bool TryMoveWholeStackToEmptyHand(ItemSlot sourceSlot, ItemSlot handslot, out int moved)
+    {
+        moved = 0;
+        if (!handslot.Empty) return false;
+
+        ItemStack? stack = sourceSlot.Itemstack;
+        if (stack?.Collectible == null || stack.StackSize <= 0)
+        {
+            sourceSlot.Itemstack = null;
+            sourceSlot.MarkDirty();
+            return false;
+        }
+
+        moved = stack.StackSize;
+        sourceSlot.Itemstack = null;
+        handslot.Itemstack = stack;
+        sourceSlot.MarkDirty();
+        handslot.MarkDirty();
+        return true;
+    }
+
+    private void ClearInvalidGhostStacks(InventoryBase inventory, bool saveCo)
+    {
+        bool changed = false;
+        for (int i = 0; i < inventory.Count; i++)
+        {
+            ItemStack? stack = inventory[i].Itemstack;
+            if (stack != null && (stack.Collectible == null || stack.StackSize <= 0))
+            {
+                inventory[i].Itemstack = null;
+                inventory[i].MarkDirty();
+                changed = true;
+            }
+        }
+
+        if (!changed) return;
+        if (saveCo) SaveCoInventory(); else SaveLegacyInventory();
+    }
+
+    private static IEnumerable<int> OrderedLegacySlots(int selectionBoxIndex)
+    {
+        if (selectionBoxIndex >= LegacyHeadSlot && selectionBoxIndex <= LegacyLeftHandSlot)
+        {
+            yield return selectionBoxIndex;
+        }
+
+        for (int i = 0; i < LegacySlotCount; i++)
+        {
+            if (i != selectionBoxIndex) yield return i;
+        }
+    }
+
+    private static IEnumerable<int> OrderedCoSlots(int selectionBoxIndex)
+    {
+        if (selectionBoxIndex == LegacyRightHandSlot)
+        {
+            yield return ArmorInventory._totalSlotsNumber;
+        }
+        else if (selectionBoxIndex == LegacyLeftHandSlot)
+        {
+            yield return ArmorInventory._totalSlotsNumber + 1;
+        }
+        else if (selectionBoxIndex >= LegacyHeadSlot && selectionBoxIndex <= LegacyLegsSlot)
+        {
+            DamageZone zone = selectionBoxIndex switch
+            {
+                LegacyHeadSlot => DamageZone.Head | DamageZone.Face | DamageZone.Neck,
+                LegacyBodySlot => DamageZone.Torso | DamageZone.Arms | DamageZone.Hands,
+                LegacyLegsSlot => DamageZone.Legs | DamageZone.Feet,
+                _ => DamageZone.None
+            };
+
+            for (int i = ArmorInventory._vanillaSlots; i < ArmorInventory._armorSlotsLastIndex; i++)
+            {
+                if ((ArmorInventory.ArmorTypeFromIndex(i).Slots & zone) != DamageZone.None)
+                {
+                    yield return i;
+                }
+            }
+        }
+
+        for (int i = 0; i < ArmorInventory._totalSlotsNumber + 2; i++)
+        {
+            yield return i;
+        }
+    }
+
+    private static int GetLegacyArmorSlot(ItemStack stack)
+    {
+        if (ItemSlotCharacter.IsDressType(stack, EnumCharacterDressType.ArmorHead)) return LegacyHeadSlot;
+        if (ItemSlotCharacter.IsDressType(stack, EnumCharacterDressType.ArmorBody)) return LegacyBodySlot;
+        if (ItemSlotCharacter.IsDressType(stack, EnumCharacterDressType.ArmorLegs)) return LegacyLegsSlot;
+        return -1;
+    }
+
+    public override void OnTesselation(ref Shape entityShape, string shapePathForLogging, ref bool shapeIsCloned, ref string[] willDeleteElements)
+    {
+        if (entityShape == null)
+        {
+            return;
+        }
+
+        for (int i = 0; i < legacyInventory.Count; i++)
+        {
+            RenderSlot(i, legacyInventory[i], shapePathForLogging, ref entityShape, ref shapeIsCloned, ref willDeleteElements, legacy: true);
+        }
+
+        for (int i = 0; i < coInventory.Count; i++)
+        {
+            RenderSlot(i, coInventory[i], shapePathForLogging, ref entityShape, ref shapeIsCloned, ref willDeleteElements, legacy: false);
+        }
+    }
+
+    private void RenderSlot(int slotIndex, ItemSlot slot, string shapePathForLogging, ref Shape entityShape, ref bool shapeIsCloned, ref string[] willDeleteElements, bool legacy)
+    {
+        if (slot.Empty || slot.Itemstack?.Collectible == null)
+        {
+            return;
+        }
+
+        if (!TryGetRenderSlot(slotIndex, slot, legacy, out string slotCode, out Dictionary<string, StepParentElementTo>? stepParent))
+        {
+            return;
+        }
+
+        IAttachableToEntity? attachable = IAttachableToEntity.FromCollectible(slot.Itemstack.Collectible);
+        if (attachable == null)
+        {
+            return;
+        }
+
+        if (!shapeIsCloned)
+        {
+            entityShape = entityShape.Clone();
+            shapeIsCloned = true;
+        }
+
+        entityShape = EntityBehaviorContainer.addGearToShape(
+            entity.Api,
+            entity,
+            (entity.Api as ICoreClientAPI)?.EntityTextureAtlas,
+            entityShape,
+            slot.Itemstack,
+            attachable,
+            slotCode,
+            shapePathForLogging,
+            ref willDeleteElements,
+            entity.Properties.Client.Textures,
+            stepParent);
+    }
+
+    private static bool TryGetRenderSlot(int slotIndex, ItemSlot slot, bool legacy, out string slotCode, out Dictionary<string, StepParentElementTo>? stepParent)
+    {
+        slotCode = "";
+        stepParent = null;
+
+        if (slot.Itemstack?.Collectible == null)
+        {
+            return false;
+        }
+
+        if (legacy)
+        {
+            if (slotIndex == LegacyRightHandSlot)
+            {
+                slotCode = "righthand";
+                stepParent = RightHandStepParent;
+                return true;
+            }
+            if (slotIndex == LegacyLeftHandSlot)
+            {
+                slotCode = "lefthand";
+                stepParent = LeftHandStepParent;
+                return true;
+            }
+            return TryGetVanillaArmorStandRenderSlot(slot.Itemstack, out slotCode, out stepParent);
+        }
+
+        if (slotIndex == ArmorInventory._totalSlotsNumber)
+        {
+            slotCode = "righthand";
+            stepParent = RightHandStepParent;
+            return true;
+        }
+        if (slotIndex == ArmorInventory._totalSlotsNumber + 1)
+        {
+            slotCode = "lefthand";
+            stepParent = LeftHandStepParent;
+            return true;
+        }
+        if (slotIndex < ArmorInventory._vanillaSlots)
+        {
+            return false;
+        }
+        if (TryGetVanillaArmorStandRenderSlot(slot.Itemstack, out slotCode, out stepParent))
+        {
+            return true;
+        }
+        if (slotIndex >= ArmorInventory._armorSlotsLastIndex)
+        {
+            return false;
+        }
+
+        ArmorType armorType = ArmorInventory.ArmorTypeFromIndex(slotIndex);
+        string layer = armorType.Layers.ToString().ToLowerInvariant();
+        if ((armorType.Slots & (DamageZone.Head | DamageZone.Face | DamageZone.Neck)) != DamageZone.None)
+        {
+            slotCode = "head-" + layer;
+            stepParent = HeadStepParent;
+            return true;
+        }
+        if ((armorType.Slots & (DamageZone.Torso | DamageZone.Arms | DamageZone.Hands)) != DamageZone.None)
+        {
+            slotCode = "body-" + layer;
+            stepParent = BodyStepParent;
+            return true;
+        }
+        if ((armorType.Slots & (DamageZone.Legs | DamageZone.Feet)) != DamageZone.None)
+        {
+            slotCode = "legs-" + layer;
+            stepParent = LegsStepParent;
+            return true;
+        }
+
+        return false;
+    }
+
+    private static bool TryGetVanillaArmorStandRenderSlot(ItemStack stack, out string slotCode, out Dictionary<string, StepParentElementTo>? stepParent)
+    {
+        slotCode = "";
+        stepParent = null;
+
+        if (ItemSlotCharacter.IsDressType(stack, EnumCharacterDressType.ArmorHead))
+        {
+            slotCode = "head";
+            stepParent = HeadStepParent;
+            return true;
+        }
+        if (ItemSlotCharacter.IsDressType(stack, EnumCharacterDressType.ArmorBody))
+        {
+            slotCode = "body";
+            stepParent = BodyStepParent;
+            return true;
+        }
+        if (ItemSlotCharacter.IsDressType(stack, EnumCharacterDressType.ArmorLegs))
+        {
+            slotCode = "legs";
+            stepParent = LegsStepParent;
+            return true;
+        }
+
+        return false;
+    }
+
+    public override void FromBytes(bool isSync)
+    {
+        LoadCoInventory();
+        LoadLegacyInventory();
+        eagent.MarkShapeModified();
+    }
+
+    public override void ToBytes(bool forClient)
+    {
+        SaveCoInventory();
+        SaveLegacyInventory();
     }
 
     public override void OnEntityDespawn(EntityDespawnData despawn)
     {
-        SaveInv();
+        SaveCoInventory();
+        SaveLegacyInventory();
         base.OnEntityDespawn(despawn);
     }
 
     public override void OnEntityDeath(DamageSource damageSourceForDeath)
     {
-        SaveInv();
+        if (entity.World.Side == EnumAppSide.Server)
+        {
+            DropAllContentsOnce();
+        }
         base.OnEntityDeath(damageSourceForDeath);
+    }
+
+    private void DropAllContentsOnce()
+    {
+        DropInventoryContents(legacyInventory);
+        DropInventoryContents(coInventory);
+        SaveLegacyInventory();
+        SaveCoInventory();
+    }
+
+    private void DropInventoryContents(InventoryBase inventory)
+    {
+        for (int i = 0; i < inventory.Count; i++)
+        {
+            ItemStack? stack = inventory[i].Itemstack;
+            if (stack?.Collectible == null || stack.StackSize <= 0)
+            {
+                inventory[i].Itemstack = null;
+                inventory[i].MarkDirty();
+                continue;
+            }
+
+            inventory[i].Itemstack = null;
+            inventory[i].MarkDirty();
+            entity.World.SpawnItemEntity(stack, entity.ServerPos.XYZ);
+        }
     }
 }
 
@@ -333,7 +775,7 @@ public class ArmorStandArmorSlot : ItemSlot
 
 public class ArmorStandArmorInventory : InventoryBase
 {
-    ItemSlot[] slots;
+    private ItemSlot[] slots;
 
     public ArmorStandArmorInventory(string className, string id, ICoreAPI api) : base(className, id, api)
     {
@@ -347,17 +789,18 @@ public class ArmorStandArmorInventory : InventoryBase
         baseWeight = 2.5f;
     }
 
-    public override int Count
-    {
-        get { return slots.Length; }
-    }
+    public override int Count => slots.Length;
 
-    public override ItemSlot this[int slotId] { get { return slots[slotId]; } set { slots[slotId] = value; } }
+    public override ItemSlot this[int slotId]
+    {
+        get => slots[slotId];
+        set => slots[slotId] = value;
+    }
 
     public override void FromTreeAttributes(ITreeAttribute tree)
     {
-        List<ItemSlot> modifiedSlots = new List<ItemSlot>();
-        slots = SlotsFromTreeAttributes(tree, slots, modifiedSlots);
+        List<ItemSlot> modifiedSlots = new();
+        slots = SlotsFromTreeAttributes(tree, GenEmptySlots(ArmorInventory._totalSlotsNumber + 6), modifiedSlots);
         for (int i = 0; i < modifiedSlots.Count; i++) DidModifyItemSlot(modifiedSlots[i]);
     }
 
@@ -381,9 +824,7 @@ public class ArmorStandArmorInventory : InventoryBase
             return new ItemSlotBackpack(this);
         }
 
-        ArmorStandArmorSlot slot = new(this, ArmorInventory.ArmorTypeFromIndex(slotId));
-
-        return slot;
+        return new ArmorStandArmorSlot(this, ArmorInventory.ArmorTypeFromIndex(slotId));
     }
 
     public override void DiscardAll()
@@ -397,6 +838,52 @@ public class ArmorStandArmorInventory : InventoryBase
 
     public override void OnOwningEntityDeath(Vec3d pos)
     {
-        // Don't drop contents on death. Contents are stored/synced through wearablesInv.
+        // Death drops are handled by EntityBehaviorCOArmorStandInventory to include legacy slots exactly once.
+    }
+}
+
+public class ArmorStandLegacyInventory : InventoryBase
+{
+    private ItemSlot[] slots;
+
+    public ArmorStandLegacyInventory(string className, string id, ICoreAPI api) : base(className, id, api)
+    {
+        slots = GenEmptySlots(5);
+        baseWeight = 2.5f;
+    }
+
+    public ArmorStandLegacyInventory(string inventoryId, ICoreAPI api) : base(inventoryId, api)
+    {
+        slots = GenEmptySlots(5);
+        baseWeight = 2.5f;
+    }
+
+    public override int Count => slots.Length;
+
+    public override ItemSlot this[int slotId]
+    {
+        get => slots[slotId];
+        set => slots[slotId] = value;
+    }
+
+    public override void FromTreeAttributes(ITreeAttribute tree)
+    {
+        List<ItemSlot> modifiedSlots = new();
+        slots = SlotsFromTreeAttributes(tree, GenEmptySlots(5), modifiedSlots);
+        for (int i = 0; i < modifiedSlots.Count; i++) DidModifyItemSlot(modifiedSlots[i]);
+    }
+
+    public override void ToTreeAttributes(ITreeAttribute tree)
+    {
+        SlotsToTreeAttributes(slots, tree);
+    }
+
+    protected override ItemSlot NewSlot(int slotId)
+    {
+        return new ItemSlotSurvival(this);
+    }
+
+    public override void OnOwningEntityDeath(Vec3d pos)
+    {
     }
 }
