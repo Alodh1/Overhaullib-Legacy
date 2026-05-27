@@ -204,7 +204,7 @@ public class EntityBehaviorCOArmorStandInventory : EntityBehavior
     private bool loadingLegacyInventory;
     private bool hasPersistentCoTree;
     private bool hasPersistentLegacyTree;
-
+    private bool vanillaContainerRendersLegacy;
     private static readonly Dictionary<string, StepParentElementTo> HeadStepParent = new()
     {
         [""] = new StepParentElementTo { ElementName = "Head" }
@@ -257,6 +257,7 @@ public class EntityBehaviorCOArmorStandInventory : EntityBehavior
 
         LoadCoInventory();
         LoadLegacyInventory();
+        vanillaContainerRendersLegacy = entity.GetBehavior<EntityBehaviorContainer>() != null;
         eagent.WatchedAttributes.RegisterModifiedListener(CoTreeKey, CoWearablesModified);
         eagent.WatchedAttributes.RegisterModifiedListener(LegacyTreeKey, LegacyWearablesModified);
     }
@@ -510,9 +511,12 @@ public class EntityBehaviorCOArmorStandInventory : EntityBehavior
             return;
         }
 
-        for (int i = 0; i < legacyInventory.Count; i++)
+        if (!vanillaContainerRendersLegacy)
         {
-            RenderSlot(i, legacyInventory[i], shapePathForLogging, ref entityShape, ref shapeIsCloned, ref willDeleteElements, legacy: true);
+            for (int i = 0; i < legacyInventory.Count; i++)
+            {
+                RenderSlot(i, legacyInventory[i], shapePathForLogging, ref entityShape, ref shapeIsCloned, ref willDeleteElements, legacy: true);
+            }
         }
 
         for (int i = 0; i < coInventory.Count; i++)
