@@ -24,7 +24,7 @@ public sealed class ImpaleAttackStats
     public float MaxTargetVolume { get; set; } = 3f;
     public float[] HoldOffset { get; set; } = [0f, 0f, 1.25f];
     public float[] TargetOffset { get; set; } = [0f, -0.6f, 0f];
-    public float ThrowVelocity { get; set; } = 14f;
+    public float ThrowVelocity { get; set; } = 5f;
     public float ThrowUpBias { get; set; } = 0.15f;
 }
 
@@ -108,6 +108,9 @@ public sealed class ImpaleSystemClient
 
 public sealed class ImpaleSystemServer : IDisposable
 {
+    private const float MaxThrowVelocitySetting = 10f;
+    private const float ThrowVelocityToEntityMotion = 0.05f;
+
     public ImpaleSystemServer(ICoreServerAPI api)
     {
         _api = api;
@@ -145,7 +148,7 @@ public sealed class ImpaleSystemServer : IDisposable
             WeaponCode = weaponCode,
             HoldOffset = NormalizeOffset(packet.ImpaleHoldOffset, [0f, 0f, 1.25f]),
             TargetOffset = NormalizeOffset(packet.ImpaleTargetOffset, [0f, -0.6f, 0f]),
-            ThrowVelocity = MathF.Max(0f, packet.ImpaleThrowVelocity),
+            ThrowVelocity = ClampThrowVelocity(packet.ImpaleThrowVelocity),
             ThrowUpBias = packet.ImpaleThrowUpBias
         };
 
@@ -242,7 +245,7 @@ public sealed class ImpaleSystemServer : IDisposable
                 velocity.Normalize();
                 velocity.Y += state.ThrowUpBias;
                 if (velocity.LengthSq() > 0.0001) velocity.Normalize();
-                velocity.Mul(state.ThrowVelocity);
+                velocity.Mul(ToEntityMotion(state.ThrowVelocity));
 
                 target.ServerPos.Motion.Set(velocity);
                 target.Pos.Motion.Set(velocity);
@@ -340,6 +343,16 @@ public sealed class ImpaleSystemServer : IDisposable
         return [value[0], value[1], value[2]];
     }
 
+    private static float ClampThrowVelocity(float throwVelocity)
+    {
+        return MathF.Max(0f, MathF.Min(MaxThrowVelocitySetting, throwVelocity));
+    }
+
+    private static float ToEntityMotion(float throwVelocity)
+    {
+        return ClampThrowVelocity(throwVelocity) * ThrowVelocityToEntityMotion;
+    }
+
     private static Vec3d ReadDirection(float[]? value, Vec3f fallback)
     {
         if (value == null || value.Length < 3) return new Vec3d(fallback.X, fallback.Y, fallback.Z);
@@ -354,7 +367,7 @@ public sealed class ImpaleSystemServer : IDisposable
         public string WeaponCode { get; set; } = "";
         public float[] HoldOffset { get; set; } = [0f, 0f, 1.25f];
         public float[] TargetOffset { get; set; } = [0f, -0.6f, 0f];
-        public float ThrowVelocity { get; set; } = 14f;
+        public float ThrowVelocity { get; set; } = 5f;
         public float ThrowUpBias { get; set; } = 0.15f;
     }
 }
