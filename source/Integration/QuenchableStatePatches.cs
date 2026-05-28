@@ -242,16 +242,17 @@ internal static class CraftedArmorQuenchStatePatch
             outputSlot.Itemstack.Attributes.SetBool("clayCovered", true);
         }
 
-        NormalizeCraftedWeaponAndToolQuenchState(allInputSlots, outputSlot.Itemstack);
+        NormalizeCraftedWeaponQuenchState(allInputSlots, outputSlot.Itemstack);
         QuenchableStateUtil.NormalizeGenericBuffs(outputSlot.Itemstack);
     }
 
-    private static void NormalizeCraftedWeaponAndToolQuenchState(ItemSlot[] allInputSlots, ItemStack output)
+    private static void NormalizeCraftedWeaponQuenchState(ItemSlot[] allInputSlots, ItemStack output)
     {
         if (output.Collectible == null
             || QuenchableStateUtil.IsArmorOrArmorComponent(output)
             || !QuenchableStateUtil.IsFerrous(output)
-            || output.Collectible.GetCollectibleBehavior<CollectibleBehaviorQuenchable>(true) == null)
+            || output.Collectible.GetCollectibleBehavior<CollectibleBehaviorQuenchable>(true) == null
+            || QuenchableStateUtil.GetKind(output) != QuenchableStateUtil.WeaponKind)
         {
             return;
         }
@@ -268,7 +269,7 @@ internal static class CraftedArmorQuenchStatePatch
             }
 
             string kind = QuenchableStateUtil.GetKind(input.Itemstack);
-            if (kind != QuenchableStateUtil.WeaponKind && kind != QuenchableStateUtil.ToolKind)
+            if (kind != QuenchableStateUtil.WeaponKind)
             {
                 continue;
             }

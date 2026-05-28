@@ -1,4 +1,5 @@
 using CombatOverhaul.Implementations;
+using HarmonyLib;
 using Newtonsoft.Json.Linq;
 using Vintagestory.API.Common;
 using Vintagestory.API.Common.Entities;
@@ -9,8 +10,17 @@ namespace CombatOverhaul.Integration;
 
 public static class GrindingWheelCompat
 {
+    private static ICoreAPI? _api;
+
+    public static void SetApi(ICoreAPI api)
+    {
+        _api = api;
+    }
+
     public static void EnsureWeaponBuffableBehavior(ICoreAPI api)
     {
+        SetApi(api);
+
         int eligible = 0;
         int patched = 0;
 
@@ -28,11 +38,7 @@ public static class GrindingWheelCompat
                 continue;
             }
 
-            CollectibleBehaviorBuffable behavior = new(item);
-            behavior.Initialize(new JsonObject(new JObject()));
-            behavior.OnLoaded(api);
-
-            item.CollectibleBehaviors = (item.CollectibleBehaviors ?? []).Append(behavior).ToArray();
+            AddBuffableBehavior(item, api);
             patched++;
         }
 
@@ -58,9 +64,39 @@ public static class GrindingWheelCompat
         return weaponStack.Collectible.GetDamageToEntity(damage, target, weaponStack, ref isCriticalHit);
     }
 
-    private static bool IsSharpenableWeapon(ICoreAPI api, Item item)
+    public static bool TryEnableGrindingWheelBuff(ItemSlot? slot)
     {
-        if (HasTag(api, item, "weapon-melee"))
+        if (slot?.Itemstack?.Collectible is not Item item || !IsSharpenableWeapon(_api, item))
+        {
+            return false;
+        }
+
+        CollectibleBehaviorBuffable? behavior = item.GetBehavior<CollectibleBehaviorBuffable>();
+        if (behavior == null)
+        {
+            behavior = AddBuffableBehavior(item, _api);
+        }
+
+        AppliedCollectibleBuff? sharpened = behavior.GetItemBuffs(slot.Itemstack).FirstOrDefault(buff => buff.Code == "sharpened");
+        return sharpened == null || sharpened.Multiplier < 1.099f;
+    }
+
+    private static CollectibleBehaviorBuffable AddBuffableBehavior(Item item, ICoreAPI? api)
+    {
+        CollectibleBehaviorBuffable behavior = new(item);
+        behavior.Initialize(new JsonObject(new JObject()));
+        if (api != null)
+        {
+            behavior.OnLoaded(api);
+        }
+
+        item.CollectibleBehaviors = (item.CollectibleBehaviors ?? []).Append(behavior).ToArray();
+        return behavior;
+    }
+
+    private static bool IsSharpenableWeapon(ICoreAPI? api, Item item)
+    {
+        if (api != null && HasTag(api, item, "weapon-melee"))
         {
             return true;
         }
@@ -143,5 +179,19 @@ public static class GrindingWheelCompat
             || path.Contains("warhammer", StringComparison.OrdinalIgnoreCase)
             || path.Contains("battleaxe", StringComparison.OrdinalIgnoreCase)
             || path.Contains("longaxe", StringComparison.OrdinalIgnoreCase);
+    }
+}
+
+[HarmonyPatch(typeof(BlockEntityGrindingWheel), "canBuff")]
+internal static class GrindingWheelCanBuffPatch
+{
+    private static void Postfix(ItemSlot slot, ref bool __result)
+    {
+        if (__result)
+        {
+            return;
+        }
+
+        __result = GrindingWheelCompat.TryEnableGrindingWheelBuff(slot);
     }
 }

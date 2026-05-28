@@ -112,6 +112,7 @@ public partial class CombatOverhaulSystem : ModSystem
 
     public override void Start(ICoreAPI api)
     {
+        GrindingWheelCompat.SetApi(api);
         HarmonyPatchesManager.Patch(api);
 
         if (api.Side == EnumAppSide.Client)
