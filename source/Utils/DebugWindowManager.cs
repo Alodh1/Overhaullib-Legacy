@@ -4,9 +4,11 @@ using CombatOverhaul.Integration.Transpilers;
 using CombatOverhaul.MeleeSystems;
 using CombatOverhaul.Utils;
 using ImGuiNET;
+using Newtonsoft.Json.Linq;
 using System.Reflection;
 using Vintagestory.API.Client;
 using Vintagestory.API.Common;
+using Vintagestory.API.Datastructures;
 using Vintagestory.API.MathTools;
 using Vintagestory.API.Util;
 using Vintagestory.Client.NoObf;
@@ -37,6 +39,9 @@ public sealed class DebugWindowManager
     public void Load(ICoreClientAPI api)
     {
         _behavior = api.World.Player.Entity.GetBehavior<FirstPersonAnimationsBehavior>();
+#if DEBUG
+        RegisterCollectibleTransformAttributes(api);
+#endif
     }
 
     public static void RegisterTransformByCode(ModelTransform transform, string code)
@@ -45,7 +50,116 @@ public sealed class DebugWindowManager
     }
     public void RegisterTransform(ModelTransform transform, string code)
     {
-        _transforms[code] = transform;
+        _transforms[code] = new EditableTransform(transform);
+    }
+    private void RegisterTransform(ModelTransform transform, string code, Action<ModelTransform> apply)
+    {
+        _transforms[code] = new EditableTransform(transform, apply);
+    }
+
+    private sealed class EditableTransform
+    {
+        public EditableTransform(ModelTransform transform, Action<ModelTransform>? apply = null)
+        {
+            Transform = transform;
+            Apply = apply;
+        }
+
+        public ModelTransform Transform { get; }
+        public Action<ModelTransform>? Apply { get; }
+    }
+
+    private void RegisterCollectibleTransformAttributes(ICoreClientAPI api)
+    {
+        foreach (Item item in api.World.Items)
+        {
+            if (item?.Code == null) continue;
+            RegisterCollectibleTransformAttributes(item);
+        }
+
+        foreach (Block block in api.World.Blocks)
+        {
+            if (block?.Code == null) continue;
+            RegisterCollectibleTransformAttributes(block);
+        }
+    }
+
+    private void RegisterCollectibleTransformAttributes(CollectibleObject collectible)
+    {
+        foreach (string attributeCode in DirectTransformAttributeCodes)
+        {
+            RegisterDirectTransformAttribute(collectible, attributeCode);
+        }
+
+        foreach (string attributeCode in TypedTransformAttributeCodes)
+        {
+            RegisterTypedTransformAttribute(collectible, attributeCode);
+        }
+    }
+
+    private void RegisterDirectTransformAttribute(CollectibleObject collectible, string attributeCode)
+    {
+        JsonObject? jsonTransform = collectible.Attributes?[attributeCode];
+        if (jsonTransform?.Exists != true) return;
+
+        ModelTransform? transform = jsonTransform.AsObject<ModelTransform>();
+        if (transform == null) return;
+
+        transform.EnsureDefaultValues();
+        RegisterTransform(transform, $"{collectible.Code} / {attributeCode}", value => ApplyDirectTransformAttribute(collectible, attributeCode, value));
+    }
+
+    private void RegisterTypedTransformAttribute(CollectibleObject collectible, string attributeCode)
+    {
+        if (collectible.Attributes?[attributeCode].Token is not JObject transformsByType) return;
+
+        foreach (JProperty property in transformsByType.Properties())
+        {
+            ModelTransform? transform = new JsonObject(property.Value).AsObject<ModelTransform>();
+            if (transform == null) continue;
+
+            string typeCode = property.Name;
+            transform.EnsureDefaultValues();
+            RegisterTransform(transform, $"{collectible.Code} / {attributeCode} / {typeCode}", value => ApplyTypedTransformAttribute(collectible, attributeCode, typeCode, value));
+        }
+    }
+
+    private static void ApplyDirectTransformAttribute(CollectibleObject collectible, string attributeCode, ModelTransform transform)
+    {
+        if (collectible.Attributes?.Token is not JObject source) return;
+
+        JObject attributes = (JObject)source.DeepClone();
+        attributes[attributeCode] = TransformToToken(transform);
+        collectible.Attributes = new JsonObject(attributes);
+    }
+
+    private static void ApplyTypedTransformAttribute(CollectibleObject collectible, string attributeCode, string typeCode, ModelTransform transform)
+    {
+        if (collectible.Attributes?.Token is not JObject source) return;
+
+        JObject attributes = (JObject)source.DeepClone();
+        JObject transformsByType = attributes[attributeCode] as JObject ?? new JObject();
+        transformsByType[typeCode] = TransformToToken(transform);
+        attributes[attributeCode] = transformsByType;
+        collectible.Attributes = new JsonObject(attributes);
+    }
+
+    private static JToken TransformToToken(ModelTransform transform)
+    {
+        return JToken.Parse(JsonUtil.ToPrettyString(transform));
+    }
+
+    private static ModelTransform CreateDefaultTransform()
+    {
+        ModelTransform transform = new()
+        {
+            Translation = new Vec3f(),
+            Rotation = new Vec3f(),
+            Origin = new Vec3f(0.5f, 0.5f, 0.5f),
+            ScaleXYZ = new Vec3f(1, 1, 1)
+        };
+        transform.EnsureDefaultValues();
+        return transform;
     }
 
     public static void RegisterCollider(string item, string type, MeleeDamageType collider)
@@ -89,9 +203,22 @@ public sealed class DebugWindowManager
     private int _transformIndex = 0;
     private int _colliderItemIndex = 0;
     private int _colliderIndex = 0;
-    private readonly Dictionary<string, ModelTransform> _transforms = new();
+    private int _heldTransformAttributeIndex = 0;
+    private readonly Dictionary<string, EditableTransform> _transforms = new();
     private static Dictionary<string, Dictionary<string, (Action<LineSegmentCollider> setter, System.Func<LineSegmentCollider> getter)>> _colliders = new();
     internal static LineSegmentCollider? _currentCollider = null;
+    private static readonly string[] DirectTransformAttributeCodes = new[]
+    {
+        "onTongTransform",
+        "onMetalTongTransform",
+        "inForgeTransform"
+    };
+    private static readonly string[] TypedTransformAttributeCodes = new[]
+    {
+        "onTongTransformByType",
+        "onMetalTongTransformByType",
+        "inForgeTransformByType"
+    };
 
 #if DEBUG
     private CallbackGUIStatus DrawEditor(float deltaSeconds)
@@ -338,18 +465,28 @@ public sealed class DebugWindowManager
 
     private void TransformEditorTab()
     {
+        DrawHeldTransformRegistration();
+        ImGui.Separator();
+
         ImGui.InputTextWithHint("Filter##" + "transforms", "supports wildcards", ref _filter, 200);
         EditorsUtils.FilterElements(_filter, _transforms.Keys, out IEnumerable<string> filtered, out IEnumerable<int> indexes);
 
-        ImGui.ListBox("transforms", ref _transformIndex, filtered.ToArray(), filtered.Count());
+        string[] filteredTransforms = filtered.ToArray();
+        if (_transformIndex >= filteredTransforms.Length)
+        {
+            _transformIndex = 0;
+        }
 
-        if (!filtered.Any()) return;
+        ImGui.ListBox("transforms", ref _transformIndex, filteredTransforms, filteredTransforms.Length);
 
-        string currentTransform = filtered.ElementAt(_transformIndex);
+        if (filteredTransforms.Length == 0) return;
+
+        string currentTransform = filteredTransforms[_transformIndex];
 
         if (!_transforms.ContainsKey(currentTransform)) return;
 
-        ModelTransform transform = _transforms[currentTransform];
+        EditableTransform editableTransform = _transforms[currentTransform];
+        ModelTransform transform = editableTransform.Transform;
 
         if (ImGui.Button($"Export to clipboard"))
         {
@@ -359,16 +496,16 @@ public sealed class DebugWindowManager
         float speed = ImGui.GetIO().KeysDown[(int)ImGuiKey.LeftShift] ? 0.1f : 1;
 
         float scale = transform.ScaleXYZ.X;
-        ImGui.DragFloat("Scale##transform", ref scale);
+        bool changed = ImGui.DragFloat("Scale##transform", ref scale);
         transform.Scale = scale;
 
         System.Numerics.Vector3 translation = new(transform.Translation.X, transform.Translation.Y, transform.Translation.Z);
         System.Numerics.Vector3 origin = new(transform.Origin.X, transform.Origin.Y, transform.Origin.Z);
         System.Numerics.Vector3 rotation = new(transform.Rotation.X, transform.Rotation.Y, transform.Rotation.Z);
 
-        ImGui.DragFloat3("Translation##transform", ref translation, speed);
-        ImGui.DragFloat3("Origin##transform", ref origin, speed);
-        ImGui.DragFloat3("Rotation##transform", ref rotation, speed);
+        changed |= ImGui.DragFloat3("Translation##transform", ref translation, speed);
+        changed |= ImGui.DragFloat3("Origin##transform", ref origin, speed);
+        changed |= ImGui.DragFloat3("Rotation##transform", ref rotation, speed);
 
         transform.Translation.X = translation.X;
         transform.Translation.Y = translation.Y;
@@ -379,6 +516,40 @@ public sealed class DebugWindowManager
         transform.Rotation.X = rotation.X;
         transform.Rotation.Y = rotation.Y;
         transform.Rotation.Z = rotation.Z;
+
+        if (changed)
+        {
+            editableTransform.Apply?.Invoke(transform);
+        }
+    }
+
+    private void DrawHeldTransformRegistration()
+    {
+        ItemStack? heldStack = _api.World.Player.Entity.RightHandItemSlot.Itemstack;
+        CollectibleObject? collectible = heldStack?.Collectible;
+        if (collectible == null) return;
+
+        ImGui.Text($"Held collectible: {collectible.Code}");
+        ImGui.SetNextItemWidth(260);
+        ImGui.Combo("Transform attribute##held-transform-attribute", ref _heldTransformAttributeIndex, DirectTransformAttributeCodes, DirectTransformAttributeCodes.Length);
+
+        string attributeCode = DirectTransformAttributeCodes[_heldTransformAttributeIndex];
+        bool exists = collectible.Attributes?[attributeCode].Exists == true;
+
+        if (ImGui.Button(exists ? "Register held transform##held-transform" : "Create held transform##held-transform"))
+        {
+            ModelTransform transform = exists
+                ? collectible.Attributes?[attributeCode].AsObject<ModelTransform>() ?? CreateDefaultTransform()
+                : CreateDefaultTransform();
+
+            transform.EnsureDefaultValues();
+            if (!exists)
+            {
+                ApplyDirectTransformAttribute(collectible, attributeCode, transform);
+            }
+
+            RegisterTransform(transform, $"{collectible.Code} / {attributeCode}", value => ApplyDirectTransformAttribute(collectible, attributeCode, value));
+        }
     }
 
     private ModelTransform? _currentTransform;
