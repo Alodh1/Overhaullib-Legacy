@@ -662,7 +662,12 @@ public sealed class ProjectileSystemServer
 
     private static bool CheckAABBOnly(ICoreAPI api, ProjectileEntity projectile)
     {
-        return api.World.GetEntityById(projectile.ShooterId) is not EntityPlayer;
+        if (api.World.GetEntityById(projectile.ShooterId) is not EntityPlayer)
+        {
+            return true;
+        }
+
+        return IsFirearmsProjectile(projectile);
     }
 
     private static bool IsFirearmsProjectile(ProjectileEntity projectile)
