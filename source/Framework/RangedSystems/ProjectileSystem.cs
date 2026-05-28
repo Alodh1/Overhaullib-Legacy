@@ -1,5 +1,6 @@
 using CombatOverhaul.Colliders;
 using CombatOverhaul.DamageSystems;
+using CombatOverhaul.Integration;
 using OpenTK.Mathematics;
 using ProtoBuf;
 using Vintagestory.API.Client;
@@ -676,6 +677,7 @@ public sealed class ProjectileSystemServer
     public void OnDealDamage(Entity target, DamageSource damageSource, ItemStack? weaponStack, ref float damage)
     {
         OnDealRangedDamage?.Invoke(target, damageSource, weaponStack, ref damage);
+        damage = GrindingWheelCompat.ApplyBuffableDamage(weaponStack, target, damage);
     }
 
     private readonly ICoreServerAPI _api;

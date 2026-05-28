@@ -339,6 +339,7 @@ public partial class CombatOverhaulSystem : ModSystem
         }
 
         EnsureTongsTransformsForForgableItems(api);
+        GrindingWheelCompat.EnsureWeaponBuffableBehavior(api);
     }
 
     private static readonly JObject DefaultOnTongTransform = JObject.Parse("""

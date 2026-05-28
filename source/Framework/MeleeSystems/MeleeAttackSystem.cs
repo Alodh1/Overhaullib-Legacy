@@ -1,5 +1,6 @@
 ﻿using CombatOverhaul.Colliders;
 using CombatOverhaul.DamageSystems;
+using CombatOverhaul.Integration;
 using OpenTK.Mathematics;
 using ProtoBuf;
 using System.Diagnostics;
@@ -271,6 +272,7 @@ public sealed class MeleeSystemServer : MeleeSystem
     private bool DealDamage(Entity target, DamageSource damageSource, ItemSlot? slot, float damage)
     {
         OnDealMeleeDamage?.Invoke(target, damageSource, slot, ref damage);
+        damage = GrindingWheelCompat.ApplyBuffableDamage(slot?.Itemstack, target, damage);
 
         return target.ReceiveDamage(damageSource, damage);
     }
