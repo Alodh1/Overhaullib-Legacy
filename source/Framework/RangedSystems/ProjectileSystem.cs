@@ -265,9 +265,15 @@ public sealed class ProjectileSystemClient
         penetrationStrengthLoss = 0;
         float defaultColliderPenetrationResistance = _combatOverhaulSystem.Settings.DefaultColliderPenetrationResistance;
 
+        bool aabbHit = CheckEntityAabb(target, currentPosition, previousPosition, radius, defaultColliderPenetrationResistance, out Vector3d aabbPoint, out float aabbPenetrationStrengthLoss);
+
         if (colliders == null || checkAABBOnly)
         {
-            return CheckEntityAabb(target, currentPosition, previousPosition, radius, defaultColliderPenetrationResistance, out point, out penetrationStrengthLoss);
+            if (!aabbHit) return false;
+
+            point = aabbPoint;
+            penetrationStrengthLoss = aabbPenetrationStrengthLoss;
+            return true;
         }
 
         bool result;
@@ -279,18 +285,29 @@ public sealed class ProjectileSystemClient
         }
         catch
         {
-            return CheckEntityAabb(target, currentPosition, previousPosition, radius, defaultColliderPenetrationResistance, out point, out penetrationStrengthLoss);
+            if (!aabbHit) return false;
+
+            point = aabbPoint;
+            penetrationStrengthLoss = aabbPenetrationStrengthLoss;
+            return true;
         }
 
         if (!result || intersections.Count == 0)
         {
+            if (aabbHit)
+            {
+                point = aabbPoint;
+                penetrationStrengthLoss = aabbPenetrationStrengthLoss;
+                return true;
+            }
+
             if (colliders.HasOBBCollider && colliders.Colliders.Count > 0 &&
                 CheckCollisionBox(colliders.BoundingBox, currentPosition, previousPosition, radius, colliders.DefaultPenetrationResistance, out point, out penetrationStrengthLoss))
             {
                 return true;
             }
 
-            return CheckEntityAabb(target, currentPosition, previousPosition, radius, defaultColliderPenetrationResistance, out point, out penetrationStrengthLoss);
+            return false;
         }
 
         penetrationStrengthLoss = colliders.DefaultPenetrationResistance;
@@ -307,6 +324,7 @@ public sealed class ProjectileSystemClient
             bool selectedHit = false;
             float maxDamageMultiplier = 0;
             penetrationStrengthLoss = 0;
+            ColliderTypes selectedColliderType = ColliderTypes.Torso;
 
             List<ColliderTypes> encounteredColliderTypes = new();
 
@@ -324,6 +342,7 @@ public sealed class ProjectileSystemClient
                     {
                         collider = key;
                         point = intersectionPoint;
+                        selectedColliderType = colliderType;
                         selectedHit = true;
                     }
 
@@ -337,6 +356,7 @@ public sealed class ProjectileSystemClient
                     maxDamageMultiplier = damageMultiplier;
                     collider = knownColliderType ? key : "";
                     point = intersectionPoint;
+                    selectedColliderType = colliderType;
                     selectedHit = true;
                 }
 
@@ -360,9 +380,24 @@ public sealed class ProjectileSystemClient
 
             if (!selectedHit)
             {
+                if (aabbHit)
+                {
+                    collider = "";
+                    point = aabbPoint;
+                    penetrationStrengthLoss = aabbPenetrationStrengthLoss;
+                }
+                else
+                {
+                    collider = "";
+                    point = intersections[0].point;
+                    penetrationStrengthLoss = colliders.DefaultPenetrationResistance;
+                }
+            }
+            else if (selectedColliderType == ColliderTypes.Resistant && aabbHit)
+            {
                 collider = "";
-                point = intersections[0].point;
-                penetrationStrengthLoss = colliders.DefaultPenetrationResistance;
+                point = aabbPoint;
+                penetrationStrengthLoss = aabbPenetrationStrengthLoss;
             }
 
             return true;
@@ -412,9 +447,18 @@ public sealed class ProjectileSystemClient
 
             if (!selectedHit)
             {
-                collider = "";
-                point = intersections[0].point;
-                penetrationStrengthLoss = colliders.DefaultPenetrationResistance;
+                if (aabbHit)
+                {
+                    collider = "";
+                    point = aabbPoint;
+                    penetrationStrengthLoss = aabbPenetrationStrengthLoss;
+                }
+                else
+                {
+                    collider = "";
+                    point = intersections[0].point;
+                    penetrationStrengthLoss = colliders.DefaultPenetrationResistance;
+                }
             }
         }
 
