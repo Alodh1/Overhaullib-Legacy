@@ -1,0 +1,198 @@
+﻿[
+    {
+        "side":  "Universal",
+        "file":  "game:entities/animal/fish/freshwater-adult",
+        "op":  "add",
+        "value":  {
+                      "code":  "CombatOverhaul:EntityColliders",
+                      "elements":  {
+                                       "Torso":  [
+                                                     "Rear",
+                                                     "Midsection",
+                                                     "Chest"
+                                                 ],
+                                       "Head":  [
+                                                    "Head5",
+                                                    "Head",
+                                                    "HeadLower"
+                                                ],
+                                       "Arm":  [
+
+                                               ],
+                                       "Leg":  [
+
+                                               ],
+                                       "Critical":  [
+
+                                                    ],
+                                       "Resistant":  [
+
+                                                     ]
+                                   }
+                  },
+        "path":  "/client/behaviors/-"
+    },
+    {
+        "side":  "Universal",
+        "file":  "game:entities/animal/fish/freshwater-adult",
+        "op":  "add",
+        "value":  {
+                      "code":  "CombatOverhaul:EntityColliders",
+                      "elements":  {
+                                       "Torso":  [
+                                                     "Rear",
+                                                     "Midsection",
+                                                     "Chest"
+                                                 ],
+                                       "Head":  [
+                                                    "Head5",
+                                                    "Head",
+                                                    "HeadLower"
+                                                ],
+                                       "Arm":  [
+
+                                               ],
+                                       "Leg":  [
+
+                                               ],
+                                       "Critical":  [
+
+                                                    ],
+                                       "Resistant":  [
+
+                                                     ]
+                                   }
+                  },
+        "path":  "/server/behaviors/-"
+    },
+    {
+        "side":  "Universal",
+        "file":  "game:entities/animal/fish/reef-adult",
+        "op":  "add",
+        "value":  {
+                      "code":  "CombatOverhaul:EntityColliders",
+                      "elements":  {
+                                       "Torso":  [
+                                                     "Rear",
+                                                     "Midsection",
+                                                     "Chest"
+                                                 ],
+                                       "Head":  [
+                                                    "Head"
+                                                ],
+                                       "Arm":  [
+
+                                               ],
+                                       "Leg":  [
+
+                                               ],
+                                       "Critical":  [
+
+                                                    ],
+                                       "Resistant":  [
+
+                                                     ]
+                                   }
+                  },
+        "path":  "/client/behaviors/-"
+    },
+    {
+        "side":  "Universal",
+        "file":  "game:entities/animal/fish/reef-adult",
+        "op":  "add",
+        "value":  {
+                      "code":  "CombatOverhaul:EntityColliders",
+                      "elements":  {
+                                       "Torso":  [
+                                                     "Rear",
+                                                     "Midsection",
+                                                     "Chest"
+                                                 ],
+                                       "Head":  [
+                                                    "Head"
+                                                ],
+                                       "Arm":  [
+
+                                               ],
+                                       "Leg":  [
+
+                                               ],
+                                       "Critical":  [
+
+                                                    ],
+                                       "Resistant":  [
+
+                                                     ]
+                                   }
+                  },
+        "path":  "/server/behaviors/-"
+    },
+    {
+        "side":  "Universal",
+        "file":  "game:entities/animal/fish/saltwater-adult",
+        "op":  "add",
+        "value":  {
+                      "code":  "CombatOverhaul:EntityColliders",
+                      "elements":  {
+                                       "Torso":  [
+                                                     "Rear",
+                                                     "Midsection",
+                                                     "Chest"
+                                                 ],
+                                       "Head":  [
+                                                    "Head",
+                                                    "NoseBridge",
+                                                    "Nose",
+                                                    "Jaw"
+                                                ],
+                                       "Arm":  [
+
+                                               ],
+                                       "Leg":  [
+
+                                               ],
+                                       "Critical":  [
+
+                                                    ],
+                                       "Resistant":  [
+
+                                                     ]
+                                   }
+                  },
+        "path":  "/client/behaviors/-"
+    },
+    {
+        "side":  "Universal",
+        "file":  "game:entities/animal/fish/saltwater-adult",
+        "op":  "add",
+        "value":  {
+                      "code":  "CombatOverhaul:EntityColliders",
+                      "elements":  {
+                                       "Torso":  [
+                                                     "Rear",
+                                                     "Midsection",
+                                                     "Chest"
+                                                 ],
+                                       "Head":  [
+                                                    "Head",
+                                                    "NoseBridge",
+                                                    "Nose",
+                                                    "Jaw"
+                                                ],
+                                       "Arm":  [
+
+                                               ],
+                                       "Leg":  [
+
+                                               ],
+                                       "Critical":  [
+
+                                                    ],
+                                       "Resistant":  [
+
+                                                     ]
+                                   }
+                  },
+        "path":  "/server/behaviors/-"
+    }
+]

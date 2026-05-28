@@ -1,0 +1,152 @@
+﻿[
+    {
+        "side":  "Universal",
+        "file":  "game:entities/animal/mammal/hyena-adult",
+        "op":  "add",
+        "value":  {
+                      "code":  "CombatOverhaul:EntityColliders",
+                      "elements":  {
+                                       "Torso":  [
+                                                     "R back leg",
+                                                     "L back leg",
+                                                     "R front leg",
+                                                     "L front leg",
+                                                     "neck",
+                                                     "Body",
+                                                     "abdomen"
+                                                 ],
+                                       "Head":  [
+                                                    "head",
+                                                    "mouth"
+                                                ],
+                                       "Arm":  [
+                                                   "L front feet",
+                                                   "R front feet"
+                                               ],
+                                       "Leg":  [
+                                                   "L back feet",
+                                                   "R back feet"
+                                               ],
+                                       "Critical":  [
+
+                                                    ],
+                                       "Resistant":  [
+
+                                                     ]
+                                   }
+                  },
+        "path":  "/client/behaviors/-"
+    },
+    {
+        "side":  "Universal",
+        "file":  "game:entities/animal/mammal/hyena-adult",
+        "op":  "add",
+        "value":  {
+                      "code":  "CombatOverhaul:EntityColliders",
+                      "elements":  {
+                                       "Torso":  [
+                                                     "R back leg",
+                                                     "L back leg",
+                                                     "R front leg",
+                                                     "L front leg",
+                                                     "neck",
+                                                     "Body",
+                                                     "abdomen"
+                                                 ],
+                                       "Head":  [
+                                                    "head",
+                                                    "mouth"
+                                                ],
+                                       "Arm":  [
+                                                   "L front feet",
+                                                   "R front feet"
+                                               ],
+                                       "Leg":  [
+                                                   "L back feet",
+                                                   "R back feet"
+                                               ],
+                                       "Critical":  [
+
+                                                    ],
+                                       "Resistant":  [
+
+                                                     ]
+                                   }
+                  },
+        "path":  "/server/behaviors/-"
+    },
+    {
+        "side":  "Universal",
+        "file":  "game:entities/animal/mammal/hyena-baby",
+        "op":  "add",
+        "value":  {
+                      "code":  "CombatOverhaul:EntityColliders",
+                      "elements":  {
+                                       "Torso":  [
+                                                     "neck",
+                                                     "body"
+                                                 ],
+                                       "Head":  [
+                                                    "head",
+                                                    "mouth up"
+                                                ],
+                                       "Arm":  [
+                                                   "L front leg",
+                                                   "L front feet",
+                                                   "R front leg",
+                                                   "R front feet"
+                                               ],
+                                       "Leg":  [
+                                                   "L back leg",
+                                                   "L back feet",
+                                                   "R back leg",
+                                                   "R back feet"
+                                               ],
+                                       "Critical":  [
+
+                                                    ],
+                                       "Resistant":  [
+
+                                                     ]
+                                   }
+                  },
+        "path":  "/client/behaviors/-"
+    },
+    {
+        "side":  "Universal",
+        "file":  "game:entities/animal/mammal/hyena-baby",
+        "op":  "add",
+        "value":  {
+                      "code":  "CombatOverhaul:EntityColliders",
+                      "elements":  {
+                                       "Torso":  [
+                                                     "neck",
+                                                     "body"
+                                                 ],
+                                       "Head":  [
+                                                    "head",
+                                                    "mouth up"
+                                                ],
+                                       "Arm":  [
+                                                   "L front leg",
+                                                   "L front feet",
+                                                   "R front leg",
+                                                   "R front feet"
+                                               ],
+                                       "Leg":  [
+                                                   "L back leg",
+                                                   "L back feet",
+                                                   "R back leg",
+                                                   "R back feet"
+                                               ],
+                                       "Critical":  [
+
+                                                    ],
+                                       "Resistant":  [
+
+                                                     ]
+                                   }
+                  },
+        "path":  "/server/behaviors/-"
+    }
+]

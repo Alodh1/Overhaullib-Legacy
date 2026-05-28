@@ -1,0 +1,258 @@
+﻿[
+    {
+        "target":  "erel",
+        "side":  "Universal",
+        "file":  "game:entities/lore/boss/erel",
+        "op":  "add",
+        "value":  {
+                      "code":  "CombatOverhaul:EntityColliders",
+                      "elements":  {
+                                       "Torso":  [
+                                                     "Chest",
+                                                     "Midsection",
+                                                     "Rear",
+                                                     "Bum",
+                                                     "Chest-Misc"
+                                                 ],
+                                       "Head":  [
+                                                    "Head",
+                                                    "BeakTop1",
+                                                    "BeakTop2",
+                                                    "BeakTop3",
+                                                    "Jaw1Padding",
+                                                    "Jaw2"
+                                                ],
+                                       "Arm":  [
+                                                   "L ArmGear",
+                                                   "L UpperArm",
+                                                   "L ElbowGear",
+                                                   "L LowerArm1",
+                                                   "L HandGear",
+                                                   "L WingTip1",
+                                                   "L WingTip2",
+                                                   "R ArmGear",
+                                                   "R UpperArm",
+                                                   "R ElbowGear",
+                                                   "R LowerArm1",
+                                                   "R HandGear",
+                                                   "R WingTip1",
+                                                   "R WingTip2"
+                                               ],
+                                       "Leg":  [
+                                                   "IliumR",
+                                                   "R Thigh",
+                                                   "R KneeGear",
+                                                   "R Calf",
+                                                   "R AnkleGear",
+                                                   "R Tarsus",
+                                                   "R Toe3",
+                                                   "R Toe2",
+                                                   "R Toe1",
+                                                   "IliumL",
+                                                   "L Thigh",
+                                                   "L KneeGear",
+                                                   "L Calf",
+                                                   "L AnkleGear",
+                                                   "L Tarsus",
+                                                   "L Toe3",
+                                                   "L Toe2",
+                                                   "L Toe1"
+                                               ],
+                                       "Critical":  [
+                                                        "NeckCover2",
+                                                        "NeckCover3"
+                                                    ],
+                                       "Resistant":  [
+
+                                                     ]
+                                   }
+                  },
+        "path":  "/client/behaviors/-"
+    },
+    {
+        "target":  "erel",
+        "side":  "Universal",
+        "file":  "game:entities/lore/boss/erel",
+        "op":  "add",
+        "value":  {
+                      "code":  "CombatOverhaul:EntityColliders",
+                      "elements":  {
+                                       "Torso":  [
+                                                     "Chest",
+                                                     "Midsection",
+                                                     "Rear",
+                                                     "Bum",
+                                                     "Chest-Misc"
+                                                 ],
+                                       "Head":  [
+                                                    "Head",
+                                                    "BeakTop1",
+                                                    "BeakTop2",
+                                                    "BeakTop3",
+                                                    "Jaw1Padding",
+                                                    "Jaw2"
+                                                ],
+                                       "Arm":  [
+                                                   "L ArmGear",
+                                                   "L UpperArm",
+                                                   "L ElbowGear",
+                                                   "L LowerArm1",
+                                                   "L HandGear",
+                                                   "L WingTip1",
+                                                   "L WingTip2",
+                                                   "R ArmGear",
+                                                   "R UpperArm",
+                                                   "R ElbowGear",
+                                                   "R LowerArm1",
+                                                   "R HandGear",
+                                                   "R WingTip1",
+                                                   "R WingTip2"
+                                               ],
+                                       "Leg":  [
+                                                   "IliumR",
+                                                   "R Thigh",
+                                                   "R KneeGear",
+                                                   "R Calf",
+                                                   "R AnkleGear",
+                                                   "R Tarsus",
+                                                   "R Toe3",
+                                                   "R Toe2",
+                                                   "R Toe1",
+                                                   "IliumL",
+                                                   "L Thigh",
+                                                   "L KneeGear",
+                                                   "L Calf",
+                                                   "L AnkleGear",
+                                                   "L Tarsus",
+                                                   "L Toe3",
+                                                   "L Toe2",
+                                                   "L Toe1"
+                                               ],
+                                       "Critical":  [
+                                                        "NeckCover2",
+                                                        "NeckCover3"
+                                                    ],
+                                       "Resistant":  [
+
+                                                     ]
+                                   }
+                  },
+        "path":  "/server/behaviors/-"
+    },
+    {
+        "target":  "eidolon-immobilized",
+        "side":  "Universal",
+        "file":  "game:entities/lore/boss/eidolon-immobilized",
+        "op":  "add",
+        "value":  {
+                      "code":  "CombatOverhaul:EntityColliders",
+                      "elements":  {
+                                       "Torso":  [
+
+                                                 ],
+                                       "Head":  [
+                                                    "Eye-out",
+                                                    "Eye-bracket"
+                                                ],
+                                       "Arm":  [
+                                                   "armbone-R2",
+                                                   "armbone-R1",
+                                                   "lower-armR",
+                                                   "armbone-L2",
+                                                   "armbone-L1",
+                                                   "lower-armL",
+                                                   "elbowR",
+                                                   "elbowL",
+                                                   "upperarmL",
+                                                   "upper-armR",
+                                                   "wristR",
+                                                   "wristL"
+                                               ],
+                                       "Leg":  [
+
+                                               ],
+                                       "Critical":  [
+                                                        "heart",
+                                                        "brain"
+                                                    ],
+                                       "Resistant":  [
+                                                         "armplateR",
+                                                         "shoulderR",
+                                                         "shoulderL1",
+                                                         "hood-R1",
+                                                         "hood-R2",
+                                                         "hood-L1",
+                                                         "hood-back2",
+                                                         "hood-back3",
+                                                         "chest-backplate",
+                                                         "chest-sideplateL",
+                                                         "back-tassetL",
+                                                         "back-tassetR",
+                                                         "waist-tassetR",
+                                                         "hip-tassetR",
+                                                         "collar-front",
+                                                         "chest-plateL"
+                                                     ]
+                                   }
+                  },
+        "path":  "/client/behaviors/-"
+    },
+    {
+        "target":  "eidolon-immobilized",
+        "side":  "Universal",
+        "file":  "game:entities/lore/boss/eidolon-immobilized",
+        "op":  "add",
+        "value":  {
+                      "code":  "CombatOverhaul:EntityColliders",
+                      "elements":  {
+                                       "Torso":  [
+
+                                                 ],
+                                       "Head":  [
+                                                    "Eye-out",
+                                                    "Eye-bracket"
+                                                ],
+                                       "Arm":  [
+                                                   "armbone-R2",
+                                                   "armbone-R1",
+                                                   "lower-armR",
+                                                   "armbone-L2",
+                                                   "armbone-L1",
+                                                   "lower-armL",
+                                                   "elbowR",
+                                                   "elbowL",
+                                                   "upperarmL",
+                                                   "upper-armR",
+                                                   "wristR",
+                                                   "wristL"
+                                               ],
+                                       "Leg":  [
+
+                                               ],
+                                       "Critical":  [
+                                                        "heart",
+                                                        "brain"
+                                                    ],
+                                       "Resistant":  [
+                                                         "armplateR",
+                                                         "shoulderR",
+                                                         "shoulderL1",
+                                                         "hood-R1",
+                                                         "hood-R2",
+                                                         "hood-L1",
+                                                         "hood-back2",
+                                                         "hood-back3",
+                                                         "chest-backplate",
+                                                         "chest-sideplateL",
+                                                         "back-tassetL",
+                                                         "back-tassetR",
+                                                         "waist-tassetR",
+                                                         "hip-tassetR",
+                                                         "collar-front",
+                                                         "chest-plateL"
+                                                     ]
+                                   }
+                  },
+        "path":  "/server/behaviors/-"
+    }
+]

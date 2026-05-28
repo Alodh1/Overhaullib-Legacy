@@ -1,0 +1,138 @@
+﻿[
+    {
+        "side":  "Universal",
+        "file":  "game:entities/animal/mammal/hare-adult",
+        "op":  "add",
+        "value":  {
+                      "code":  "CombatOverhaul:EntityColliders",
+                      "elements":  {
+                                       "Torso":  [
+                                                     "abdomen",
+                                                     "body",
+                                                     "L back leg",
+                                                     "R back leg"
+                                                 ],
+                                       "Head":  [
+                                                    "head",
+                                                    "mouth"
+                                                ],
+                                       "Arm":  [
+
+                                               ],
+                                       "Leg":  [
+
+                                               ],
+                                       "Critical":  [
+                                                        "neck"
+                                                    ],
+                                       "Resistant":  [
+
+                                                     ]
+                                   },
+                      "defaultPenetrationResistance":  2
+                  },
+        "path":  "/client/behaviors/-"
+    },
+    {
+        "side":  "Universal",
+        "file":  "game:entities/animal/mammal/hare-adult",
+        "op":  "add",
+        "value":  {
+                      "code":  "CombatOverhaul:EntityColliders",
+                      "elements":  {
+                                       "Torso":  [
+                                                     "abdomen",
+                                                     "body",
+                                                     "L back leg",
+                                                     "R back leg"
+                                                 ],
+                                       "Head":  [
+                                                    "head",
+                                                    "mouth"
+                                                ],
+                                       "Arm":  [
+
+                                               ],
+                                       "Leg":  [
+
+                                               ],
+                                       "Critical":  [
+                                                        "neck"
+                                                    ],
+                                       "Resistant":  [
+
+                                                     ]
+                                   },
+                      "defaultPenetrationResistance":  2
+                  },
+        "path":  "/server/behaviors/-"
+    },
+    {
+        "side":  "Universal",
+        "file":  "game:entities/animal/mammal/hare-baby",
+        "op":  "add",
+        "value":  {
+                      "code":  "CombatOverhaul:EntityColliders",
+                      "elements":  {
+                                       "Torso":  [
+                                                     "abdomen",
+                                                     "body",
+                                                     "L back leg",
+                                                     "R back leg"
+                                                 ],
+                                       "Head":  [
+                                                    "head",
+                                                    "mouth"
+                                                ],
+                                       "Arm":  [
+
+                                               ],
+                                       "Leg":  [
+
+                                               ],
+                                       "Critical":  [
+                                                        "neck"
+                                                    ],
+                                       "Resistant":  [
+
+                                                     ]
+                                   },
+                      "defaultPenetrationResistance":  0
+                  },
+        "path":  "/client/behaviors/-"
+    },
+    {
+        "side":  "Universal",
+        "file":  "game:entities/animal/mammal/hare-baby",
+        "op":  "add",
+        "value":  {
+                      "code":  "CombatOverhaul:EntityColliders",
+                      "elements":  {
+                                       "Torso":  [
+                                                     "abdomen",
+                                                     "body",
+                                                     "L back leg",
+                                                     "R back leg"
+                                                 ],
+                                       "Head":  [
+                                                    "head",
+                                                    "mouth"
+                                                ],
+                                       "Arm":  [
+
+                                               ],
+                                       "Leg":  [
+
+                                               ],
+                                       "Critical":  [
+                                                        "neck"
+                                                    ],
+                                       "Resistant":  [
+
+                                                     ]
+                                   },
+                      "defaultPenetrationResistance":  0
+                  },
+        "path":  "/server/behaviors/-"
+    }
+]

@@ -1,0 +1,68 @@
+﻿[
+    {
+        "side":  "Universal",
+        "file":  "game:entities/nonliving/strawdummy",
+        "op":  "add",
+        "value":  {
+                      "code":  "CombatOverhaul:EntityColliders",
+                      "elements":  {
+                                       "Torso":  [
+                                                     "upper body",
+                                                     "body"
+                                                 ],
+                                       "Head":  [
+                                                    "Head"
+                                                ],
+                                       "Limbs":  [
+                                                     "hands"
+                                                 ],
+                                       "Critical":  [
+
+                                                    ],
+                                       "Arm":  [
+
+                                               ],
+                                       "Leg":  [
+
+                                               ],
+                                       "Resistant":  [
+
+                                                     ]
+                                   }
+                  },
+        "path":  "/client/behaviors/-"
+    },
+    {
+        "side":  "Universal",
+        "file":  "game:entities/nonliving/strawdummy",
+        "op":  "add",
+        "value":  {
+                      "code":  "CombatOverhaul:EntityColliders",
+                      "elements":  {
+                                       "Torso":  [
+                                                     "upper body",
+                                                     "body"
+                                                 ],
+                                       "Head":  [
+                                                    "Head"
+                                                ],
+                                       "Limbs":  [
+                                                     "hands"
+                                                 ],
+                                       "Critical":  [
+
+                                                    ],
+                                       "Arm":  [
+
+                                               ],
+                                       "Leg":  [
+
+                                               ],
+                                       "Resistant":  [
+
+                                                     ]
+                                   }
+                  },
+        "path":  "/server/behaviors/-"
+    }
+]

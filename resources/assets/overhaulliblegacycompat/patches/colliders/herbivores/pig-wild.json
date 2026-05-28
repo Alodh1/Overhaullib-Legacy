@@ -1,0 +1,166 @@
+﻿[
+    {
+        "side":  "Universal",
+        "file":  "game:entities/animal/mammal/hooved/pig-adult",
+        "op":  "add",
+        "value":  {
+                      "code":  "CombatOverhaul:EntityColliders",
+                      "elements":  {
+                                       "Torso":  [
+                                                     "Chest",
+                                                     "Midsection",
+                                                     "Rear",
+                                                     "Neck"
+                                                 ],
+                                       "Head":  [
+                                                    "Head",
+                                                    "MouthUp",
+                                                    "Nose",
+                                                    "L Cheek",
+                                                    "R Cheek",
+                                                    "Nose2"
+                                                ],
+                                       "Arm":  [
+                                                   "L ArmUp",
+                                                   "L ArmMid",
+                                                   "L ArmLow",
+                                                   "R ArmUp",
+                                                   "R ArmMid",
+                                                   "R ArmLow",
+                                                   "L Front Pastern",
+                                                   "R Front Pastern"
+                                               ],
+                                       "Leg":  [
+                                                   "L Haunch",
+                                                   "L LegUp",
+                                                   "L LegLow",
+                                                   "R Haunch",
+                                                   "R LegUp",
+                                                   "R LegLow",
+                                                   "L Hind Pastern",
+                                                   "R Hind Pastern"
+                                               ],
+                                       "Critical":  [
+                                                        "Throat"
+                                                    ],
+                                       "Resistant":  [
+
+                                                     ]
+                                   }
+                  },
+        "path":  "/client/behaviors/-"
+    },
+    {
+        "side":  "Universal",
+        "file":  "game:entities/animal/mammal/hooved/pig-adult",
+        "op":  "add",
+        "value":  {
+                      "code":  "CombatOverhaul:EntityColliders",
+                      "elements":  {
+                                       "Torso":  [
+                                                     "Chest",
+                                                     "Midsection",
+                                                     "Rear",
+                                                     "Neck"
+                                                 ],
+                                       "Head":  [
+                                                    "Head",
+                                                    "MouthUp",
+                                                    "Nose",
+                                                    "L Cheek",
+                                                    "R Cheek",
+                                                    "Nose2"
+                                                ],
+                                       "Arm":  [
+                                                   "L ArmUp",
+                                                   "L ArmMid",
+                                                   "L ArmLow",
+                                                   "R ArmUp",
+                                                   "R ArmMid",
+                                                   "R ArmLow",
+                                                   "L Front Pastern",
+                                                   "R Front Pastern"
+                                               ],
+                                       "Leg":  [
+                                                   "L Haunch",
+                                                   "L LegUp",
+                                                   "L LegLow",
+                                                   "R Haunch",
+                                                   "R LegUp",
+                                                   "R LegLow",
+                                                   "L Hind Pastern",
+                                                   "R Hind Pastern"
+                                               ],
+                                       "Critical":  [
+                                                        "Throat"
+                                                    ],
+                                       "Resistant":  [
+
+                                                     ]
+                                   }
+                  },
+        "path":  "/server/behaviors/-"
+    },
+    {
+        "side":  "Universal",
+        "file":  "game:entities/animal/mammal/hooved/pig-baby",
+        "op":  "add",
+        "value":  {
+                      "code":  "CombatOverhaul:EntityColliders",
+                      "elements":  {
+                                       "Torso":  [
+                                                     "Chest",
+                                                     "Rear"
+                                                 ],
+                                       "Head":  [
+                                                    "Head",
+                                                    "Nose"
+                                                ],
+                                       "Arm":  [
+
+                                               ],
+                                       "Leg":  [
+
+                                               ],
+                                       "Critical":  [
+
+                                                    ],
+                                       "Resistant":  [
+
+                                                     ]
+                                   }
+                  },
+        "path":  "/client/behaviors/-"
+    },
+    {
+        "side":  "Universal",
+        "file":  "game:entities/animal/mammal/hooved/pig-baby",
+        "op":  "add",
+        "value":  {
+                      "code":  "CombatOverhaul:EntityColliders",
+                      "elements":  {
+                                       "Torso":  [
+                                                     "Chest",
+                                                     "Rear"
+                                                 ],
+                                       "Head":  [
+                                                    "Head",
+                                                    "Nose"
+                                                ],
+                                       "Arm":  [
+
+                                               ],
+                                       "Leg":  [
+
+                                               ],
+                                       "Critical":  [
+
+                                                    ],
+                                       "Resistant":  [
+
+                                                     ]
+                                   }
+                  },
+        "path":  "/server/behaviors/-"
+    }
+]

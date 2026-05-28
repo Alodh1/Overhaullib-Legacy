@@ -1,0 +1,550 @@
+﻿[
+    {
+        "target":  "drifter",
+        "side":  "Universal",
+        "file":  "game:entities/lore/drifter",
+        "op":  "add",
+        "value":  {
+                      "code":  "CombatOverhaul:EntityColliders",
+                      "elements":  {
+                                       "Torso":  [
+                                                     "Body",
+                                                     "Abdomen",
+                                                     "Kupris"
+                                                 ],
+                                       "Head":  [
+                                                    "Extra neck",
+                                                    "Extra head",
+                                                    "Neck 1",
+                                                    "Head 1",
+                                                    "Neck 2",
+                                                    "Head 2",
+                                                    "Neck",
+                                                    "Head"
+                                                ],
+                                       "Arm":  [
+                                                   "L shoulder",
+                                                   "L upper arm",
+                                                   "L lower arm",
+                                                   "R shoulder",
+                                                   "R upper arm",
+                                                   "R lower arm"
+                                               ],
+                                       "Leg":  [
+                                                   "L thigh",
+                                                   "L feet",
+                                                   "R thigh",
+                                                   "R feet"
+                                               ],
+                                       "Critical":  [
+
+                                                    ],
+                                       "Resistant":  [
+
+                                                     ]
+                                   }
+                  },
+        "path":  "/client/behaviors/-"
+    },
+    {
+        "target":  "drifter",
+        "side":  "Universal",
+        "file":  "game:entities/lore/drifter",
+        "op":  "add",
+        "value":  {
+                      "code":  "CombatOverhaul:EntityColliders",
+                      "elements":  {
+                                       "Torso":  [
+                                                     "Body",
+                                                     "Abdomen",
+                                                     "Kupris"
+                                                 ],
+                                       "Head":  [
+                                                    "Extra neck",
+                                                    "Extra head",
+                                                    "Neck 1",
+                                                    "Head 1",
+                                                    "Neck 2",
+                                                    "Head 2",
+                                                    "Neck",
+                                                    "Head"
+                                                ],
+                                       "Arm":  [
+                                                   "L shoulder",
+                                                   "L upper arm",
+                                                   "L lower arm",
+                                                   "R shoulder",
+                                                   "R upper arm",
+                                                   "R lower arm"
+                                               ],
+                                       "Leg":  [
+                                                   "L thigh",
+                                                   "L feet",
+                                                   "R thigh",
+                                                   "R feet"
+                                               ],
+                                       "Critical":  [
+
+                                                    ],
+                                       "Resistant":  [
+
+                                                     ]
+                                   }
+                  },
+        "path":  "/server/behaviors/-"
+    },
+    {
+        "target":  "bowtorn",
+        "side":  "Universal",
+        "file":  "game:entities/lore/bowtorn",
+        "op":  "add",
+        "value":  {
+                      "code":  "CombatOverhaul:EntityColliders",
+                      "elements":  {
+                                       "Torso":  [
+                                                     "Pelvis",
+                                                     "Midsection",
+                                                     "Chest",
+                                                     "Neck1"
+                                                 ],
+                                       "Head":  [
+                                                    "Face",
+                                                    "Mouth",
+                                                    "Head2",
+                                                    "Head",
+                                                    "Head3"
+                                                ],
+                                       "Arm":  [
+
+                                               ],
+                                       "Leg":  [
+                                                   "L Calf",
+                                                   "L Thigh",
+                                                   "R Calf",
+                                                   "R Thigh",
+                                                   "ToeR2",
+                                                   "ToeR3",
+                                                   "ToeR1",
+                                                   "ToeR4"
+                                               ],
+                                       "Critical":  [
+                                                        "Neck2",
+                                                        "Neck3"
+                                                    ],
+                                       "Resistant":  [
+                                                         "PlateRB2",
+                                                         "PlateRA1",
+                                                         "Plate1",
+                                                         "PlateLA1",
+                                                         "PlateLA2",
+                                                         "PlateRA2",
+                                                         "Plate2",
+                                                         "Plate3",
+                                                         "PlateLA3",
+                                                         "PlateRA3",
+                                                         "Plate4",
+                                                         "Plate6",
+                                                         "Plate5",
+                                                         "L Foot",
+                                                         "R Foot",
+                                                         "GearB5",
+                                                         "GearB6",
+                                                         "Visor",
+                                                         "Helmet1",
+                                                         "Helmet2",
+                                                         "HelmetL",
+                                                         "HelmetR",
+                                                         "L Pauldron",
+                                                         "LameL1",
+                                                         "LameL2",
+                                                         "R Pauldron",
+                                                         "LameR1",
+                                                         "ArmorLegL1",
+                                                         "ArmorLegL2",
+                                                         "ArmorL1"
+                                                     ]
+                                   }
+                  },
+        "path":  "/client/behaviors/-"
+    },
+    {
+        "target":  "bowtorn",
+        "side":  "Universal",
+        "file":  "game:entities/lore/bowtorn",
+        "op":  "add",
+        "value":  {
+                      "code":  "CombatOverhaul:EntityColliders",
+                      "elements":  {
+                                       "Torso":  [
+                                                     "Pelvis",
+                                                     "Midsection",
+                                                     "Chest",
+                                                     "Neck1"
+                                                 ],
+                                       "Head":  [
+                                                    "Face",
+                                                    "Mouth",
+                                                    "Head2",
+                                                    "Head",
+                                                    "Head3"
+                                                ],
+                                       "Arm":  [
+
+                                               ],
+                                       "Leg":  [
+                                                   "L Calf",
+                                                   "L Thigh",
+                                                   "R Calf",
+                                                   "R Thigh",
+                                                   "ToeR2",
+                                                   "ToeR3",
+                                                   "ToeR1",
+                                                   "ToeR4"
+                                               ],
+                                       "Critical":  [
+                                                        "Neck2",
+                                                        "Neck3"
+                                                    ],
+                                       "Resistant":  [
+                                                         "PlateRB2",
+                                                         "PlateRA1",
+                                                         "Plate1",
+                                                         "PlateLA1",
+                                                         "PlateLA2",
+                                                         "PlateRA2",
+                                                         "Plate2",
+                                                         "Plate3",
+                                                         "PlateLA3",
+                                                         "PlateRA3",
+                                                         "Plate4",
+                                                         "Plate6",
+                                                         "Plate5",
+                                                         "L Foot",
+                                                         "R Foot",
+                                                         "GearB5",
+                                                         "GearB6",
+                                                         "Visor",
+                                                         "Helmet1",
+                                                         "Helmet2",
+                                                         "HelmetL",
+                                                         "HelmetR",
+                                                         "L Pauldron",
+                                                         "LameL1",
+                                                         "LameL2",
+                                                         "R Pauldron",
+                                                         "LameR1",
+                                                         "ArmorLegL1",
+                                                         "ArmorLegL2",
+                                                         "ArmorL1"
+                                                     ]
+                                   }
+                  },
+        "path":  "/server/behaviors/-"
+    },
+    {
+        "target":  "shiver",
+        "side":  "Universal",
+        "file":  "game:entities/lore/shiver",
+        "op":  "add",
+        "value":  {
+                      "code":  "CombatOverhaul:EntityColliders",
+                      "elements":  {
+                                       "Torso":  [
+                                                     "TorsoUp",
+                                                     "TorsoLow"
+                                                 ],
+                                       "Head":  [
+                                                    "L Head2",
+                                                    "L Head1",
+                                                    "R Head2",
+                                                    "R Head1"
+                                                ],
+                                       "Arm":  [
+                                                   "R Hand",
+                                                   "L Hand",
+                                                   "R ArmLow",
+                                                   "L ArmLow",
+                                                   "R ArmUp",
+                                                   "L ArmUp"
+                                               ],
+                                       "Leg":  [
+                                                   "R Toes",
+                                                   "R LegLow",
+                                                   "R LegUp",
+                                                   "R Thigh",
+                                                   "L Toes",
+                                                   "L LegLow",
+                                                   "L LegUp",
+                                                   "L Thigh"
+                                               ],
+                                       "Critical":  [
+                                                        "R Neck1",
+                                                        "R Neck2",
+                                                        "L Neck2",
+                                                        "L Neck1"
+                                                    ],
+                                       "Resistant":  [
+                                                         "E1",
+                                                         "S1",
+                                                         "W1",
+                                                         "N1",
+                                                         "W2",
+                                                         "N2",
+                                                         "E2",
+                                                         "S2",
+                                                         "N3",
+                                                         "E3",
+                                                         "S3",
+                                                         "W3"
+                                                     ]
+                                   }
+                  },
+        "path":  "/client/behaviors/-"
+    },
+    {
+        "target":  "shiver",
+        "side":  "Universal",
+        "file":  "game:entities/lore/shiver",
+        "op":  "add",
+        "value":  {
+                      "code":  "CombatOverhaul:EntityColliders",
+                      "elements":  {
+                                       "Torso":  [
+                                                     "TorsoUp",
+                                                     "TorsoLow"
+                                                 ],
+                                       "Head":  [
+                                                    "L Head2",
+                                                    "L Head1",
+                                                    "R Head2",
+                                                    "R Head1"
+                                                ],
+                                       "Arm":  [
+                                                   "R Hand",
+                                                   "L Hand",
+                                                   "R ArmLow",
+                                                   "L ArmLow",
+                                                   "R ArmUp",
+                                                   "L ArmUp"
+                                               ],
+                                       "Leg":  [
+                                                   "R Toes",
+                                                   "R LegLow",
+                                                   "R LegUp",
+                                                   "R Thigh",
+                                                   "L Toes",
+                                                   "L LegLow",
+                                                   "L LegUp",
+                                                   "L Thigh"
+                                               ],
+                                       "Critical":  [
+                                                        "R Neck1",
+                                                        "R Neck2",
+                                                        "L Neck2",
+                                                        "L Neck1"
+                                                    ],
+                                       "Resistant":  [
+                                                         "E1",
+                                                         "S1",
+                                                         "W1",
+                                                         "N1",
+                                                         "W2",
+                                                         "N2",
+                                                         "E2",
+                                                         "S2",
+                                                         "N3",
+                                                         "E3",
+                                                         "S3",
+                                                         "W3"
+                                                     ]
+                                   }
+                  },
+        "path":  "/server/behaviors/-"
+    },
+    {
+        "target":  "bell",
+        "side":  "Universal",
+        "file":  "game:entities/lore/bell",
+        "op":  "add",
+        "value":  {
+                      "code":  "CombatOverhaul:EntityColliders",
+                      "elements":  {
+                                       "Torso":  [
+                                                     "vertebrae 1",
+                                                     "vertebrae 2",
+                                                     "vertebrae 3",
+                                                     "vertebrae 4",
+                                                     "vertebrae 5",
+                                                     "vertebrae 6",
+                                                     "vertebrae 7",
+                                                     "vertebrae 8"
+                                                 ],
+                                       "Head":  [
+
+                                                ],
+                                       "Arm":  [
+
+                                               ],
+                                       "Leg":  [
+                                                   "funnel 1",
+                                                   "funnel 2",
+                                                   "funnel 3",
+                                                   "funnel 4"
+                                               ],
+                                       "Critical":  [
+                                                        "stone"
+                                                    ],
+                                       "Resistant":  [
+                                                         "S tip",
+                                                         "W tip",
+                                                         "E tip",
+                                                         "N tip",
+                                                         "N",
+                                                         "W",
+                                                         "S",
+                                                         "E",
+                                                         "E small",
+                                                         "N small",
+                                                         "W small",
+                                                         "S small",
+                                                         "top"
+                                                     ]
+                                   }
+                  },
+        "path":  "/client/behaviors/-"
+    },
+    {
+        "target":  "bell",
+        "side":  "Universal",
+        "file":  "game:entities/lore/bell",
+        "op":  "add",
+        "value":  {
+                      "code":  "CombatOverhaul:EntityColliders",
+                      "elements":  {
+                                       "Torso":  [
+                                                     "vertebrae 1",
+                                                     "vertebrae 2",
+                                                     "vertebrae 3",
+                                                     "vertebrae 4",
+                                                     "vertebrae 5",
+                                                     "vertebrae 6",
+                                                     "vertebrae 7",
+                                                     "vertebrae 8"
+                                                 ],
+                                       "Head":  [
+
+                                                ],
+                                       "Arm":  [
+
+                                               ],
+                                       "Leg":  [
+                                                   "funnel 1",
+                                                   "funnel 2",
+                                                   "funnel 3",
+                                                   "funnel 4"
+                                               ],
+                                       "Critical":  [
+                                                        "stone"
+                                                    ],
+                                       "Resistant":  [
+                                                         "S tip",
+                                                         "W tip",
+                                                         "E tip",
+                                                         "N tip",
+                                                         "N",
+                                                         "W",
+                                                         "S",
+                                                         "E",
+                                                         "E small",
+                                                         "N small",
+                                                         "W small",
+                                                         "S small",
+                                                         "top"
+                                                     ]
+                                   }
+                  },
+        "path":  "/server/behaviors/-"
+    },
+    {
+        "target":  "locust",
+        "side":  "Universal",
+        "file":  "game:entities/lore/locust",
+        "op":  "add",
+        "value":  {
+                      "code":  "CombatOverhaul:EntityColliders",
+                      "defaultPenetrationResistance":  3,
+                      "elements":  {
+                                       "Torso":  [
+                                                     "abdomen"
+                                                 ],
+                                       "Head":  [
+                                                    "body"
+                                                ],
+                                       "Arm":  [
+                                                   "segment 1",
+                                                   "segment 2",
+                                                   "segment 3",
+                                                   "segment 5",
+                                                   "segment 6",
+                                                   "sawblade base"
+                                               ],
+                                       "Leg":  [
+                                                   "leg extention 21",
+                                                   "leg extention 18",
+                                                   "leg extention 15",
+                                                   "leg extention 5",
+                                                   "leg extention 3",
+                                                   "leg extention 1"
+                                               ],
+                                       "Critical":  [
+
+                                                    ],
+                                       "Resistant":  [
+
+                                                     ]
+                                   }
+                  },
+        "path":  "/client/behaviors/-"
+    },
+    {
+        "target":  "locust",
+        "side":  "Universal",
+        "file":  "game:entities/lore/locust",
+        "op":  "add",
+        "value":  {
+                      "code":  "CombatOverhaul:EntityColliders",
+                      "defaultPenetrationResistance":  3,
+                      "elements":  {
+                                       "Torso":  [
+                                                     "abdomen"
+                                                 ],
+                                       "Head":  [
+                                                    "body"
+                                                ],
+                                       "Arm":  [
+                                                   "segment 1",
+                                                   "segment 2",
+                                                   "segment 3",
+                                                   "segment 5",
+                                                   "segment 6",
+                                                   "sawblade base"
+                                               ],
+                                       "Leg":  [
+                                                   "leg extention 21",
+                                                   "leg extention 18",
+                                                   "leg extention 15",
+                                                   "leg extention 5",
+                                                   "leg extention 3",
+                                                   "leg extention 1"
+                                               ],
+                                       "Critical":  [
+
+                                                    ],
+                                       "Resistant":  [
+
+                                                     ]
+                                   }
+                  },
+        "path":  "/server/behaviors/-"
+    }
+]

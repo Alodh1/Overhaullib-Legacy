@@ -1,4 +1,4 @@
-﻿using CombatOverhaul.Colliders;
+using CombatOverhaul.Colliders;
 using CombatOverhaul.DamageSystems;
 using OpenTK.Mathematics;
 using ProtoBuf;
@@ -27,6 +27,7 @@ public class ProjectileStats
     public float DropChance { get; set; } = 0;
     public float PenetrationBonus { get; set; } = 0;
     public bool CanBeCollected { get; set; } = true;
+    public Dictionary<string, ProjectileDamageDataJson>? DamageStatsByType { get; set; }
 
     public ProjectileStats() { }
 
@@ -180,21 +181,26 @@ public sealed class ProjectileSystemClient
 
     private void HandleRequest(ProjectileCollisionCheckRequest packet)
     {
-        Vec3d midPoint = new(
-            (packet.CurrentPosition[0] - packet.PreviousPosition[0]) / 2f + packet.PreviousPosition[0],
-            (packet.CurrentPosition[1] - packet.PreviousPosition[1]) / 2f + packet.PreviousPosition[1],
-            (packet.CurrentPosition[2] - packet.PreviousPosition[2]) / 2f + packet.PreviousPosition[2]);
-
-        Entity[] entities = _api.World.GetEntitiesAround(
-            midPoint,
-            _combatOverhaulSystem.Settings.CollisionRadius + packet.Radius,
-            _combatOverhaulSystem.Settings.CollisionRadius + packet.Radius);
-
         Vector3d currentPosition = new(packet.CurrentPosition[0], packet.CurrentPosition[1], packet.CurrentPosition[2]);
         Vector3d previousPosition = new(packet.PreviousPosition[0], packet.PreviousPosition[1], packet.PreviousPosition[2]);
         Vector3d velocity = new(packet.Velocity[0], packet.Velocity[1], packet.Velocity[2]);
+        Vector3d segment = currentPosition - previousPosition;
 
-        foreach (Entity entity in entities.Where(entity => entity.IsCreature))
+        Vec3d midPoint = new(
+            segment.X / 2f + previousPosition.X,
+            segment.Y / 2f + previousPosition.Y,
+            segment.Z / 2f + previousPosition.Z);
+
+        double searchRadius = Math.Max(
+            _combatOverhaulSystem.Settings.CollisionRadius + packet.Radius,
+            segment.Length / 2f + _combatOverhaulSystem.Settings.CollisionRadius + packet.Radius);
+
+        Entity[] entities = _api.World.GetEntitiesAround(
+            midPoint,
+            (float)searchRadius,
+            (float)searchRadius);
+
+        foreach (Entity entity in entities.Where(CanProjectileHit))
         {
             if (Collide(entity, packet, currentPosition, previousPosition, velocity))
             {
@@ -222,6 +228,13 @@ public sealed class ProjectileSystemClient
         _stopwatch.Stop();
         Console.WriteLine($"{_stopwatch.Elapsed.TotalMicroseconds / 1000:F3} microseconds\t{entities.Length} entities");
         _stopwatch.Reset();*/
+    }
+
+    private static bool CanProjectileHit(Entity entity)
+    {
+        if (!entity.Alive) return false;
+
+        return entity.IsCreature || entity.GetBehavior<EntityBehaviorHealth>() != null;
     }
 
     private bool Collide(Entity target, ProjectileCollisionCheckRequest packet, Vector3d currentPosition, Vector3d previousPosition, Vector3d velocity)
@@ -257,10 +270,18 @@ public sealed class ProjectileSystemClient
             return CheckEntityAabb(target, currentPosition, previousPosition, radius, defaultColliderPenetrationResistance, out point, out penetrationStrengthLoss);
         }
 
-        bool result = colliders.Collide(currentPosition, previousPosition, radius, penetrationDistance, out List<(string key, double parameter, Vector3d point)> intersections);
+        bool result;
+        List<(string key, double parameter, Vector3d point)> intersections;
 
-        // Detailed colliders can be stale or incomplete for animated entities. If they miss,
-        // fall back to the entity hitbox so projectiles still hit the creature body.
+        try
+        {
+            result = colliders.Collide(currentPosition, previousPosition, radius, penetrationDistance, out intersections);
+        }
+        catch
+        {
+            return CheckEntityAabb(target, currentPosition, previousPosition, radius, defaultColliderPenetrationResistance, out point, out penetrationStrengthLoss);
+        }
+
         if (!result || intersections.Count == 0)
         {
             if (colliders.HasOBBCollider && colliders.Colliders.Count > 0 &&
@@ -274,41 +295,49 @@ public sealed class ProjectileSystemClient
 
         penetrationStrengthLoss = colliders.DefaultPenetrationResistance;
 
-        if (damageModel == null && playerDamageModel == null && intersections.Count > 0)
+        if (damageModel == null && playerDamageModel == null)
         {
             collider = intersections[0].key;
             point = intersections[0].point;
+            return true;
         }
 
-        if (damageModel != null && intersections.Count > 0)
+        if (damageModel != null)
         {
+            bool selectedHit = false;
             float maxDamageMultiplier = 0;
             penetrationStrengthLoss = 0;
 
-            List<ColliderTypes> encounteredCollierTypes = new();
+            List<ColliderTypes> encounteredColliderTypes = new();
 
             foreach ((string key, double parameter, Vector3d intersectionPoint) in intersections)
             {
-                ColliderTypes colliderType = colliders.CollidersTypes[key];
-                if (colliderType == ColliderTypes.Resistant && colliders.ResistantCollidersStopProjectiles)
+                bool knownColliderType = colliders.CollidersTypes.TryGetValue(key, out ColliderTypes colliderType);
+                if (!knownColliderType)
                 {
-                    if (collider == "")
+                    colliderType = ColliderTypes.Torso;
+                }
+
+                if (knownColliderType && colliderType == ColliderTypes.Resistant && colliders.ResistantCollidersStopProjectiles)
+                {
+                    if (!selectedHit)
                     {
                         collider = key;
                         point = intersectionPoint;
+                        selectedHit = true;
                     }
 
                     penetrationStrengthLoss = penetrationSrength;
-
                     break;
                 }
 
-                float damageMultiplier = damageModel.DamageMultipliers[colliderType];
-                if (damageMultiplier >= maxDamageMultiplier)
+                float damageMultiplier = damageModel.DamageMultipliers.TryGetValue(colliderType, out float multiplier) ? multiplier : 1f;
+                if (!selectedHit || damageMultiplier >= maxDamageMultiplier)
                 {
                     maxDamageMultiplier = damageMultiplier;
-                    collider = key;
+                    collider = knownColliderType ? key : "";
                     point = intersectionPoint;
+                    selectedHit = true;
                 }
 
                 float penetrationResistance = colliders.DefaultPenetrationResistance;
@@ -317,10 +346,10 @@ public sealed class ProjectileSystemClient
                     penetrationResistance = colliders.PenetrationResistances[key];
                 }
 
-                if (!encounteredCollierTypes.Contains(colliderType))
+                if (!encounteredColliderTypes.Contains(colliderType))
                 {
                     penetrationStrengthLoss += penetrationResistance;
-                    encounteredCollierTypes.Add(colliderType);
+                    encounteredColliderTypes.Add(colliderType);
                 }
 
                 if (penetrationStrengthLoss > penetrationSrength)
@@ -328,32 +357,39 @@ public sealed class ProjectileSystemClient
                     break;
                 }
             }
+
+            if (!selectedHit)
+            {
+                collider = "";
+                point = intersections[0].point;
+                penetrationStrengthLoss = colliders.DefaultPenetrationResistance;
+            }
+
+            return true;
         }
 
-        if (playerDamageModel != null && intersections.Count > 0)
+        if (playerDamageModel != null)
         {
+            bool selectedHit = false;
             float maxDamageMultiplier = 0;
             penetrationStrengthLoss = 0;
 
-            List<PlayerBodyPart> encounteredCollierTypes = new();
+            List<PlayerBodyPart> encounteredColliderTypes = new();
 
             foreach ((string key, double parameter, Vector3d intersectionPoint) in intersections)
             {
-                PlayerBodyPart bodyType = playerDamageModel.CollidersToBodyParts[key];
-                DamageZoneStats damageZone = playerDamageModel.DamageModel.DamageZones.First(element => element.ZoneType == bodyType);
-
-                if (collider == "")
+                if (!playerDamageModel.CollidersToBodyParts.TryGetValue(key, out PlayerBodyPart bodyType))
                 {
-                    collider = key;
-                    point = intersectionPoint;
+                    continue;
                 }
 
-                float damageMultiplier = damageZone.DamageMultiplier;
-                if (damageMultiplier >= maxDamageMultiplier)
+                float damageMultiplier = GetPlayerBodyPartMultiplier(playerDamageModel, bodyType);
+                if (!selectedHit || damageMultiplier >= maxDamageMultiplier)
                 {
                     maxDamageMultiplier = damageMultiplier;
                     collider = key;
                     point = intersectionPoint;
+                    selectedHit = true;
                 }
 
                 float penetrationResistance = colliders.DefaultPenetrationResistance;
@@ -362,20 +398,39 @@ public sealed class ProjectileSystemClient
                     penetrationResistance = colliders.PenetrationResistances[key];
                 }
 
-                if (!encounteredCollierTypes.Contains(bodyType))
+                if (!encounteredColliderTypes.Contains(bodyType))
                 {
                     penetrationStrengthLoss += penetrationResistance;
-                    encounteredCollierTypes.Add(bodyType);
+                    encounteredColliderTypes.Add(bodyType);
                 }
 
                 if (penetrationStrengthLoss > penetrationSrength)
                 {
                     break;
                 }
+            }
+
+            if (!selectedHit)
+            {
+                collider = "";
+                point = intersections[0].point;
+                penetrationStrengthLoss = colliders.DefaultPenetrationResistance;
             }
         }
 
         return true;
+    }
+    private static float GetPlayerBodyPartMultiplier(PlayerDamageModelBehavior playerDamageModel, PlayerBodyPart bodyType)
+    {
+        foreach (DamageZoneStats damageZone in playerDamageModel.DamageModel.DamageZones)
+        {
+            if (damageZone.ZoneType == bodyType)
+            {
+                return damageZone.DamageMultiplier;
+            }
+        }
+
+        return 1f;
     }
     private static bool CheckEntityAabb(Entity target, Vector3d currentPosition, Vector3d previousPosition, float radius, float penetrationResistance, out Vector3d point, out float penetrationStrengthLoss)
     {

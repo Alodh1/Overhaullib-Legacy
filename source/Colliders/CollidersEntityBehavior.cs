@@ -212,7 +212,7 @@ public sealed class CollidersEntityBehavior : EntityBehavior
         collider = "";
         intersection = Vector3d.Zero;
 
-        if (!HasOBBCollider)
+        if (!HasUsableObbColliders())
         {
             CuboidAABBCollider AABBCollider = new(entity);
             bool collided = AABBCollider.Collide(segmentStart, segmentDirection, out parameter);
@@ -243,7 +243,7 @@ public sealed class CollidersEntityBehavior : EntityBehavior
         intersections = new();
         bool foundIntersection = false;
 
-        if (!HasOBBCollider)
+        if (!HasUsableObbColliders())
         {
             CuboidAABBCollider AABBCollider = new(entity);
             return AABBCollider.Collide(thisTickOrigin, previousTickOrigin, radius, out Vector3d intersection);
@@ -301,7 +301,7 @@ public sealed class CollidersEntityBehavior : EntityBehavior
         intersections = new();
         bool foundIntersection = false;
 
-        if (!HasOBBCollider)
+        if (!HasUsableObbColliders())
         {
             CuboidAABBCollider AABBCollider = new(entity);
             return AABBCollider.Collide(thisTickOrigin, previousTickOrigin, radius, out Vector3d intersection);
@@ -363,7 +363,7 @@ public sealed class CollidersEntityBehavior : EntityBehavior
         parameter = 0;
         intersection = Vector3d.Zero;
 
-        if (!HasOBBCollider)
+        if (!HasUsableObbColliders())
         {
             CuboidAABBCollider AABBCollider = new(entity);
             return AABBCollider.Collide(thisTickOrigin, previousTickOrigin, radius, out intersection);
@@ -508,6 +508,17 @@ public sealed class CollidersEntityBehavior : EntityBehavior
     }
 
 
+    private bool HasUsableObbColliders()
+    {
+        // Some client-side remodel mods replace/remove the animated shape elements that
+        // Combat Overhaul's detailed OBB colliders are configured to track.  In that case
+        // the behavior still exists and HasOBBCollider stays true, but no usable shape
+        // colliders are ever created.  Treat that as no OBB collider so melee/projectile
+        // collision falls back to the entity's normal vanilla AABB instead of becoming
+        // completely unhittable.
+        return HasOBBCollider && Colliders.Count > 0;
+    }
+
     private readonly Dictionary<ColliderTypes, int> _colliderColors = new()
     {
         { ColliderTypes.Torso, ColorUtil.WhiteArgb },
@@ -556,6 +567,12 @@ public sealed class CollidersEntityBehavior : EntityBehavior
     }
     private void CalculateBoundingBox()
     {
+        if (Colliders.Count == 0)
+        {
+            BoundingBox = new CuboidAABBCollider(entity);
+            return;
+        }
+
         Vector3d min = new(float.MaxValue, float.MaxValue, float.MaxValue);
         Vector3d max = new(float.MinValue, float.MinValue, float.MinValue);
 

@@ -155,6 +155,7 @@ public partial class CombatOverhaulSystem : ModSystem
         api.RegisterCollectibleBehaviorClass("CombatOverhaul:TexturesFromAttributes", typeof(TexturesFromAttributes));
         api.RegisterCollectibleBehaviorClass("CombatOverhaul:AdditionalSlots", typeof(AdditionalSlotsBehavior));
         api.RegisterCollectibleBehaviorClass("CombatOverhaul:GoesIntoSlotsInfo", typeof(GoesIntoSlotsInfo));
+        api.RegisterCollectibleBehaviorClass("CombatOverhaul:MeleeWeaponBehavior", typeof(MeleeWeaponBehavior));
 
         api.RegisterItemClass("CombatOverhaul:Bow", typeof(BowItem));
         api.RegisterItemClass("CombatOverhaul:Sling", typeof(SlingItem));

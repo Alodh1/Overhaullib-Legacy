@@ -1,0 +1,178 @@
+﻿[
+    {
+        "side":  "Universal",
+        "file":  "game:entities/animal/mammal/hooved/gazelle-baby",
+        "op":  "add",
+        "value":  {
+                      "code":  "CombatOverhaul:EntityColliders",
+                      "elements":  {
+                                       "Torso":  [
+                                                     "Body",
+                                                     "abdomen",
+                                                     "L front Thigh",
+                                                     "R front Thigh",
+                                                     "L back Thigh",
+                                                     "R back Thigh",
+                                                     "neck"
+                                                 ],
+                                       "Head":  [
+                                                    "head",
+                                                    "mouth-up"
+                                                ],
+                                       "Arm":  [
+                                                   "L front Upper Arm",
+                                                   "L front lower arm",
+                                                   "R front Upper Arm",
+                                                   "R front lower arm"
+                                               ],
+                                       "Leg":  [
+                                                   "L back Upper Arm",
+                                                   "L back lower arm",
+                                                   "R back Upper Arm",
+                                                   "R back lower arm"
+                                               ],
+                                       "Critical":  [
+
+                                                    ],
+                                       "Resistant":  [
+
+                                                     ]
+                                   }
+                  },
+        "path":  "/client/behaviors/-"
+    },
+    {
+        "side":  "Universal",
+        "file":  "game:entities/animal/mammal/hooved/gazelle-baby",
+        "op":  "add",
+        "value":  {
+                      "code":  "CombatOverhaul:EntityColliders",
+                      "elements":  {
+                                       "Torso":  [
+                                                     "Body",
+                                                     "abdomen",
+                                                     "L front Thigh",
+                                                     "R front Thigh",
+                                                     "L back Thigh",
+                                                     "R back Thigh",
+                                                     "neck"
+                                                 ],
+                                       "Head":  [
+                                                    "head",
+                                                    "mouth-up"
+                                                ],
+                                       "Arm":  [
+                                                   "L front Upper Arm",
+                                                   "L front lower arm",
+                                                   "R front Upper Arm",
+                                                   "R front lower arm"
+                                               ],
+                                       "Leg":  [
+                                                   "L back Upper Arm",
+                                                   "L back lower arm",
+                                                   "R back Upper Arm",
+                                                   "R back lower arm"
+                                               ],
+                                       "Critical":  [
+
+                                                    ],
+                                       "Resistant":  [
+
+                                                     ]
+                                   }
+                  },
+        "path":  "/server/behaviors/-"
+    },
+    {
+        "side":  "Universal",
+        "file":  "game:entities/animal/mammal/hooved/gazelle-adult",
+        "op":  "add",
+        "value":  {
+                      "code":  "CombatOverhaul:EntityColliders",
+                      "elements":  {
+                                       "Torso":  [
+                                                     "Body",
+                                                     "abdomen",
+                                                     "L front Thigh",
+                                                     "R front Thigh",
+                                                     "L back Thigh",
+                                                     "R back Thigh",
+                                                     "neck",
+                                                     "neck2"
+                                                 ],
+                                       "Head":  [
+                                                    "head",
+                                                    "mouth up"
+                                                ],
+                                       "Arm":  [
+                                                   "L front Upper Arm",
+                                                   "L front lower arm",
+                                                   "R front Upper Arm",
+                                                   "R front lower arm"
+                                               ],
+                                       "Leg":  [
+                                                   "L back Upper Arm",
+                                                   "L back lower arm",
+                                                   "R back Upper Arm",
+                                                   "R back lower arm"
+                                               ],
+                                       "Critical":  [
+
+                                                    ],
+                                       "Resistant":  [
+                                                         "L horn base",
+                                                         "L horn mid",
+                                                         "R horn base",
+                                                         "R horn mid"
+                                                     ]
+                                   }
+                  },
+        "path":  "/client/behaviors/-"
+    },
+    {
+        "side":  "Universal",
+        "file":  "game:entities/animal/mammal/hooved/gazelle-adult",
+        "op":  "add",
+        "value":  {
+                      "code":  "CombatOverhaul:EntityColliders",
+                      "elements":  {
+                                       "Torso":  [
+                                                     "Body",
+                                                     "abdomen",
+                                                     "L front Thigh",
+                                                     "R front Thigh",
+                                                     "L back Thigh",
+                                                     "R back Thigh",
+                                                     "neck",
+                                                     "neck2"
+                                                 ],
+                                       "Head":  [
+                                                    "head",
+                                                    "mouth up"
+                                                ],
+                                       "Arm":  [
+                                                   "L front Upper Arm",
+                                                   "L front lower arm",
+                                                   "R front Upper Arm",
+                                                   "R front lower arm"
+                                               ],
+                                       "Leg":  [
+                                                   "L back Upper Arm",
+                                                   "L back lower arm",
+                                                   "R back Upper Arm",
+                                                   "R back lower arm"
+                                               ],
+                                       "Critical":  [
+
+                                                    ],
+                                       "Resistant":  [
+                                                         "L horn base",
+                                                         "L horn mid",
+                                                         "R horn base",
+                                                         "R horn mid"
+                                                     ]
+                                   }
+                  },
+        "path":  "/server/behaviors/-"
+    }
+]

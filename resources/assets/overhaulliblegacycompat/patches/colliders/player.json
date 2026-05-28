@@ -1,0 +1,86 @@
+﻿[
+    {
+        "side":  "Universal",
+        "file":  "game:entities/humanoid/player",
+        "op":  "add",
+        "value":  {
+                      "code":  "CombatOverhaul:EntityColliders",
+                      "elements":  {
+                                       "Torso":  [
+                                                     "LowerTorso",
+                                                     "UpperTorso"
+                                                 ],
+                                       "Head":  [
+                                                    "Head"
+                                                ],
+                                       "Arm":  [
+                                                   "UpperArmR",
+                                                   "UpperArmL",
+                                                   "LowerArmR",
+                                                   "LowerArmL"
+                                               ],
+                                       "Leg":  [
+                                                   "UpperFootL",
+                                                   "UpperFootR",
+                                                   "LowerFootL",
+                                                   "LowerFootR"
+                                               ],
+                                       "Critical":  [
+                                                        "Neck"
+                                                    ],
+                                       "Resistant":  [
+
+                                                     ]
+                                   },
+                      "defaultPenetrationResistance":  6,
+                      "penetrationResistances":  {
+                                                     "LowerTorso":  9,
+                                                     "UpperTorso":  9,
+                                                     "Head":  9
+                                                 }
+                  },
+        "path":  "/client/behaviors/-"
+    },
+    {
+        "side":  "Universal",
+        "file":  "game:entities/humanoid/player",
+        "op":  "add",
+        "value":  {
+                      "code":  "CombatOverhaul:EntityColliders",
+                      "elements":  {
+                                       "Torso":  [
+                                                     "LowerTorso",
+                                                     "UpperTorso"
+                                                 ],
+                                       "Head":  [
+                                                    "Head"
+                                                ],
+                                       "Arm":  [
+                                                   "UpperArmR",
+                                                   "UpperArmL",
+                                                   "LowerArmR",
+                                                   "LowerArmL"
+                                               ],
+                                       "Leg":  [
+                                                   "UpperFootL",
+                                                   "UpperFootR",
+                                                   "LowerFootL",
+                                                   "LowerFootR"
+                                               ],
+                                       "Critical":  [
+                                                        "Neck"
+                                                    ],
+                                       "Resistant":  [
+
+                                                     ]
+                                   },
+                      "defaultPenetrationResistance":  6,
+                      "penetrationResistances":  {
+                                                     "LowerTorso":  9,
+                                                     "UpperTorso":  9,
+                                                     "Head":  9
+                                                 }
+                  },
+        "path":  "/server/behaviors/-"
+    }
+]

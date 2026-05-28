@@ -309,19 +309,19 @@ public static class ParticleEditor
 
         EvolvingNatFloat? opacity = particleProperties.OpacityEvolve;
         EvolvingNatFloatEditorNullable(id, "Opacity", ref opacity);
-        particleProperties.OpacityEvolve = opacity;
+        particleProperties.OpacityEvolve = opacity.GetValueOrDefault();
 
         EvolvingNatFloat? red = particleProperties.RedEvolve;
         EvolvingNatFloatEditorNullable(id, "Red", ref red);
-        particleProperties.RedEvolve = red;
+        particleProperties.RedEvolve = red.GetValueOrDefault();
 
         EvolvingNatFloat? green = particleProperties.GreenEvolve;
         EvolvingNatFloatEditorNullable(id, "Green", ref green);
-        particleProperties.GreenEvolve = green;
+        particleProperties.GreenEvolve = green.GetValueOrDefault();
 
         EvolvingNatFloat? blue = particleProperties.BlueEvolve;
         EvolvingNatFloatEditorNullable(id, "Blue", ref blue);
-        particleProperties.BlueEvolve = blue;
+        particleProperties.BlueEvolve = blue.GetValueOrDefault();
 
         ImGui.Unindent();
     }
@@ -383,7 +383,7 @@ public static class ParticleEditor
 
         EvolvingNatFloat? sizeEvolve = particleProperties.SizeEvolve;
         EvolvingNatFloatEditorNullable(id, "Size evolve", ref sizeEvolve);
-        particleProperties.SizeEvolve = sizeEvolve;
+        particleProperties.SizeEvolve = sizeEvolve.GetValueOrDefault();
 
         ImGui.Unindent();
     }
@@ -560,8 +560,8 @@ public static class ParticleEditor
 
         value ??= new(EnumTransformFunction.LINEAR, 0);
 
-        int currentModel = (int)value.Transform;
-        float currentFactor = value.Factor;
+        int currentModel = (int)value.Value.Transform;
+        float currentFactor = value.Value.Factor;
         ImGui.Combo($"##combo{label}{id}", ref currentModel, _transformFunction, 12, 12);
         ImGui.DragFloat($"##drag{label}{id}", ref currentFactor);
 

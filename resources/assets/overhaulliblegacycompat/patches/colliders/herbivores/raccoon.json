@@ -1,0 +1,150 @@
+﻿[
+    {
+        "side":  "Universal",
+        "file":  "game:entities/animal/mammal/raccoon-adult",
+        "op":  "add",
+        "value":  {
+                      "code":  "CombatOverhaul:EntityColliders",
+                      "elements":  {
+                                       "Torso":  [
+                                                     "body",
+                                                     "abdomen",
+                                                     "tail",
+                                                     "L back leg",
+                                                     "R back leg"
+                                                 ],
+                                       "Head":  [
+                                                    "head",
+                                                    "mouth"
+                                                ],
+                                       "Arm":  [
+                                                   "R front feet",
+                                                   "L front feet"
+                                               ],
+                                       "Leg":  [
+                                                   "L back feet",
+                                                   "R back feet"
+                                               ],
+                                       "Critical":  [
+                                                        "neck"
+                                                    ],
+                                       "Resistant":  [
+
+                                                     ]
+                                   },
+                      "defaultPenetrationResistance":  2
+                  },
+        "path":  "/client/behaviors/-"
+    },
+    {
+        "side":  "Universal",
+        "file":  "game:entities/animal/mammal/raccoon-adult",
+        "op":  "add",
+        "value":  {
+                      "code":  "CombatOverhaul:EntityColliders",
+                      "elements":  {
+                                       "Torso":  [
+                                                     "body",
+                                                     "abdomen",
+                                                     "tail",
+                                                     "L back leg",
+                                                     "R back leg"
+                                                 ],
+                                       "Head":  [
+                                                    "head",
+                                                    "mouth"
+                                                ],
+                                       "Arm":  [
+                                                   "R front feet",
+                                                   "L front feet"
+                                               ],
+                                       "Leg":  [
+                                                   "L back feet",
+                                                   "R back feet"
+                                               ],
+                                       "Critical":  [
+                                                        "neck"
+                                                    ],
+                                       "Resistant":  [
+
+                                                     ]
+                                   },
+                      "defaultPenetrationResistance":  2
+                  },
+        "path":  "/server/behaviors/-"
+    },
+    {
+        "side":  "Universal",
+        "file":  "game:entities/animal/mammal/raccoon-baby",
+        "op":  "add",
+        "value":  {
+                      "code":  "CombatOverhaul:EntityColliders",
+                      "elements":  {
+                                       "Torso":  [
+                                                     "body",
+                                                     "abdomen",
+                                                     "tail",
+                                                     "L back leg",
+                                                     "R back leg"
+                                                 ],
+                                       "Head":  [
+                                                    "head",
+                                                    "mouth"
+                                                ],
+                                       "Arm":  [
+                                                   "R front feet",
+                                                   "L front feet"
+                                               ],
+                                       "Leg":  [
+                                                   "L back feet",
+                                                   "R back feet"
+                                               ],
+                                       "Critical":  [
+                                                        "neck"
+                                                    ],
+                                       "Resistant":  [
+
+                                                     ]
+                                   },
+                      "defaultPenetrationResistance":  0
+                  },
+        "path":  "/client/behaviors/-"
+    },
+    {
+        "side":  "Universal",
+        "file":  "game:entities/animal/mammal/raccoon-baby",
+        "op":  "add",
+        "value":  {
+                      "code":  "CombatOverhaul:EntityColliders",
+                      "elements":  {
+                                       "Torso":  [
+                                                     "body",
+                                                     "abdomen",
+                                                     "tail",
+                                                     "L back leg",
+                                                     "R back leg"
+                                                 ],
+                                       "Head":  [
+                                                    "head",
+                                                    "mouth"
+                                                ],
+                                       "Arm":  [
+                                                   "R front feet",
+                                                   "L front feet"
+                                               ],
+                                       "Leg":  [
+                                                   "L back feet",
+                                                   "R back feet"
+                                               ],
+                                       "Critical":  [
+                                                        "neck"
+                                                    ],
+                                       "Resistant":  [
+
+                                                     ]
+                                   },
+                      "defaultPenetrationResistance":  0
+                  },
+        "path":  "/server/behaviors/-"
+    }
+]

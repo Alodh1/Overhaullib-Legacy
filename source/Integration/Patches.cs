@@ -90,6 +90,7 @@ internal static class HarmonyPatches
 
         TryPatchStopRaiseShieldAnim(harmony, api);
         TryPatchOffhandDaggerSlot(harmony, api);
+        TryPatchVanillaArmorStandInteract(harmony, api);
 
         // BehaviorHealingItem was removed/renamed in newer VS versions.
         // Skip that old patch; it is unrelated to wearable lights.
@@ -112,6 +113,7 @@ internal static class HarmonyPatches
         harmony.Unpatch(typeof(BagInventory).GetMethod("SaveSlotIntoBag", AccessTools.all), HarmonyPatchType.Prefix, harmonyId);
         TryUnpatchStopRaiseShieldAnim(harmony, harmonyId);
         TryUnpatchOffhandDaggerSlot(harmony, harmonyId);
+        TryUnpatchVanillaArmorStandInteract(harmony, harmonyId);
         // Old BehaviorHealingItem patch skipped; nothing to unpatch here.
 
         if (!api.ModLoader.IsModEnabled("svanaxfdc"))
@@ -122,6 +124,48 @@ internal static class HarmonyPatches
         _api = null;
     }
 
+
+    private static void TryPatchVanillaArmorStandInteract(Harmony harmony, ICoreAPI api)
+    {
+        MethodInfo? method = GetVanillaArmorStandOnInteractMethod();
+        if (method == null)
+        {
+            api.Logger.Warning("[OverhaullibLegacyCompat] Could not find vanilla EntityArmorStand.OnInteract. Ruin armor stands may keep vanilla-only interaction.");
+            return;
+        }
+
+        harmony.Patch(method, prefix: new HarmonyMethod(AccessTools.Method(typeof(HarmonyPatches), nameof(VanillaArmorStand_OnInteract_Prefix))));
+        api.Logger.Notification("[OverhaullibLegacyCompat] Patched vanilla armor stand interaction fallback for CO inventory behavior.");
+    }
+
+    private static void TryUnpatchVanillaArmorStandInteract(Harmony harmony, string harmonyId)
+    {
+        MethodInfo? method = GetVanillaArmorStandOnInteractMethod();
+        if (method != null)
+        {
+            harmony.Unpatch(method, HarmonyPatchType.Prefix, harmonyId);
+        }
+    }
+
+    private static MethodInfo? GetVanillaArmorStandOnInteractMethod()
+    {
+        return AccessTools.Method(
+            typeof(EntityArmorStand),
+            nameof(Entity.OnInteract),
+            [typeof(EntityAgent), typeof(ItemSlot), typeof(Vec3d), typeof(EnumInteractMode)]
+        );
+    }
+
+    private static bool VanillaArmorStand_OnInteract_Prefix(EntityArmorStand __instance, EntityAgent byEntity, ItemSlot slot, Vec3d hitPosition, EnumInteractMode mode)
+    {
+        EntityBehaviorCOArmorStandInventory? behavior = __instance.GetBehavior<EntityBehaviorCOArmorStandInventory>();
+        if (behavior == null)
+        {
+            return true;
+        }
+
+        return !behavior.HandleInteract(byEntity, slot, hitPosition, mode);
+    }
 
     private static void TryPatchOffhandDaggerSlot(Harmony harmony, ICoreAPI api)
     {

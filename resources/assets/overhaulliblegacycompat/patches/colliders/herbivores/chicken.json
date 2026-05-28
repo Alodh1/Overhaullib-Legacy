@@ -1,0 +1,136 @@
+﻿[
+    {
+        "side":  "Universal",
+        "file":  "game:entities/animal/bird/chicken-adult",
+        "op":  "add",
+        "value":  {
+                      "code":  "CombatOverhaul:EntityColliders",
+                      "defaultPenetrationResistance":  1,
+                      "elements":  {
+                                       "Torso":  [
+                                                     "body",
+                                                     "Body"
+                                                 ],
+                                       "Head":  [
+                                                    "head"
+                                                ],
+                                       "Arm":  [
+
+                                               ],
+                                       "Leg":  [
+                                                   "R feet",
+                                                   "L feet",
+                                                   "leg right",
+                                                   "leg left",
+                                                   "thighs right",
+                                                   "thighs left"
+                                               ],
+                                       "Critical":  [
+                                                        "neck",
+                                                        "throat"
+                                                    ],
+                                       "Resistant":  [
+
+                                                     ]
+                                   }
+                  },
+        "path":  "/client/behaviors/-"
+    },
+    {
+        "side":  "Universal",
+        "file":  "game:entities/animal/bird/chicken-adult",
+        "op":  "add",
+        "value":  {
+                      "code":  "CombatOverhaul:EntityColliders",
+                      "defaultPenetrationResistance":  1,
+                      "elements":  {
+                                       "Torso":  [
+                                                     "body",
+                                                     "Body"
+                                                 ],
+                                       "Head":  [
+                                                    "head"
+                                                ],
+                                       "Arm":  [
+
+                                               ],
+                                       "Leg":  [
+                                                   "R feet",
+                                                   "L feet",
+                                                   "leg right",
+                                                   "leg left",
+                                                   "thighs right",
+                                                   "thighs left"
+                                               ],
+                                       "Critical":  [
+                                                        "neck",
+                                                        "throat"
+                                                    ],
+                                       "Resistant":  [
+
+                                                     ]
+                                   }
+                  },
+        "path":  "/server/behaviors/-"
+    },
+    {
+        "side":  "Universal",
+        "file":  "game:entities/animal/bird/chicken-baby",
+        "op":  "add",
+        "value":  {
+                      "code":  "CombatOverhaul:EntityColliders",
+                      "elements":  {
+                                       "Torso":  [
+                                                     "body"
+                                                 ],
+                                       "Head":  [
+                                                    "head"
+                                                ],
+                                       "Arm":  [
+
+                                               ],
+                                       "Leg":  [
+
+                                               ],
+                                       "Critical":  [
+
+                                                    ],
+                                       "Resistant":  [
+
+                                                     ]
+                                   }
+                  },
+        "defaultPenetrationResistance":  0,
+        "path":  "/client/behaviors/-"
+    },
+    {
+        "side":  "Universal",
+        "file":  "game:entities/animal/bird/chicken-baby",
+        "op":  "add",
+        "value":  {
+                      "code":  "CombatOverhaul:EntityColliders",
+                      "elements":  {
+                                       "Torso":  [
+                                                     "body"
+                                                 ],
+                                       "Head":  [
+                                                    "head"
+                                                ],
+                                       "Arm":  [
+
+                                               ],
+                                       "Leg":  [
+
+                                               ],
+                                       "Critical":  [
+
+                                                    ],
+                                       "Resistant":  [
+
+                                                     ]
+                                   }
+                  },
+        "defaultPenetrationResistance":  0,
+        "path":  "/server/behaviors/-"
+    }
+]

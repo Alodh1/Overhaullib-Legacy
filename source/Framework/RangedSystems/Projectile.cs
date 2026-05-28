@@ -1,4 +1,4 @@
-﻿using CombatOverhaul.Colliders;
+using CombatOverhaul.Colliders;
 using CombatOverhaul.DamageSystems;
 using CombatOverhaul.Implementations;
 using CombatOverhaul.Utils;
@@ -13,6 +13,7 @@ using Vintagestory.API.Config;
 using Vintagestory.API.Datastructures;
 using Vintagestory.API.MathTools;
 using Vintagestory.API.Server;
+using Vintagestory.API.Util;
 using Vintagestory.GameContent;
 
 namespace CombatOverhaul.RangedSystems;
@@ -139,7 +140,11 @@ public sealed class ProjectileServer
         if (_settings.PrintRangeHits && collider != "")
         {
             CollidersEntityBehavior? colliders = target.GetBehavior<CollidersEntityBehavior>();
-            ColliderTypes ColliderType = colliders?.CollidersTypes[collider] ?? ColliderTypes.Torso;
+            ColliderTypes ColliderType = ColliderTypes.Torso;
+            if (colliders != null && colliders.CollidersTypes.TryGetValue(collider, out ColliderTypes colliderType))
+            {
+                ColliderType = colliderType;
+            }
 
             float damageReceivedValue = damageReceived ? target.WatchedAttributes.GetFloat("onHurt") : 0;
             string damageLogMessage = Lang.Get("combatoverhaul:damagelog-dealt-damage-with-projectile", Lang.Get($"combatoverhaul:entity-damage-zone-{ColliderType}"), targetName, $"{damageReceivedValue:F2}", projectileName);
@@ -434,6 +439,19 @@ public class ProjectileBehavior : CollectibleBehavior
     public ProjectileStats GetStats(ItemStack stack)
     {
         ItemStackProjectileStats stackStats = ItemStackProjectileStats.FromItemStack(stack);
+
+        if (Stats.DamageStatsByType != null && Stats.DamageStatsByType.Count > 0 && stack.Item?.Code != null)
+        {
+            string itemCode = stack.Item.Code.ToString();
+            foreach (KeyValuePair<string, ProjectileDamageDataJson> entry in Stats.DamageStatsByType)
+            {
+                if (WildcardUtil.Match(entry.Key, itemCode))
+                {
+                    Stats.DamageStats = entry.Value;
+                    break;
+                }
+            }
+        }
 
         ProjectileStats stats = Stats.Clone();
         stats.DamageStats.Damage *= stackStats.DamageMultiplier * QuenchableStatUtil.GetAttackPowerMultiplier(stack);
