@@ -581,7 +581,45 @@ public sealed class ProjectileSystemServer
 
     private static bool CheckAABBOnly(ICoreAPI api, ProjectileEntity projectile)
     {
-        return api.World.GetEntityById(projectile.ShooterId) is not EntityPlayer;
+        if (api.World.GetEntityById(projectile.ShooterId) is not EntityPlayer)
+        {
+            return true;
+        }
+
+        return IsFirearmsProjectile(projectile);
+    }
+
+    private static bool IsFirearmsProjectile(ProjectileEntity projectile)
+    {
+        if (projectile.Code?.Domain == "maltiezfirearms")
+        {
+            return true;
+        }
+
+        return IsFirearmsCollectible(projectile.WeaponStack?.Collectible) ||
+            IsFirearmsCollectible(projectile.ProjectileStack?.Collectible);
+    }
+
+    private static bool IsFirearmsCollectible(CollectibleObject? collectible)
+    {
+        if (collectible == null)
+        {
+            return false;
+        }
+
+        if (collectible.Code?.Domain == "maltiezfirearms")
+        {
+            return true;
+        }
+
+        Type collectibleType = collectible.GetType();
+        if (collectibleType.FullName?.StartsWith("Firearms.", StringComparison.Ordinal) == true)
+        {
+            return true;
+        }
+
+        string? assemblyName = collectibleType.Assembly.GetName().Name;
+        return assemblyName?.Contains("Firearms", StringComparison.OrdinalIgnoreCase) == true;
     }
     private static void SpawnProjectile(Guid id, ItemStack projectileStack, ItemStack? weaponStack, ProjectileStats stats, ProjectileSpawnStats spawnStats, ICoreAPI api, Entity shooter, Entity owner, out ProjectileEntity? projectile)
     {
