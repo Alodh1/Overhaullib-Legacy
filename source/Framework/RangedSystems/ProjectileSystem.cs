@@ -548,6 +548,12 @@ public sealed class ProjectileSystemServer
     }
     public void TryCollide(ProjectileEntity projectile)
     {
+        if (IsFirearmsProjectile(projectile))
+        {
+            TryCollideServerAabb(projectile);
+            return;
+        }
+
         ProjectileCollisionCheckRequest packet = new()
         {
             ProjectileId = projectile.ProjectileId,
@@ -578,6 +584,87 @@ public sealed class ProjectileSystemServer
     private readonly IServerNetworkChannel _serverChannel;
     private readonly Dictionary<Guid, ProjectileServer> _projectiles = new();
     private const float _nearestPlayerSearchRange = 300;
+
+    private void TryCollideServerAabb(ProjectileEntity projectile)
+    {
+        if (!_projectiles.TryGetValue(projectile.ProjectileId, out ProjectileServer? projectileServer))
+        {
+            return;
+        }
+
+        Vector3d currentPosition = new(projectile.ServerPos.X, projectile.ServerPos.Y, projectile.ServerPos.Z);
+        Vector3d previousPosition = new(projectile.PreviousPosition.X, projectile.PreviousPosition.Y, projectile.PreviousPosition.Z);
+        Vector3d velocity = new(projectile.PreviousVelocity.X, projectile.PreviousVelocity.Y, projectile.PreviousVelocity.Z);
+        Vector3d segment = currentPosition - previousPosition;
+
+        if (segment.LengthSquared <= 0)
+        {
+            return;
+        }
+
+        Vec3d midPoint = new(
+            segment.X / 2f + previousPosition.X,
+            segment.Y / 2f + previousPosition.Y,
+            segment.Z / 2f + previousPosition.Z);
+
+        Settings settings = _api.ModLoader.GetModSystem<CombatOverhaulSystem>().Settings;
+        double searchRadius = Math.Max(
+            settings.CollisionRadius + projectile.ColliderRadius,
+            segment.Length / 2f + settings.CollisionRadius + projectile.ColliderRadius);
+
+        Entity? closestTarget = null;
+        Vector3d closestPoint = new();
+        float closestPenetrationStrengthLoss = 0;
+        double closestDistance = double.MaxValue;
+
+        foreach (Entity entity in _api.World.GetEntitiesAround(midPoint, (float)searchRadius, (float)searchRadius).Where(CanProjectileHit))
+        {
+            if (entity.EntityId == projectile.EntityId) continue;
+            if (entity.EntityId == projectile.ShooterId) continue;
+            if (projectile.CollidedWith.Contains(entity.EntityId)) continue;
+
+            if (!CheckEntityAabb(entity, currentPosition, previousPosition, projectile.ColliderRadius, settings.DefaultColliderPenetrationResistance, out Vector3d point, out float penetrationStrengthLoss, useServerPosition: true))
+            {
+                continue;
+            }
+
+            double distance = (point - previousPosition).LengthSquared;
+            if (distance >= closestDistance)
+            {
+                continue;
+            }
+
+            closestTarget = entity;
+            closestPoint = point;
+            closestPenetrationStrengthLoss = penetrationStrengthLoss;
+            closestDistance = distance;
+        }
+
+        if (closestTarget == null)
+        {
+            return;
+        }
+
+        Vector3d targetVelocity = new(closestTarget.ServerPos.Motion.X, closestTarget.ServerPos.Motion.Y, closestTarget.ServerPos.Motion.Z);
+        ProjectileCollisionPacket packet = new()
+        {
+            Id = projectile.ProjectileId,
+            CollisionPoint = [closestPoint.X, closestPoint.Y, closestPoint.Z],
+            AfterCollisionVelocity = [targetVelocity.X, targetVelocity.Y, targetVelocity.Z],
+            RelativeSpeed = (targetVelocity - velocity).Length,
+            Collider = "",
+            ReceiverEntity = closestTarget.EntityId,
+            PacketVersion = projectileServer.PacketVersion,
+            PenetrationStrengthLoss = closestPenetrationStrengthLoss
+        };
+
+        projectileServer.PacketVersion++;
+        projectile.CollidedWith.Add(packet.ReceiverEntity);
+        projectile.Stuck = false;
+        projectile.CollidedVertically = false;
+        projectile.CollidedHorizontally = false;
+        projectileServer.OnCollision(packet);
+    }
 
     private static bool CheckAABBOnly(ICoreAPI api, ProjectileEntity projectile)
     {
@@ -620,6 +707,41 @@ public sealed class ProjectileSystemServer
 
         string? assemblyName = collectibleType.Assembly.GetName().Name;
         return assemblyName?.Contains("Firearms", StringComparison.OrdinalIgnoreCase) == true;
+    }
+    private static bool CanProjectileHit(Entity entity)
+    {
+        if (!entity.Alive) return false;
+
+        return entity.IsCreature || entity.GetBehavior<EntityBehaviorHealth>() != null;
+    }
+
+    private static bool CheckEntityAabb(Entity target, Vector3d currentPosition, Vector3d previousPosition, float radius, float penetrationResistance, out Vector3d point, out float penetrationStrengthLoss, bool useServerPosition = false)
+    {
+        return CheckCollisionBox(GetCollisionBox(target, useServerPosition), currentPosition, previousPosition, radius, penetrationResistance, out point, out penetrationStrengthLoss);
+    }
+
+    private static bool CheckCollisionBox(CuboidAABBCollider collisionBox, Vector3d currentPosition, Vector3d previousPosition, float radius, float penetrationResistance, out Vector3d point, out float penetrationStrengthLoss)
+    {
+        point = new();
+        penetrationStrengthLoss = 0;
+
+        if (!collisionBox.Collide(currentPosition, previousPosition, radius, out point)) return false;
+
+        penetrationStrengthLoss = penetrationResistance;
+        return true;
+    }
+
+    private static CuboidAABBCollider GetCollisionBox(Entity entity, bool useServerPosition)
+    {
+        Cuboidf collisionBox = entity.CollisionBox.Clone();
+        EntityPos position = useServerPosition ? entity.ServerPos : entity.Pos;
+        collisionBox.X1 += (float)position.X;
+        collisionBox.Y1 += (float)position.Y;
+        collisionBox.Z1 += (float)position.Z;
+        collisionBox.X2 += (float)position.X;
+        collisionBox.Y2 += (float)position.Y;
+        collisionBox.Z2 += (float)position.Z;
+        return new(collisionBox);
     }
     private static void SpawnProjectile(Guid id, ItemStack projectileStack, ItemStack? weaponStack, ProjectileStats stats, ProjectileSpawnStats spawnStats, ICoreAPI api, Entity shooter, Entity owner, out ProjectileEntity? projectile)
     {
