@@ -1,4 +1,5 @@
-﻿using CombatOverhaul.Inputs;
+using CombatOverhaul.Inputs;
+using CombatOverhaul.Integration;
 using Vintagestory.API.Client;
 using Vintagestory.API.Common;
 using Vintagestory.GameContent;
@@ -9,6 +10,15 @@ public static partial class InteractionsTester
 {
     public static bool PlayerTriesToInteract(EntityPlayer player, bool mainHand, ActionEventData eventData)
     {
+        ItemSlot? currentSlot = mainHand
+            ? (player.ActiveHandItemSlot?.Itemstack != null ? player.ActiveHandItemSlot : player.RightHandItemSlot)
+            : player.LeftHandItemSlot;
+
+        if (GrindingWheelCompat.PlayerTriesToUseGrindingWheel(player, currentSlot, eventData, mainHand))
+        {
+            return true;
+        }
+
         return eventData.AltPressed && (
             PlayerTriesToPutItemOnGround(player, mainHand, eventData) ||
             PlayerTriesToPutItemIntoRack(player, mainHand, eventData) ||

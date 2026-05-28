@@ -453,6 +453,7 @@ public class StanceBasedMeleeWeaponClient : IClientWeaponLogic, IHasDynamicIdleA
     [ActionEventHandler(EnumEntityAction.RightMouseDown, ActionState.Active)]
     protected virtual bool RightClickAttack(ItemSlot slot, EntityPlayer player, ref int state, ActionEventData eventData, bool mainHand, AttackDirection direction)
     {
+        if (GrindingWheelCompat.PlayerTriesToUseGrindingWheel(player, slot, eventData, mainHand)) return false;
         if (eventData.AltPressed) return false;
         if (!mainHand && CanLeftClickAttackWithOtherHand(player, mainHand)) return false;
         if (ActionRestricted(player, mainHand)) return false;

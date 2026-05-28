@@ -1,9 +1,11 @@
 using CombatOverhaul.Implementations;
+using CombatOverhaul.Inputs;
 using HarmonyLib;
 using Newtonsoft.Json.Linq;
 using Vintagestory.API.Common;
 using Vintagestory.API.Common.Entities;
 using Vintagestory.API.Datastructures;
+using Vintagestory.API.MathTools;
 using Vintagestory.GameContent;
 
 namespace CombatOverhaul.Integration;
@@ -79,6 +81,38 @@ public static class GrindingWheelCompat
 
         AppliedCollectibleBuff? sharpened = behavior.GetItemBuffs(slot.Itemstack).FirstOrDefault(buff => buff.Code == "sharpened");
         return sharpened == null || sharpened.Multiplier < 1.099f;
+    }
+
+    public static bool PlayerTriesToUseGrindingWheel(EntityPlayer player, ItemSlot? slot, ActionEventData eventData, bool mainHand)
+    {
+        if (!mainHand || eventData.Action.Action != EnumEntityAction.RightMouseDown)
+        {
+            return false;
+        }
+
+        BlockSelection? blockSelection = player.BlockSelection;
+        if (!IsGrindingWheel(blockSelection?.Block))
+        {
+            return false;
+        }
+
+        return TryEnableGrindingWheelBuff(slot);
+    }
+
+    public static bool IsGrindingWheel(Block? block)
+    {
+        if (block == null)
+        {
+            return false;
+        }
+
+        if (block is BlockGrindingWheel)
+        {
+            return true;
+        }
+
+        string path = block.Code?.Path ?? "";
+        return path.StartsWith("grindingwheel-", StringComparison.OrdinalIgnoreCase);
     }
 
     private static CollectibleBehaviorBuffable AddBuffableBehavior(Item item, ICoreAPI? api)
