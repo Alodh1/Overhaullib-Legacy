@@ -251,7 +251,6 @@ internal static class CraftedArmorQuenchStatePatch
         if (output.Collectible == null
             || QuenchableStateUtil.IsArmorOrArmorComponent(output)
             || !QuenchableStateUtil.IsFerrous(output)
-            || output.Collectible.GetCollectibleBehavior<CollectibleBehaviorQuenchable>(true) == null
             || QuenchableStateUtil.GetKind(output) != QuenchableStateUtil.WeaponKind)
         {
             return;
@@ -260,6 +259,7 @@ internal static class CraftedArmorQuenchStatePatch
         int bestQuenchIteration = 0;
         int bestTemperIteration = 0;
         float bestPowerValue = 0f;
+        float bestDurationBonus = 0f;
 
         foreach (ItemSlot input in allInputSlots)
         {
@@ -277,6 +277,8 @@ internal static class CraftedArmorQuenchStatePatch
             int quenchIteration = Math.Max(0, input.Itemstack.Attributes.GetInt("quenchIteration", 0));
             int temperIteration = Math.Clamp(input.Itemstack.Attributes.GetInt("temperIteration", 0), 0, quenchIteration);
             float powerValue = Math.Max(0f, input.Itemstack.Attributes.GetFloat("powervalue", 0f));
+            float durationBonus = Math.Max(0f, input.Itemstack.Attributes.GetFloat("durationbonus", 0f));
+            bestDurationBonus = Math.Max(bestDurationBonus, durationBonus);
 
             if (quenchIteration > bestQuenchIteration
                 || (quenchIteration == bestQuenchIteration && temperIteration > bestTemperIteration)
@@ -288,7 +290,7 @@ internal static class CraftedArmorQuenchStatePatch
             }
         }
 
-        if (bestQuenchIteration <= 0 && bestPowerValue <= 0f)
+        if (bestQuenchIteration <= 0 && bestPowerValue <= 0f && bestDurationBonus <= 0f)
         {
             return;
         }
@@ -303,9 +305,17 @@ internal static class CraftedArmorQuenchStatePatch
         output.Attributes.SetInt("quenchIteration", finalQuenchIteration);
         output.Attributes.SetInt("temperIteration", finalTemperIteration);
         output.Attributes.SetFloat("powervalue", Math.Max(0f, normalizedPowerValue));
+        if (bestDurationBonus > 0f)
+        {
+            output.Attributes.SetFloat("durationbonus", bestDurationBonus);
+        }
+        else
+        {
+            output.Attributes.RemoveAttribute("durationbonus");
+        }
 
-        // Prevent stacked/duplicated quench buffs after crafting.
-        QuenchableStateUtil.RemoveBuffs(output, "attackpower", "miningspeed");
+        NormalizeVisibleWeaponQuenchBuffs(output, normalizedPowerValue, bestDurationBonus);
+        NormalizeCraftedWeaponDurability(output);
     }
 
     private static float GetPowerPerQuench(ItemStack stack)
@@ -329,6 +339,57 @@ internal static class CraftedArmorQuenchStatePatch
         }
 
         return fallback;
+    }
+
+    private static void NormalizeVisibleWeaponQuenchBuffs(ItemStack output, float powerValue, float durationBonus)
+    {
+        QuenchableStateUtil.RemoveBuffs(output, "attackpower", "miningspeed", "maxdurability");
+
+        CollectibleBehaviorBuffable? behavior = output.Collectible?.GetBehavior<CollectibleBehaviorBuffable>();
+        if (behavior == null)
+        {
+            return;
+        }
+
+        if (powerValue > 0f)
+        {
+            behavior.AddBuff(output, new AppliedCollectibleBuff
+            {
+                Code = "hardened",
+                Multiplier = 1f + powerValue,
+                StatCode = "attackpower"
+            }, EnumBuffAddType.ReplaceOnDuplicate);
+        }
+
+        if (durationBonus > 0f)
+        {
+            behavior.AddBuff(output, new AppliedCollectibleBuff
+            {
+                Code = "hardened",
+                Multiplier = 1f + durationBonus,
+                StatCode = "maxdurability"
+            }, EnumBuffAddType.ReplaceOnDuplicate);
+        }
+    }
+
+    private static void NormalizeCraftedWeaponDurability(ItemStack output)
+    {
+        if (output.Collectible == null || !output.Attributes.HasAttribute("durability"))
+        {
+            return;
+        }
+
+        int maxDurability = output.Collectible.GetMaxDurability(output);
+        if (maxDurability <= 0)
+        {
+            return;
+        }
+
+        int currentDurability = output.Collectible.GetRemainingDurability(output);
+        if (currentDurability <= 0 || currentDurability > maxDurability)
+        {
+            output.Attributes.RemoveAttribute("durability");
+        }
     }
 }
 
