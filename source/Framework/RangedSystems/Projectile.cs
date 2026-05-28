@@ -41,6 +41,7 @@ public sealed class ProjectileServer
         Entity receiver = _api.World.GetEntityById(packet.ReceiverEntity);
 
         if (receiver == null) return;
+        if (packet.CollisionPoint.Length < 3) return;
 
         float initialPenetrationStrength = _entity.PenetrationStrength;
         _entity.PenetrationStrength = Math.Max(0, _entity.PenetrationStrength - packet.PenetrationStrengthLoss);
@@ -65,13 +66,22 @@ public sealed class ProjectileServer
             _entity.ServerPos.Motion.Z *= speedReduction;
         }
 
-        bool hit = Attack(_shooter, receiver, collisionPoint, packet.Collider, packet.RelativeSpeed);
-
-        if (hit) PlaySound(_shooter);
+        DealCollisionDamage(receiver, collisionPoint, packet.Collider, packet.RelativeSpeed);
 
         _entity.OnCollisionWithEntity(receiver, packet.Collider);
 
         
+    }
+
+    public void OnLateCollision(ProjectileCollisionPacket packet)
+    {
+        Entity receiver = _api.World.GetEntityById(packet.ReceiverEntity);
+
+        if (receiver == null) return;
+        if (packet.CollisionPoint.Length < 3) return;
+
+        Vector3d collisionPoint = new(packet.CollisionPoint[0], packet.CollisionPoint[1], packet.CollisionPoint[2]);
+        DealCollisionDamage(receiver, collisionPoint, packet.Collider, packet.RelativeSpeed);
     }
 
     public void TryCollide()
@@ -88,6 +98,13 @@ public sealed class ProjectileServer
     private readonly ICoreAPI _api;
     private readonly ProjectileSystemServer _system;
     private readonly Settings _settings;
+
+    private void DealCollisionDamage(Entity receiver, Vector3d collisionPoint, string collider, double relativeSpeed)
+    {
+        bool hit = Attack(_shooter, receiver, collisionPoint, collider, relativeSpeed);
+
+        if (hit) PlaySound(_shooter);
+    }
 
     private bool Attack(Entity attacker, Entity target, Vector3d position, string collider, double relativeSpeed)
     {

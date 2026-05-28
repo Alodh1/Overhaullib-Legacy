@@ -519,6 +519,8 @@ public sealed class CollidersEntityBehavior : EntityBehavior
         return HasOBBCollider && Colliders.Count > 0;
     }
 
+    public bool HasUsableDetailedColliders => HasUsableObbColliders();
+
     private readonly Dictionary<ColliderTypes, int> _colliderColors = new()
     {
         { ColliderTypes.Torso, ColorUtil.WhiteArgb },

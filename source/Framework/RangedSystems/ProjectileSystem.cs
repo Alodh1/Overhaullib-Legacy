@@ -269,14 +269,21 @@ public sealed class ProjectileSystemClient
         collider = "";
         point = new();
         penetrationStrengthLoss = 0;
-        collisionMode = colliders == null ? "AABBNoColliders" : checkAABBOnly ? "AABBOnly" : "CO";
+        bool hasUsableDetailedColliders = colliders?.HasUsableDetailedColliders == true;
+        collisionMode = colliders == null
+            ? "AABBNoColliders"
+            : checkAABBOnly
+                ? "AABBOnly"
+                : hasUsableDetailedColliders
+                    ? "CO"
+                    : "AABBNoUsableColliders";
         missReason = "";
         float defaultColliderPenetrationResistance = _combatOverhaulSystem.Settings.DefaultColliderPenetrationResistance;
-        bool requireDetailedCollider = requireColliderWhenAvailable && colliders != null && !checkAABBOnly;
+        bool requireDetailedCollider = requireColliderWhenAvailable && hasUsableDetailedColliders && !checkAABBOnly;
 
         bool aabbHit = CheckEntityAabb(target, currentPosition, previousPosition, radius, defaultColliderPenetrationResistance, out Vector3d aabbPoint, out float aabbPenetrationStrengthLoss);
 
-        if (colliders == null || checkAABBOnly)
+        if (colliders == null || checkAABBOnly || !hasUsableDetailedColliders)
         {
             if (!aabbHit)
             {
@@ -615,7 +622,9 @@ public sealed class ProjectileSystemServer
     private readonly ICoreServerAPI _api;
     private readonly IServerNetworkChannel _serverChannel;
     private readonly Dictionary<Guid, ProjectileServer> _projectiles = new();
+    private readonly Dictionary<Guid, LateProjectileCollision> _lateProjectiles = new();
     private const float _nearestPlayerSearchRange = 300;
+    private const int LateCollisionGraceMs = 750;
 
     private void TryCollideServerAabb(ProjectileEntity projectile)
     {
@@ -823,15 +832,42 @@ public sealed class ProjectileSystemServer
 
         api.World.SpawnEntity(entity);
     }
-    private void ClearId(Guid id) => _projectiles.Remove(id);
+    private sealed class LateProjectileCollision
+    {
+        public LateProjectileCollision(ProjectileServer projectile, int packetVersion, long expiresAtMs)
+        {
+            Projectile = projectile;
+            PacketVersion = packetVersion;
+            ExpiresAtMs = expiresAtMs;
+        }
+
+        public ProjectileServer Projectile { get; }
+        public int PacketVersion { get; }
+        public long ExpiresAtMs { get; }
+    }
+
+    private void ClearId(Guid id)
+    {
+        PruneLateProjectiles();
+
+        if (_projectiles.TryGetValue(id, out ProjectileServer? projectileServer) && IsFirearmsProjectile(projectileServer._entity))
+        {
+            _lateProjectiles[id] = new(projectileServer, projectileServer.PacketVersion, _api.World.ElapsedMilliseconds + LateCollisionGraceMs);
+        }
+
+        _projectiles.Remove(id);
+    }
     private void HandleCollision(IServerPlayer player, ProjectileCollisionPacket packet)
     {
+        PruneLateProjectiles();
+
         if (_projectiles.TryGetValue(packet.Id, out ProjectileServer? projectileServer))
         {
-            if (projectileServer.PacketVersion != packet.PacketVersion)
+            if (!IsValidCollisionPacket(player, projectileServer, packet, projectileServer.PacketVersion))
             {
                 return;
             }
+
             projectileServer.PacketVersion++;
 
             projectileServer._entity.CollidedWith.Add(packet.ReceiverEntity);
@@ -839,6 +875,67 @@ public sealed class ProjectileSystemServer
             projectileServer._entity.CollidedVertically = false;
             projectileServer._entity.CollidedHorizontally = false;
             projectileServer.OnCollision(packet);
+            return;
         }
+
+        if (!_lateProjectiles.TryGetValue(packet.Id, out LateProjectileCollision? lateCollision))
+        {
+            return;
+        }
+
+        if (_api.World.ElapsedMilliseconds > lateCollision.ExpiresAtMs)
+        {
+            _lateProjectiles.Remove(packet.Id);
+            return;
+        }
+
+        if (!IsValidCollisionPacket(player, lateCollision.Projectile, packet, lateCollision.PacketVersion))
+        {
+            return;
+        }
+
+        _lateProjectiles.Remove(packet.Id);
+        lateCollision.Projectile.OnLateCollision(packet);
+    }
+
+    private void PruneLateProjectiles()
+    {
+        if (_lateProjectiles.Count == 0)
+        {
+            return;
+        }
+
+        long now = _api.World.ElapsedMilliseconds;
+        foreach (Guid id in _lateProjectiles.Where(entry => now > entry.Value.ExpiresAtMs).Select(entry => entry.Key).ToArray())
+        {
+            _lateProjectiles.Remove(id);
+        }
+    }
+
+    private bool IsValidCollisionPacket(IServerPlayer player, ProjectileServer projectileServer, ProjectileCollisionPacket packet, int expectedPacketVersion)
+    {
+        if (packet.PacketVersion != expectedPacketVersion)
+        {
+            return false;
+        }
+
+        if (!IsPacketSenderOwner(player, projectileServer))
+        {
+            return false;
+        }
+
+        Entity? target = _api.World.GetEntityById(packet.ReceiverEntity);
+        if (target == null || !CanProjectileHit(target))
+        {
+            return false;
+        }
+
+        return target.EntityId != projectileServer._entity.EntityId &&
+            target.EntityId != projectileServer._entity.ShooterId;
+    }
+
+    private static bool IsPacketSenderOwner(IServerPlayer player, ProjectileServer projectileServer)
+    {
+        return player.Entity?.EntityId == projectileServer._entity.OwnerId;
     }
 }
