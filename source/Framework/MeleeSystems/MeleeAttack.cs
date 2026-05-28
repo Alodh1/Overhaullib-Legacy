@@ -134,7 +134,7 @@ public sealed class MeleeAttack
     }
     public bool TryAttackEntities(IPlayer player, ItemSlot slot, out IEnumerable<(Entity entity, Vector3d point)> entitiesCollisions, bool mainHand, double maximumParameter, ItemStackMeleeWeaponStats stats, AttackDirection attackDirection = AttackDirection.Top)
     {
-        entitiesCollisions = CollideWithEntities(player, out IEnumerable<MeleeDamagePacket> damagePackets, out IEnumerable<MeleeCollisionPacket> collisions, mainHand, maximumParameter, stats, attackDirection);
+        entitiesCollisions = CollideWithEntities(player, slot, out IEnumerable<MeleeDamagePacket> damagePackets, out IEnumerable<MeleeCollisionPacket> collisions, mainHand, maximumParameter, stats, attackDirection);
 
         LastDamagePackets = damagePackets.ToArray();
 
@@ -209,7 +209,7 @@ public sealed class MeleeAttack
 
         return terrainCollisions;
     }
-    private IEnumerable<(Entity entity, Vector3d point)> CollideWithEntities(IPlayer player, out IEnumerable<MeleeDamagePacket> packets, out IEnumerable<MeleeCollisionPacket> collisions, bool mainHand, double maximumParameter, ItemStackMeleeWeaponStats stats, AttackDirection attackDirection)
+    private IEnumerable<(Entity entity, Vector3d point)> CollideWithEntities(IPlayer player, ItemSlot slot, out IEnumerable<MeleeDamagePacket> packets, out IEnumerable<MeleeCollisionPacket> collisions, bool mainHand, double maximumParameter, ItemStackMeleeWeaponStats stats, AttackDirection attackDirection)
     {
         long entityId = player.Entity.EntityId;
         long mountedOn = player.Entity.MountedOn?.Entity?.EntityId ?? 0;
@@ -262,7 +262,7 @@ public sealed class MeleeAttack
 
                 attackedAtLeastOnce = true;
 
-                ApplyImpaleStats(packet);
+                ApplyImpaleStats(packet, slot);
                 damagePackets.Add(packet);
 
                 _attackedEntities[entityId].Add(entity.EntityId);
@@ -284,9 +284,10 @@ public sealed class MeleeAttack
         return entitiesCollisions;
     }
 
-    private void ApplyImpaleStats(MeleeDamagePacket packet)
+    private void ApplyImpaleStats(MeleeDamagePacket packet, ItemSlot slot)
     {
         if (Impale?.Enabled != true) return;
+        if (!ImpaleAccess.IsDevImpaleSpear(slot)) return;
         if (!packet.DamageType.Equals(EnumDamageType.PiercingAttack.ToString(), StringComparison.OrdinalIgnoreCase)) return;
 
         packet.ImpaleEnabled = true;

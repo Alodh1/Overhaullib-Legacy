@@ -7,6 +7,16 @@ using Vintagestory.API.Client;
 
 namespace CombatOverhaul.MeleeSystems;
 
+public static class ImpaleAccess
+{
+    public const string DevImpaleSpearCode = "game:spear-devimpale";
+
+    public static bool IsDevImpaleSpear(ItemSlot? slot)
+    {
+        return slot?.Itemstack?.Collectible?.Code?.ToString() == DevImpaleSpearCode;
+    }
+}
+
 public sealed class ImpaleAttackStats
 {
     public bool Enabled { get; set; } = false;
@@ -116,6 +126,7 @@ public sealed class ImpaleSystemServer : IDisposable
     public void TryAttach(MeleeDamagePacket packet, Entity attacker, Entity target, ItemSlot? weaponSlot, bool damageReceived)
     {
         if (!packet.ImpaleEnabled || !damageReceived || !target.Alive) return;
+        if (!ImpaleAccess.IsDevImpaleSpear(weaponSlot)) return;
         if (attacker is not EntityPlayer player) return;
         if (!IsValidTarget(target, packet)) return;
 
