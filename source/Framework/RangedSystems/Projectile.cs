@@ -192,6 +192,10 @@ public class ProjectileEntity : Entity
     public bool IgnoreInvFrames { get; set; } = true;
     public bool CanBeCollected { get; set; } = true;
 
+    private const int TerrainBreakDelayMs = 150;
+    private bool _terrainBreakPending;
+    private long _terrainBreakAtMs;
+
 
     public bool Stuck
     {
@@ -241,6 +245,13 @@ public class ProjectileEntity : Entity
     {
         base.OnGameTick(dt);
         if (ShouldDespawn) return;
+
+        if (_terrainBreakPending && World.ElapsedMilliseconds >= _terrainBreakAtMs)
+        {
+            _terrainBreakPending = false;
+            TryDestroyOnCollision();
+            if (ShouldDespawn || !Alive) return;
+        }
 
         
 
@@ -406,8 +417,16 @@ public class ProjectileEntity : Entity
         MsCollide = World.ElapsedMilliseconds;
         BeforeCollided = true;
 
-        // Apply projectile drop/break chance for terrain impacts as well,
-        // not only for entity collisions.
+        // Client-authoritative projectile/entity hits can arrive just after a
+        // terrain collision. Delay terrain breakage so in-flight hit packets
+        // can still be accepted by the server.
+        if (ServerProjectile != null)
+        {
+            _terrainBreakPending = true;
+            _terrainBreakAtMs = World.ElapsedMilliseconds + TerrainBreakDelayMs;
+            return;
+        }
+
         TryDestroyOnCollision();
     }
     protected virtual void TryDestroyOnCollision()
