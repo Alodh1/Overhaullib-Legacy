@@ -13,6 +13,7 @@ namespace CombatOverhaul.Animations;
 public sealed class AnimationsManager
 {
     public Dictionary<string, Animation> Animations { get; private set; } = new();
+    internal Dictionary<string, AnimationSource> AnimationSources { get; } = new();
 
     public AnimationsManager(ICoreClientAPI api, ParticleEffectsManager particleEffectsManager)
     {
@@ -26,6 +27,7 @@ public sealed class AnimationsManager
         List<IAsset> animations = _api.Assets.GetManyInCategory("config", "animations");
 
         Dictionary<string, Animation> animationsByCode = new();
+        AnimationSources.Clear();
         foreach (Dictionary<string, Animation> assetAnimations in animations.Select(FromAsset))
         {
             foreach ((string code, Animation animation) in assetAnimations)
@@ -148,6 +150,7 @@ public sealed class AnimationsManager
                 string animationCode = code.Contains(':') ? code : $"{domain}:{code}";
 
                 result.TryAdd(animationCode, animation);
+                AnimationSources[animationCode] = new(domain, code);
             }
             catch (Exception exception)
             {
@@ -158,3 +161,5 @@ public sealed class AnimationsManager
         return result;
     }
 }
+
+internal sealed record AnimationSource(string Domain, string SourceKey);

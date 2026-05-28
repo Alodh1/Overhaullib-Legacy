@@ -1,4 +1,4 @@
-﻿using CombatOverhaul.Colliders;
+using CombatOverhaul.Colliders;
 using CombatOverhaul.Integration;
 using CombatOverhaul.Integration.Transpilers;
 using CombatOverhaul.MeleeSystems;
@@ -52,21 +52,23 @@ public sealed class DebugWindowManager
     {
         _transforms[code] = new EditableTransform(transform);
     }
-    private void RegisterTransform(ModelTransform transform, string code, Action<ModelTransform> apply)
+    private void RegisterTransform(ModelTransform transform, string code, Action<ModelTransform> apply, System.Func<ModelTransform, string>? saveToSource = null)
     {
-        _transforms[code] = new EditableTransform(transform, apply);
+        _transforms[code] = new EditableTransform(transform, apply, saveToSource);
     }
 
     private sealed class EditableTransform
     {
-        public EditableTransform(ModelTransform transform, Action<ModelTransform>? apply = null)
+        public EditableTransform(ModelTransform transform, Action<ModelTransform>? apply = null, System.Func<ModelTransform, string>? saveToSource = null)
         {
             Transform = transform;
             Apply = apply;
+            SaveToSource = saveToSource;
         }
 
         public ModelTransform Transform { get; }
         public Action<ModelTransform>? Apply { get; }
+        public System.Func<ModelTransform, string>? SaveToSource { get; }
     }
 
     private void RegisterCollectibleTransformAttributes(ICoreClientAPI api)
@@ -106,7 +108,11 @@ public sealed class DebugWindowManager
         if (transform == null) return;
 
         transform.EnsureDefaultValues();
-        RegisterTransform(transform, $"{collectible.Code} / {attributeCode}", value => ApplyDirectTransformAttribute(collectible, attributeCode, value));
+        RegisterTransform(
+            transform,
+            $"{collectible.Code} / {attributeCode}",
+            value => ApplyDirectTransformAttribute(collectible, attributeCode, value),
+            value => TrySaveTransformToSource(collectible, attributeCode, value));
     }
 
     private void RegisterTypedTransformAttribute(CollectibleObject collectible, string attributeCode)
@@ -120,7 +126,11 @@ public sealed class DebugWindowManager
 
             string typeCode = property.Name;
             transform.EnsureDefaultValues();
-            RegisterTransform(transform, $"{collectible.Code} / {attributeCode} / {typeCode}", value => ApplyTypedTransformAttribute(collectible, attributeCode, typeCode, value));
+            RegisterTransform(
+                transform,
+                $"{collectible.Code} / {attributeCode} / {typeCode}",
+                value => ApplyTypedTransformAttribute(collectible, attributeCode, typeCode, value),
+                value => TrySaveTransformToSource(collectible, attributeCode, value, typeCode));
         }
     }
 
@@ -147,6 +157,146 @@ public sealed class DebugWindowManager
     private static JToken TransformToToken(ModelTransform transform)
     {
         return JToken.Parse(JsonUtil.ToPrettyString(transform));
+    }
+
+    private static string TrySaveTransformToSource(CollectibleObject collectible, string attributeCode, ModelTransform transform, string? typedKey = null)
+    {
+        string? sourceFile = FindCollectibleSourceFile(collectible);
+        if (sourceFile == null)
+        {
+            return $"Source not found for {collectible.Code}.";
+        }
+
+        try
+        {
+            JObject json = JObject.Parse(File.ReadAllText(sourceFile));
+            JObject attributes = json["attributes"] as JObject ?? new JObject();
+
+            if (typedKey == null)
+            {
+                attributes[attributeCode] = TransformToToken(transform);
+            }
+            else
+            {
+                JObject transformsByType = attributes[attributeCode] as JObject ?? new JObject();
+                transformsByType[typedKey] = TransformToToken(transform);
+                attributes[attributeCode] = transformsByType;
+            }
+
+            json["attributes"] = attributes;
+            File.WriteAllText(sourceFile, JsonUtil.ToPrettyString(json));
+            return $"Saved {attributeCode} to {sourceFile}.";
+        }
+        catch (Exception exception)
+        {
+            return $"Save failed for {sourceFile}: {exception.Message}";
+        }
+    }
+
+    private static string? FindCollectibleSourceFile(CollectibleObject collectible)
+    {
+        string? sourceRoot = GetSourceRoot();
+        if (!Directory.Exists(sourceRoot)) return null;
+
+        string domain = collectible.Code.Domain;
+        string kind = collectible is Block ? "blocktypes" : "itemtypes";
+        string path = collectible.Code.Path;
+
+        IEnumerable<string> candidates = Directory.EnumerateFiles(sourceRoot, "*.json", SearchOption.AllDirectories)
+            .Where(file =>
+            {
+                string normalized = file.Replace('\\', '/');
+                return normalized.Contains($"/resources/assets/{domain}/{kind}/", StringComparison.OrdinalIgnoreCase) ||
+                    normalized.Contains($"/assets/{domain}/{kind}/", StringComparison.OrdinalIgnoreCase);
+            });
+
+        string? bestFile = null;
+        int bestScore = -1;
+
+        foreach (string file in candidates)
+        {
+            try
+            {
+                JObject json = JObject.Parse(File.ReadAllText(file));
+                string? code = json["code"]?.ToString();
+                if (string.IsNullOrEmpty(code)) continue;
+                if (code.Contains(':')) code = code[(code.IndexOf(':') + 1)..];
+
+                int score = -1;
+                if (string.Equals(code, path, StringComparison.OrdinalIgnoreCase))
+                {
+                    score = 10000 + code.Length;
+                }
+                else if (path.StartsWith(code + "-", StringComparison.OrdinalIgnoreCase))
+                {
+                    score = 1000 + code.Length;
+                }
+                else if (Path.GetFileNameWithoutExtension(file).Equals(code, StringComparison.OrdinalIgnoreCase) &&
+                    path.Contains(code, StringComparison.OrdinalIgnoreCase))
+                {
+                    score = 100 + code.Length;
+                }
+
+                if (score > bestScore)
+                {
+                    bestScore = score;
+                    bestFile = file;
+                }
+            }
+            catch
+            {
+                // Non-strict JSON/HJSON sources cannot be safely rewritten here.
+            }
+        }
+
+        return bestFile;
+    }
+
+    private static string TrySaveAnimationToSource(string animationCode, Animation animation)
+    {
+        if (!AnimationsManager._instance.AnimationSources.TryGetValue(animationCode, out AnimationSource? source))
+        {
+            return $"Source not tracked for {animationCode}.";
+        }
+
+        string? sourceRoot = GetSourceRoot();
+        if (sourceRoot == null || !Directory.Exists(sourceRoot))
+        {
+            return "ModsNeedUpdate source root not found.";
+        }
+
+        IEnumerable<string> candidates = Directory.EnumerateFiles(sourceRoot, "*.json", SearchOption.AllDirectories)
+            .Where(file =>
+            {
+                string normalized = file.Replace('\\', '/');
+                return normalized.Contains($"/resources/assets/{source.Domain}/config/animations/", StringComparison.OrdinalIgnoreCase) ||
+                    normalized.Contains($"/assets/{source.Domain}/config/animations/", StringComparison.OrdinalIgnoreCase);
+            });
+
+        foreach (string file in candidates)
+        {
+            try
+            {
+                JObject json = JObject.Parse(File.ReadAllText(file));
+                if (!json.ContainsKey(source.SourceKey)) continue;
+
+                json[source.SourceKey] = JToken.Parse(AnimationJson.FromAnimation(animation).ToString());
+                File.WriteAllText(file, JsonUtil.ToPrettyString(json));
+                return $"Saved {animationCode} to {file}.";
+            }
+            catch
+            {
+                // Non-strict JSON/HJSON animation files cannot be safely rewritten here.
+            }
+        }
+
+        return $"Source JSON not found for {animationCode}.";
+    }
+
+    private static string? GetSourceRoot()
+    {
+        string sourceRoot = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory), "ModsNeedUpdate");
+        return Directory.Exists(sourceRoot) ? sourceRoot : null;
     }
 
     private static ModelTransform CreateDefaultTransform()
@@ -204,14 +354,35 @@ public sealed class DebugWindowManager
     private int _colliderItemIndex = 0;
     private int _colliderIndex = 0;
     private int _heldTransformAttributeIndex = 0;
+    private string _transformSaveStatus = "";
     private readonly Dictionary<string, EditableTransform> _transforms = new();
     private static Dictionary<string, Dictionary<string, (Action<LineSegmentCollider> setter, System.Func<LineSegmentCollider> getter)>> _colliders = new();
     internal static LineSegmentCollider? _currentCollider = null;
     private static readonly string[] DirectTransformAttributeCodes = new[]
     {
+        "groundStorageTransform",
+        "guiTransform",
+        "groundTransform",
+        "tpHandTransform",
+        "tpOffHandTransform",
+        "onDisplayTransform",
+        "onshelfTransform",
+        "toolrackTransform",
         "onTongTransform",
         "onMetalTongTransform",
-        "inForgeTransform"
+        "inForgeTransform",
+        "infirepitTransform",
+        "inTrapTransform",
+        "onAntlerMountTransform",
+        "onmoldrackTransform",
+        "onOmokTransform",
+        "onscrollrackTransform",
+        "inGenericDisplayTransform",
+        "inWeaponrackTransform",
+        "inWallmountTransform",
+        "inPistolstandTransform",
+        "inViceTransform",
+        "inCrossbowWallmountTransform"
     };
     private static readonly string[] TypedTransformAttributeCodes = new[]
     {
@@ -440,6 +611,15 @@ public sealed class DebugWindowManager
                 ImGui.SetClipboardText(AnimationsManager._instance.Animations[codes[_selectedAnimationIndex]].ToString());
             }
             ImGui.SameLine();
+            if (ImGui.Button("Save to source##animation") && AnimationsManager._instance.Animations.Count > 0)
+            {
+                _transformSaveStatus = TrySaveAnimationToSource(codes[_selectedAnimationIndex], AnimationsManager._instance.Animations[codes[_selectedAnimationIndex]]);
+            }
+            if (!string.IsNullOrEmpty(_transformSaveStatus))
+            {
+                ImGui.TextWrapped(_transformSaveStatus);
+            }
+            ImGui.SameLine();
 
             ImGui.SetNextItemWidth(200);
             ImGui.SliderFloat("Animation speed", ref _animationSpeed, 0.1f, 2);
@@ -491,6 +671,16 @@ public sealed class DebugWindowManager
         if (ImGui.Button($"Export to clipboard"))
         {
             ImGui.SetClipboardText(JsonUtil.ToPrettyString(transform));
+        }
+        ImGui.SameLine();
+        if (editableTransform.SaveToSource != null && ImGui.Button("Save to source##transform"))
+        {
+            editableTransform.Apply?.Invoke(transform);
+            _transformSaveStatus = editableTransform.SaveToSource(transform);
+        }
+        if (!string.IsNullOrEmpty(_transformSaveStatus))
+        {
+            ImGui.TextWrapped(_transformSaveStatus);
         }
 
         float speed = ImGui.GetIO().KeysDown[(int)ImGuiKey.LeftShift] ? 0.1f : 1;
@@ -548,12 +738,21 @@ public sealed class DebugWindowManager
                 ApplyDirectTransformAttribute(collectible, attributeCode, transform);
             }
 
-            RegisterTransform(transform, $"{collectible.Code} / {attributeCode}", value => ApplyDirectTransformAttribute(collectible, attributeCode, value));
+            RegisterTransform(
+                transform,
+                $"{collectible.Code} / {attributeCode}",
+                value => ApplyDirectTransformAttribute(collectible, attributeCode, value),
+                value => TrySaveTransformToSource(collectible, attributeCode, value));
         }
     }
 
     private ModelTransform? _currentTransform;
     private GenericDisplayProto? _currentBlock;
+    private Action<ModelTransform>? _currentDisplayApply;
+    private System.Func<ModelTransform, string>? _currentDisplaySaveToSource;
+    private Action? _currentDisplayRedraw;
+    private string _currentDisplayContext = "";
+    private string _displaySaveStatus = "";
     private bool _selected = false;
     private bool _updateMesh = false;
     private void GenericDisplayTab()
@@ -563,59 +762,61 @@ public sealed class DebugWindowManager
 
         if (ImGui.Button("Select##GenericDisplayTab") && !_selected && selection?.Block != null && collectible != null)
         {
-            _currentBlock = selection.Block.GetBlockEntity<GenericDisplayProto>(selection);
-            if (_currentBlock != null)
-            {
-                _currentTransform = collectible.Attributes?[_currentBlock.AttributeTransformCode].AsObject<ModelTransform>();
-                if (_currentTransform != null)
-                {
-                    _selected = true;
-                    _currentBlock.EditedTransforms[collectible.Id] = _currentTransform;
-                }
-                else
-                {
-                    _selected = false;
-                }
-            }
-            else
-            {
-                _selected = false;
-            }
+            SelectDisplayTransform(selection, collectible);
+        }
+        ImGui.SameLine();
+        if (ImGui.Button("Clear selection##GenericDisplayTab"))
+        {
+            ClearDisplayTransformSelection();
         }
         ImGui.SameLine();
         if (ImGui.Button("Redraw##GenericDisplayTab"))
         {
-            _currentBlock?.RegenerateMeshes();
-            //_currentBlock?.updateMeshes(forceUpdate: true);
-            //_currentBlock?.MarkDirty(true);
+            _currentDisplayRedraw?.Invoke();
         }
 
         if (_currentTransform == null || !_selected) return;
 
+        if (!string.IsNullOrEmpty(_currentDisplayContext))
+        {
+            ImGui.TextWrapped(_currentDisplayContext);
+        }
+
         ModelTransform transform = _currentTransform;
 
-        ImGui.SameLine();
         if (ImGui.Button($"Export to clipboard##GenericDisplayTab"))
         {
             ImGui.SetClipboardText(JsonUtil.ToPrettyString(transform));
         }
 
         ImGui.SameLine();
+        if (_currentDisplaySaveToSource != null && ImGui.Button("Save to source##GenericDisplayTab"))
+        {
+            _currentDisplayApply?.Invoke(transform);
+            _displaySaveStatus = _currentDisplaySaveToSource(transform);
+        }
+
+        ImGui.SameLine();
         ImGui.Checkbox("Update mesh", ref _updateMesh);
+
+        if (!string.IsNullOrEmpty(_displaySaveStatus))
+        {
+            ImGui.TextWrapped(_displaySaveStatus);
+        }
 
         float speed = ImGui.GetIO().KeysDown[(int)ImGuiKey.LeftShift] ? 0.1f : 1;
 
         float scale = transform.ScaleXYZ.X;
-        ImGui.DragFloat("Scale##GenericDisplayTab", ref scale, speed * 0.1f);
+        bool changed = ImGui.DragFloat("Scale##GenericDisplayTab", ref scale, speed * 0.1f);
         transform.Scale = scale;
 
         System.Numerics.Vector3 translation = new(transform.Translation.X, transform.Translation.Y, transform.Translation.Z);
         System.Numerics.Vector3 origin = new(transform.Origin.X, transform.Origin.Y, transform.Origin.Z);
         System.Numerics.Vector3 rotation = new(transform.Rotation.X, transform.Rotation.Y, transform.Rotation.Z);
 
-        ImGui.DragFloat3("Translation##GenericDisplayTab", ref translation, speed * 0.1f);
-        ImGui.DragFloat3("Origin##GenericDisplayTab", ref origin, speed * 0.1f);
-        ImGui.DragFloat3("Rotation##GenericDisplayTab", ref rotation, speed);
+        changed |= ImGui.DragFloat3("Translation##GenericDisplayTab", ref translation, speed * 0.1f);
+        changed |= ImGui.DragFloat3("Origin##GenericDisplayTab", ref origin, speed * 0.1f);
+        changed |= ImGui.DragFloat3("Rotation##GenericDisplayTab", ref rotation, speed);
 
         transform.Translation.X = translation.X;
         transform.Translation.Y = translation.Y;
@@ -627,11 +828,92 @@ public sealed class DebugWindowManager
         transform.Rotation.Y = rotation.Y;
         transform.Rotation.Z = rotation.Z;
 
-        if (_updateMesh)
+        if (changed)
         {
-            _currentBlock?.RegenerateMeshes();
+            _currentDisplayApply?.Invoke(transform);
         }
 
+        if (_updateMesh && changed)
+        {
+            _currentDisplayRedraw?.Invoke();
+        }
+
+    }
+
+    private void SelectDisplayTransform(BlockSelection selection, CollectibleObject collectible)
+    {
+        ClearDisplayTransformSelection();
+
+        _currentBlock = selection.Block.GetBlockEntity<GenericDisplayProto>(selection);
+        string? transformCode = _currentBlock?.AttributeTransformCode ?? GetSelectedBlockDisplayTransformCode(selection.Block);
+        if (transformCode == null)
+        {
+            _displaySaveStatus = $"No known display transform context for {selection.Block.Code}.";
+            return;
+        }
+
+        ModelTransform transform = collectible.Attributes?[transformCode].AsObject<ModelTransform>() ?? CreateDefaultTransform();
+        transform.EnsureDefaultValues();
+
+        _currentTransform = transform;
+        _currentDisplayContext = $"{selection.Block.Code} -> {collectible.Code} / {transformCode}";
+        _currentDisplayApply = value =>
+        {
+            ApplyDirectTransformAttribute(collectible, transformCode, value);
+            if (_currentBlock != null)
+            {
+                _currentBlock.EditedTransforms[collectible.Id] = value;
+            }
+        };
+        _currentDisplaySaveToSource = value => TrySaveTransformToSource(collectible, transformCode, value);
+        _currentDisplayRedraw = () =>
+        {
+            if (_currentBlock != null)
+            {
+                _currentBlock.EditedTransforms[collectible.Id] = transform;
+                _currentBlock.RegenerateMeshes();
+                return;
+            }
+
+            selection.Block.GetBlockEntity<BlockEntity>(selection)?.MarkDirty(true);
+        };
+
+        _currentDisplayApply(transform);
+        _selected = true;
+    }
+
+    private void ClearDisplayTransformSelection()
+    {
+        _currentTransform = null;
+        _currentBlock = null;
+        _currentDisplayApply = null;
+        _currentDisplaySaveToSource = null;
+        _currentDisplayRedraw = null;
+        _currentDisplayContext = "";
+        _displaySaveStatus = "";
+        _selected = false;
+    }
+
+    private static string? GetSelectedBlockDisplayTransformCode(Block block)
+    {
+        string? configured = block.Attributes?["inventoryTransformAttribute"].AsString();
+        if (!string.IsNullOrWhiteSpace(configured)) return configured;
+
+        string className = block.GetType().Name;
+        string path = block.Code.Path;
+
+        if (className.Contains("Forge", StringComparison.OrdinalIgnoreCase) || path.Contains("forge", StringComparison.OrdinalIgnoreCase)) return "inForgeTransform";
+        if (className.Contains("DisplayCase", StringComparison.OrdinalIgnoreCase) || path.Contains("displaycase", StringComparison.OrdinalIgnoreCase)) return "onDisplayTransform";
+        if (className.Contains("Shelf", StringComparison.OrdinalIgnoreCase) || path.Contains("shelf", StringComparison.OrdinalIgnoreCase)) return "onshelfTransform";
+        if (className.Contains("ToolRack", StringComparison.OrdinalIgnoreCase) || path.Contains("toolrack", StringComparison.OrdinalIgnoreCase)) return "toolrackTransform";
+        if (className.Contains("Firepit", StringComparison.OrdinalIgnoreCase) || path.Contains("firepit", StringComparison.OrdinalIgnoreCase)) return "infirepitTransform";
+        if (className.Contains("BasketTrap", StringComparison.OrdinalIgnoreCase) || path.Contains("trap", StringComparison.OrdinalIgnoreCase)) return "inTrapTransform";
+        if (path.Contains("moldrack", StringComparison.OrdinalIgnoreCase)) return "onmoldrackTransform";
+        if (path.Contains("omok", StringComparison.OrdinalIgnoreCase)) return "onOmokTransform";
+        if (path.Contains("scrollrack", StringComparison.OrdinalIgnoreCase)) return "onscrollrackTransform";
+        if (path.Contains("groundstorage", StringComparison.OrdinalIgnoreCase)) return "groundStorageTransform";
+
+        return null;
     }
 
     private void CreateAnimationGui()
