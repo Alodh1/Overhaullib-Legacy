@@ -115,6 +115,23 @@ public static class GrindingWheelCompat
         return path.StartsWith("grindingwheel-", StringComparison.OrdinalIgnoreCase);
     }
 
+    public static bool TryStartGrindingWeapon(IWorldAccessor? world, IPlayer? player, BlockSelection? blockSelection)
+    {
+        if (world == null || player == null || blockSelection == null)
+        {
+            return false;
+        }
+
+        ItemSlot? slot = player.InventoryManager?.ActiveHotbarSlot;
+        if (!TryEnableGrindingWheelBuff(slot))
+        {
+            return false;
+        }
+
+        BlockEntityGrindingWheel? wheel = world.BlockAccessor.GetBlockEntity(blockSelection.Position) as BlockEntityGrindingWheel;
+        return wheel?.OnInteractStart(player, blockSelection) == true;
+    }
+
     private static CollectibleBehaviorBuffable AddBuffableBehavior(Item item, ICoreAPI? api)
     {
         CollectibleBehaviorBuffable behavior = new(item);
@@ -213,6 +230,20 @@ public static class GrindingWheelCompat
             || path.Contains("warhammer", StringComparison.OrdinalIgnoreCase)
             || path.Contains("battleaxe", StringComparison.OrdinalIgnoreCase)
             || path.Contains("longaxe", StringComparison.OrdinalIgnoreCase);
+    }
+}
+
+[HarmonyPatch(typeof(BlockGrindingWheel), nameof(BlockGrindingWheel.OnBlockInteractStart))]
+internal static class GrindingWheelStartPatch
+{
+    private static void Postfix(IWorldAccessor world, IPlayer byPlayer, BlockSelection blockSel, ref bool __result)
+    {
+        if (!GrindingWheelCompat.TryEnableGrindingWheelBuff(byPlayer.InventoryManager?.ActiveHotbarSlot))
+        {
+            return;
+        }
+
+        __result = GrindingWheelCompat.TryStartGrindingWeapon(world, byPlayer, blockSel);
     }
 }
 
