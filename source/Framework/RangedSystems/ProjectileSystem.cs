@@ -548,12 +548,6 @@ public sealed class ProjectileSystemServer
     }
     public void TryCollide(ProjectileEntity projectile)
     {
-        if (IsFirearmsProjectile(projectile))
-        {
-            TryCollideServerAabb(projectile);
-            return;
-        }
-
         ProjectileCollisionCheckRequest packet = new()
         {
             ProjectileId = projectile.ProjectileId,
@@ -668,12 +662,7 @@ public sealed class ProjectileSystemServer
 
     private static bool CheckAABBOnly(ICoreAPI api, ProjectileEntity projectile)
     {
-        if (api.World.GetEntityById(projectile.ShooterId) is not EntityPlayer)
-        {
-            return true;
-        }
-
-        return IsFirearmsProjectile(projectile);
+        return api.World.GetEntityById(projectile.ShooterId) is not EntityPlayer;
     }
 
     private static bool IsFirearmsProjectile(ProjectileEntity projectile)
