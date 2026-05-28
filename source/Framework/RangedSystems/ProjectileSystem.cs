@@ -137,6 +137,7 @@ public class ProjectileCollisionCheckRequest
     public int PacketVersion { get; set; }
     public long ShooterId { get; set; }
     public bool CheckAABBOnly { get; set; } = false;
+    public bool RequireColliderWhenAvailable { get; set; } = false;
 }
 
 public sealed class ProjectileSystemClient
@@ -188,7 +189,7 @@ public sealed class ProjectileSystemClient
         Vector3d previousPosition = new(packet.PreviousPosition[0], packet.PreviousPosition[1], packet.PreviousPosition[2]);
         Vector3d velocity = new(packet.Velocity[0], packet.Velocity[1], packet.Velocity[2]);
         Vector3d segment = currentPosition - previousPosition;
-        bool debugFirearm = IsPlayerAabbProjectilePacket(_api.World, packet);
+        bool debugFirearm = ShouldLogProjectilePacket(_api.World, packet);
         bool logThisPacket = debugFirearm && ShouldLogProjectileDebug(packet.ProjectileId, _debugPacketCounts);
 
         Vec3d midPoint = new(
@@ -207,7 +208,7 @@ public sealed class ProjectileSystemClient
 
         if (logThisPacket)
         {
-            _api.Logger.VerboseDebug($"[OverhaulLib:FirearmsProjectile] Client check id={packet.ProjectileId} projectileEntity={packet.ProjectileEntityId} shooter={packet.ShooterId} pos={FormatVector(currentPosition)} prev={FormatVector(previousPosition)} segment={segment.Length:F3} radius={packet.Radius:F3} search={searchRadius:F3} entities={entities.Length} candidates={entities.Count(CanProjectileHit)} ignored={packet.IgnoreEntities.Length}");
+            _api.Logger.VerboseDebug($"[OverhaulLib:FirearmsProjectile] Client check id={packet.ProjectileId} projectileEntity={packet.ProjectileEntityId} shooter={packet.ShooterId} pos={FormatVector(currentPosition)} prev={FormatVector(previousPosition)} segment={segment.Length:F3} radius={packet.Radius:F3} search={searchRadius:F3} entities={entities.Length} candidates={entities.Count(CanProjectileHit)} ignored={packet.IgnoreEntities.Length} aabbOnly={packet.CheckAABBOnly} requireCollider={packet.RequireColliderWhenAvailable}");
         }
 
         foreach (Entity entity in entities.Where(CanProjectileHit))
@@ -260,11 +261,11 @@ public sealed class ProjectileSystemClient
 
         if (packet.IgnoreEntities.Contains(target.EntityId)) return false;
 
-        if (!CheckCollision(target, out string collider, out Vector3d point, currentPosition, previousPosition, packet.Radius, packet.PenetrationDistance, packet.PenetrationStrength, out float penetrationStrengthLoss, packet.CheckAABBOnly))
+        if (!CheckCollision(target, out string collider, out Vector3d point, currentPosition, previousPosition, packet.Radius, packet.PenetrationDistance, packet.PenetrationStrength, out float penetrationStrengthLoss, packet.CheckAABBOnly, packet.RequireColliderWhenAvailable, out string collisionMode, out string missReason))
         {
             if (debugLog)
             {
-                _api.Logger.VerboseDebug($"[OverhaulLib:FirearmsProjectile] Client candidate miss id={packet.ProjectileId} target={target.Code}#{target.EntityId} hasColliders={target.GetBehavior<CollidersEntityBehavior>() != null} aabbOnly={packet.CheckAABBOnly}");
+                _api.Logger.VerboseDebug($"[OverhaulLib:FirearmsProjectile] Client candidate miss id={packet.ProjectileId} target={target.Code}#{target.EntityId} mode={collisionMode} hasColliders={target.GetBehavior<CollidersEntityBehavior>() != null} aabbOnly={packet.CheckAABBOnly} reason={missReason}");
             }
 
             return false;
@@ -276,7 +277,8 @@ public sealed class ProjectileSystemClient
 
         if (debugLog)
         {
-            _api.Logger.VerboseDebug($"[OverhaulLib:FirearmsProjectile] Client hit id={packet.ProjectileId} target={target.Code}#{target.EntityId} collider='{collider}' point={FormatVector(point)} relativeSpeed={relativeSpeed:F3} penetrationLoss={penetrationStrengthLoss:F3}");
+            string colliderType = GetColliderTypeName(target, collider);
+            _api.Logger.VerboseDebug($"[OverhaulLib:FirearmsProjectile] Client hit id={packet.ProjectileId} target={target.Code}#{target.EntityId} mode={collisionMode} collider='{collider}' colliderType='{colliderType}' point={FormatVector(point)} relativeSpeed={relativeSpeed:F3} penetrationLoss={penetrationStrengthLoss:F3}");
         }
 
         Collide(packet.ProjectileId, target, point, targetVelocity, relativeSpeed, collider, packet, penetrationStrengthLoss);
@@ -284,9 +286,9 @@ public sealed class ProjectileSystemClient
         return true;
     }
 
-    private static bool IsPlayerAabbProjectilePacket(IWorldAccessor world, ProjectileCollisionCheckRequest packet)
+    private static bool ShouldLogProjectilePacket(IWorldAccessor world, ProjectileCollisionCheckRequest packet)
     {
-        return packet.CheckAABBOnly && world.GetEntityById(packet.ShooterId) is EntityPlayer;
+        return (packet.CheckAABBOnly || packet.RequireColliderWhenAvailable) && world.GetEntityById(packet.ShooterId) is EntityPlayer;
     }
 
     private static bool ShouldLogProjectileDebug(Guid projectileId, Dictionary<Guid, int> packetCounts)
@@ -302,7 +304,7 @@ public sealed class ProjectileSystemClient
     {
         return $"{vector.X:F2},{vector.Y:F2},{vector.Z:F2}";
     }
-    private bool CheckCollision(Entity target, out string collider, out Vector3d point, Vector3d currentPosition, Vector3d previousPosition, float radius, float penetrationDistance, float penetrationSrength, out float penetrationStrengthLoss, bool checkAABBOnly)
+    private bool CheckCollision(Entity target, out string collider, out Vector3d point, Vector3d currentPosition, Vector3d previousPosition, float radius, float penetrationDistance, float penetrationSrength, out float penetrationStrengthLoss, bool checkAABBOnly, bool requireColliderWhenAvailable, out string collisionMode, out string missReason)
     {
         CollidersEntityBehavior? colliders = target.GetBehavior<CollidersEntityBehavior>();
         EntityDamageModelBehavior? damageModel = target.GetBehavior<EntityDamageModelBehavior>();
@@ -310,13 +312,20 @@ public sealed class ProjectileSystemClient
         collider = "";
         point = new();
         penetrationStrengthLoss = 0;
+        collisionMode = colliders == null ? "AABBNoColliders" : checkAABBOnly ? "AABBOnly" : "CO";
+        missReason = "";
         float defaultColliderPenetrationResistance = _combatOverhaulSystem.Settings.DefaultColliderPenetrationResistance;
+        bool requireDetailedCollider = requireColliderWhenAvailable && colliders != null && !checkAABBOnly;
 
         bool aabbHit = CheckEntityAabb(target, currentPosition, previousPosition, radius, defaultColliderPenetrationResistance, out Vector3d aabbPoint, out float aabbPenetrationStrengthLoss);
 
         if (colliders == null || checkAABBOnly)
         {
-            if (!aabbHit) return false;
+            if (!aabbHit)
+            {
+                missReason = "aabb-miss";
+                return false;
+            }
 
             point = aabbPoint;
             penetrationStrengthLoss = aabbPenetrationStrengthLoss;
@@ -330,8 +339,11 @@ public sealed class ProjectileSystemClient
         {
             result = colliders.Collide(currentPosition, previousPosition, radius, penetrationDistance, out intersections);
         }
-        catch
+        catch (Exception exception)
         {
+            missReason = $"co-collide-exception:{exception.GetType().Name}";
+            if (requireDetailedCollider) return false;
+
             if (!aabbHit) return false;
 
             point = aabbPoint;
@@ -341,6 +353,12 @@ public sealed class ProjectileSystemClient
 
         if (!result || intersections.Count == 0)
         {
+            if (requireDetailedCollider)
+            {
+                missReason = result ? "co-no-intersections" : "co-miss";
+                return false;
+            }
+
             if (aabbHit)
             {
                 point = aabbPoint;
@@ -401,7 +419,7 @@ public sealed class ProjectileSystemClient
                 if (!selectedHit || damageMultiplier >= maxDamageMultiplier)
                 {
                     maxDamageMultiplier = damageMultiplier;
-                    collider = knownColliderType ? key : "";
+                    collider = knownColliderType || requireDetailedCollider ? key : "";
                     point = intersectionPoint;
                     selectedColliderType = colliderType;
                     selectedHit = true;
@@ -427,6 +445,12 @@ public sealed class ProjectileSystemClient
 
             if (!selectedHit)
             {
+                if (requireDetailedCollider)
+                {
+                    missReason = "co-no-selected-collider";
+                    return false;
+                }
+
                 if (aabbHit)
                 {
                     collider = "";
@@ -440,7 +464,7 @@ public sealed class ProjectileSystemClient
                     penetrationStrengthLoss = colliders.DefaultPenetrationResistance;
                 }
             }
-            else if (selectedColliderType == ColliderTypes.Resistant && aabbHit)
+            else if (selectedColliderType == ColliderTypes.Resistant && aabbHit && !requireDetailedCollider)
             {
                 collider = "";
                 point = aabbPoint;
@@ -494,6 +518,12 @@ public sealed class ProjectileSystemClient
 
             if (!selectedHit)
             {
+                if (requireDetailedCollider)
+                {
+                    missReason = "co-no-mapped-player-body-part";
+                    return false;
+                }
+
                 if (aabbHit)
                 {
                     collider = "";
@@ -511,6 +541,20 @@ public sealed class ProjectileSystemClient
 
         return true;
     }
+
+    internal static string GetColliderTypeName(Entity target, string collider)
+    {
+        if (string.IsNullOrEmpty(collider)) return "";
+
+        CollidersEntityBehavior? colliders = target.GetBehavior<CollidersEntityBehavior>();
+        if (colliders != null && colliders.CollidersTypes.TryGetValue(collider, out ColliderTypes colliderType))
+        {
+            return colliderType.ToString();
+        }
+
+        return "Unknown";
+    }
+
     private static float GetPlayerBodyPartMultiplier(PlayerDamageModelBehavior playerDamageModel, PlayerBodyPart bodyType)
     {
         foreach (DamageZoneStats damageZone in playerDamageModel.DamageModel.DamageZones)
@@ -612,14 +656,15 @@ public sealed class ProjectileSystemServer
             IgnoreEntities = projectile.CollidedWith.ToArray(),
             PacketVersion = projectile.ServerProjectile?.PacketVersion ?? 0,
             ShooterId = projectile.ShooterId,
-            CheckAABBOnly = CheckAABBOnly(_api, projectile)
+            CheckAABBOnly = CheckAABBOnly(_api, projectile),
+            RequireColliderWhenAvailable = isFirearmsProjectile
         };
 
         IServerPlayer? player = (_api.World.GetEntityById(projectile.OwnerId) as EntityPlayer)?.Player as IServerPlayer;
 
         if (isFirearmsProjectile && ShouldLogProjectileDebug(projectile.ProjectileId, _debugPacketCounts))
         {
-            _api.Logger.VerboseDebug($"[OverhaulLib:FirearmsProjectile] Server request id={projectile.ProjectileId} entity={projectile.EntityId} code={projectile.Code} shooter={projectile.ShooterId} owner={projectile.OwnerId} ownerPlayer={(player != null ? player.PlayerName : "<none>")} weapon={projectile.WeaponStack?.Collectible?.Code} ammo={projectile.ProjectileStack?.Collectible?.Code} pos={FormatVector(new(projectile.ServerPos.X, projectile.ServerPos.Y, projectile.ServerPos.Z))} prev={FormatVector(new(projectile.PreviousPosition.X, projectile.PreviousPosition.Y, projectile.PreviousPosition.Z))} radius={projectile.ColliderRadius:F3} penDist={projectile.PenetrationDistance:F3} penStrength={projectile.PenetrationStrength:F3} aabbOnly={packet.CheckAABBOnly} ignored={packet.IgnoreEntities.Length} version={packet.PacketVersion}");
+            _api.Logger.VerboseDebug($"[OverhaulLib:FirearmsProjectile] Server request id={projectile.ProjectileId} entity={projectile.EntityId} code={projectile.Code} shooter={projectile.ShooterId} owner={projectile.OwnerId} ownerPlayer={(player != null ? player.PlayerName : "<none>")} weapon={projectile.WeaponStack?.Collectible?.Code} ammo={projectile.ProjectileStack?.Collectible?.Code} pos={FormatVector(new(projectile.ServerPos.X, projectile.ServerPos.Y, projectile.ServerPos.Z))} prev={FormatVector(new(projectile.PreviousPosition.X, projectile.PreviousPosition.Y, projectile.PreviousPosition.Z))} radius={projectile.ColliderRadius:F3} penDist={projectile.PenetrationDistance:F3} penStrength={projectile.PenetrationStrength:F3} aabbOnly={packet.CheckAABBOnly} requireCollider={packet.RequireColliderWhenAvailable} ignored={packet.IgnoreEntities.Length} version={packet.PacketVersion}");
         }
 
         if (player != null) _serverChannel.SendPacket(packet, player);
@@ -727,7 +772,7 @@ public sealed class ProjectileSystemServer
             return true;
         }
 
-        return IsFirearmsProjectile(projectile);
+        return false;
     }
 
     private static bool IsFirearmsProjectile(ProjectileEntity projectile)
@@ -882,7 +927,11 @@ public sealed class ProjectileSystemServer
             projectileServer._entity.CollidedHorizontally = false;
             if (isFirearmsProjectile)
             {
-                _api.Logger.VerboseDebug($"[OverhaulLib:FirearmsProjectile] Server accepted collision id={packet.Id} from={player.PlayerName} target={packet.ReceiverEntity} collider='{packet.Collider}' point={string.Join(",", packet.CollisionPoint.Select(value => value.ToString("F2")))} relativeSpeed={packet.RelativeSpeed:F3} penLoss={packet.PenetrationStrengthLoss:F3}");
+                Entity? receiver = _api.World.GetEntityById(packet.ReceiverEntity);
+                string targetInfo = receiver != null ? $"{receiver.Code}#{receiver.EntityId}" : packet.ReceiverEntity.ToString();
+                string mode = receiver?.GetBehavior<CollidersEntityBehavior>() == null ? "AABBNoColliders" : "CO";
+                string colliderType = receiver != null ? ProjectileSystemClient.GetColliderTypeName(receiver, packet.Collider) : "";
+                _api.Logger.VerboseDebug($"[OverhaulLib:FirearmsProjectile] Server accepted collision id={packet.Id} from={player.PlayerName} target={targetInfo} mode={mode} collider='{packet.Collider}' colliderType='{colliderType}' point={string.Join(",", packet.CollisionPoint.Select(value => value.ToString("F2")))} relativeSpeed={packet.RelativeSpeed:F3} penLoss={packet.PenetrationStrengthLoss:F3}");
             }
             projectileServer.OnCollision(packet);
         }
