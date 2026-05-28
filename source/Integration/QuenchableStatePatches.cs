@@ -357,6 +357,11 @@ internal static class ArmorQuenchTooltipPatch
 {
     private static void Postfix(ItemSlot inSlot, StringBuilder dsc)
     {
+        AppendTooltip(inSlot, dsc);
+    }
+
+    internal static void AppendTooltip(ItemSlot inSlot, StringBuilder dsc)
+    {
         if (inSlot.Empty || !QuenchableStateUtil.IsArmorOrArmorComponent(inSlot.Itemstack) || !QuenchableStateUtil.IsFerrous(inSlot.Itemstack))
         {
             return;
@@ -364,19 +369,38 @@ internal static class ArmorQuenchTooltipPatch
 
         if (QuenchableStateUtil.GetArmorQuenchState(inSlot.Itemstack) > 0)
         {
-            dsc.AppendLine(Lang.Get("combatoverhaul:quenchable-armor-durability-gain"));
+            AppendLineOnce(dsc, Lang.Get("combatoverhaul:quenchable-armor-durability-gain"));
         }
 
         if (QuenchableStateUtil.HasDirectArmorQuench(inSlot.Itemstack))
         {
-            dsc.AppendLine(Lang.Get("combatoverhaul:quenchable-armor-flat-reduction-gain"));
+            AppendLineOnce(dsc, Lang.Get("combatoverhaul:quenchable-armor-flat-reduction-gain"));
         }
 
         float penaltyMultiplier = QuenchableStatUtil.GetArmorPenaltyMultiplier(inSlot.Itemstack);
         float penaltyReduction = (1f - penaltyMultiplier) * 100f;
         if (penaltyReduction > 0f)
         {
-            dsc.AppendLine(Lang.Get("combatoverhaul:quenchable-armor-penalty-reduction", MathF.Round(penaltyReduction)));
+            AppendLineOnce(dsc, Lang.Get("combatoverhaul:quenchable-armor-penalty-reduction", MathF.Round(penaltyReduction)));
         }
+    }
+
+    private static void AppendLineOnce(StringBuilder dsc, string line)
+    {
+        if (string.IsNullOrWhiteSpace(line) || dsc.ToString().Contains(line, StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        dsc.AppendLine(line);
+    }
+}
+
+[HarmonyPatch(typeof(CollectibleObject), nameof(CollectibleObject.GetHeldItemInfo))]
+internal static class ArmorQuenchCollectibleTooltipPatch
+{
+    private static void Postfix(ItemSlot inSlot, StringBuilder dsc)
+    {
+        ArmorQuenchTooltipPatch.AppendTooltip(inSlot, dsc);
     }
 }

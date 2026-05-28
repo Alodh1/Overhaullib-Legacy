@@ -410,7 +410,19 @@ public static class QuenchableStateUtil
         string code = stack?.Collectible?.Code?.Path ?? "";
         return code.Contains("-iron", StringComparison.Ordinal)
             || code.Contains("-meteoriciron", StringComparison.Ordinal)
-            || code.Contains("-steel", StringComparison.Ordinal);
+            || code.Contains("-steel", StringComparison.Ordinal)
+            || LooksLikeSteelBackedPlatedArmor(code);
+    }
+
+    private static bool LooksLikeSteelBackedPlatedArmor(string code)
+    {
+        if (!code.StartsWith("armor-", StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        return code.Contains("-plate-gold", StringComparison.Ordinal)
+            || code.Contains("-plate-silver", StringComparison.Ordinal);
     }
 
     private static bool ShouldStripArmorQuenchStat(string statCode)
