@@ -919,14 +919,57 @@ public sealed partial class DebugWindowManager
     private void AnimationsTab(float deltaSeconds)
     {
         string[] codes = AnimationsManager._instance.Animations.Keys.ToArray();
+        if (codes.Length == 0)
+        {
+            ImGui.TextDisabled("No animations loaded.");
+            if (ImGui.CollapsingHeader("Add animation", ImGuiTreeNodeFlags.DefaultOpen))
+            {
+                CreateAnimationGui();
+            }
+            return;
+        }
 
-        if (ImGui.Button("Save to buffer"))
+        NVector2 available = ImGui.GetContentRegionAvail();
+        float spacingX = ImGui.GetStyle().ItemSpacing.X;
+        float spacingY = ImGui.GetStyle().ItemSpacing.Y;
+        float bottomHeight = Math.Clamp(available.Y * 0.27f, 230f, 360f);
+        float topHeight = Math.Max(360f, available.Y - bottomHeight - spacingY);
+        float leftWidth = Math.Clamp(available.X * 0.22f, 280f, 430f);
+        float rightWidth = Math.Clamp(available.X * 0.28f, 360f, 540f);
+        float centerWidth = available.X - leftWidth - rightWidth - spacingX * 2f;
+        if (centerWidth < 520f)
+        {
+            leftWidth = Math.Clamp(available.X * 0.20f, 240f, 330f);
+            rightWidth = Math.Clamp(available.X * 0.25f, 300f, 420f);
+            centerWidth = Math.Max(360f, available.X - leftWidth - rightWidth - spacingX * 2f);
+        }
+
+        ImGui.BeginChild("##animation-left-panel", new NVector2(leftWidth, topHeight), true);
+        ImGui.SeparatorText("Animations");
+        ImGui.InputTextWithHint("##animations-filter", "supports wildcards", ref _animationsFilter, 200);
+        EditorsUtils.FilterElements(_animationsFilter, AnimationsManager._instance.Animations.Keys, out IEnumerable<string> filteredEnumerable, out _);
+        string[] filtered = filteredEnumerable.ToArray();
+        if (filtered.Length > 0)
+        {
+            if (_selectedAnimationIndexFiltered >= filtered.Length) _selectedAnimationIndexFiltered = filtered.Length - 1;
+            if (_selectedAnimationIndexFiltered < 0) _selectedAnimationIndexFiltered = 0;
+            ImGui.ListBox("##animations-list", ref _selectedAnimationIndexFiltered, filtered, filtered.Length);
+            _selectedAnimationIndex = Array.IndexOf(codes, filtered[_selectedAnimationIndexFiltered]);
+        }
+        else
+        {
+            ImGui.TextDisabled("No matching animations.");
+        }
+
+        if (_selectedAnimationIndex < 0 || _selectedAnimationIndex >= codes.Length) _selectedAnimationIndex = 0;
+
+        ImGui.SeparatorText("Buffer");
+        if (ImGui.Button("Save to buffer", new NVector2(-1, 0)))
         {
             _animationBuffer = AnimationJson.FromAnimation(AnimationsManager._instance.Animations[codes[_selectedAnimationIndex]]);
         }
-        ImGui.SameLine();
 
-        if (ImGui.Button("Load from buffer"))
+        if (ImGui.Button("Load from buffer", new NVector2(-1, 0)) && _animationBuffer != null)
         {
             string animationCode = codes[_selectedAnimationIndex];
             Animation currentAnimation = AnimationsManager._instance.Animations[animationCode];
@@ -935,113 +978,102 @@ public sealed partial class DebugWindowManager
             _animationHistory.CommitEdit(animationCode, AnimationsManager._instance.Animations[animationCode]);
         }
 
-        if (ImGui.Button("Save buffer to file"))
+        if (ImGui.Button("Save buffer to file", new NVector2(-1, 0)))
         {
             _api.StoreModConfig(_animationBuffer, "co-animation-export.json");
         }
-        ImGui.SameLine();
-        if (ImGui.Button("Load buffer from file"))
+
+        if (ImGui.Button("Load buffer from file", new NVector2(-1, 0)))
         {
             _animationBuffer = _api.LoadModConfig<AnimationJson>("co-animation-export.json");
         }
 
-        if (ImGui.Button("Toggle rendering offset"))
+        ImGui.SeparatorText("Preview options");
+        if (ImGui.Button("Toggle rendering offset", new NVector2(-1, 0)))
         {
-            if (PlayerRenderingPatches.FpHandsOffset != PlayerRenderingPatches.DefaultFpHandsOffset)
-            {
-                PlayerRenderingPatches.FpHandsOffset = PlayerRenderingPatches.DefaultFpHandsOffset;
-            }
-            else
-            {
-                PlayerRenderingPatches.FpHandsOffset = 0;
-            }
+            PlayerRenderingPatches.FpHandsOffset = PlayerRenderingPatches.FpHandsOffset != PlayerRenderingPatches.DefaultFpHandsOffset
+                ? PlayerRenderingPatches.DefaultFpHandsOffset
+                : 0;
         }
-        ImGui.SameLine();
 
         bool tpAnimations = PlayAnimationsInThirdPerson;
         ImGui.Checkbox("Third person animations", ref tpAnimations);
         PlayAnimationsInThirdPerson = tpAnimations;
 
-        if (ImGui.Button("Render fp model in tp"))
+        if (ImGui.Button("Render fp model in tp", new NVector2(-1, 0)))
         {
             _api.World.Player.Entity.ActiveHandItemSlot.Itemstack?.Collectible?.GetCollectibleBehavior<AnimatableAttachable>(true)?.SetSwitchModels(_api.World.Player.Entity.EntityId, true);
         }
-        ImGui.SameLine();
-        if (ImGui.Button("Switch back"))
+
+        if (ImGui.Button("Switch back", new NVector2(-1, 0)))
         {
             _api.World.Player.Entity.ActiveHandItemSlot.Itemstack?.Collectible?.GetCollectibleBehavior<AnimatableAttachable>(true)?.SetSwitchModels(_api.World.Player.Entity.EntityId, false);
         }
 
-        ImGui.InputTextWithHint("Filter##" + "animations", "supports wildcards", ref _animationsFilter, 200);
-        EditorsUtils.FilterElements(_animationsFilter, AnimationsManager._instance.Animations.Keys, out IEnumerable<string> filtered, out IEnumerable<int> indexes);
-
-        ImGui.ListBox("transforms", ref _selectedAnimationIndexFiltered, filtered.ToArray(), filtered.Count());
-
-        if (!filtered.Any()) return;
-
-        if (_selectedAnimationIndexFiltered >= filtered.Count()) _selectedAnimationIndexFiltered = 0;
-
-        _selectedAnimationIndex = AnimationsManager._instance.Animations.Keys.ToArray().IndexOf(filtered.ToArray()[_selectedAnimationIndexFiltered]);
-
-        /*if (ImGui.Button("Remove##animations"))
-        {
-            Animations.Remove(Animations.Keys.ToArray()[_selectedAnimationIndex]);
-            _selectedAnimationIndex--;
-            if (_selectedAnimationIndex < 0) _selectedAnimationIndex = 0;
-        }*/
-
-        codes = AnimationsManager._instance.Animations.Keys.ToArray();
-
-        if (ImGui.CollapsingHeader($"Add animation"))
+        if (ImGui.CollapsingHeader("Add animation"))
         {
             CreateAnimationGui();
         }
+        ImGui.EndChild();
 
-        if (_selectedAnimationIndex < AnimationsManager._instance.Animations.Count)
+        ImGui.SameLine();
+
+        string selectedAnimationCode = codes[_selectedAnimationIndex];
+        Animation selectedAnimation = AnimationsManager._instance.Animations[selectedAnimationCode];
+
+        ImGui.BeginChild("##animation-center-panel", new NVector2(centerWidth, topHeight), true);
+        ImGui.TextWrapped(selectedAnimationCode);
+        DrawAnimationPlaybackControls(selectedAnimationCode, selectedAnimation, deltaSeconds);
+        NVector2 centerAvailable = ImGui.GetContentRegionAvail();
+        DrawImGuiAnimationViewport(selectedAnimationCode, new NVector2(centerAvailable.X, Math.Max(260f, centerAvailable.Y)));
+        ImGui.EndChild();
+
+        ImGui.SameLine();
+
+        ImGui.BeginChild("##animation-right-panel", new NVector2(rightWidth, topHeight), true);
+        ImGui.SeparatorText("Tools");
+        DrawAnimationHistoryControls(selectedAnimationCode);
+        if (ImGui.Button("Export to clipboard") && AnimationsManager._instance.Animations.Count > 0)
         {
-            ImGui.SeparatorText("Animation");
-            string selectedAnimationCode = codes[_selectedAnimationIndex];
-            Animation selectedAnimation = AnimationsManager._instance.Animations[selectedAnimationCode];
-            DrawAnimationHistoryControls(selectedAnimationCode);
+            ImGui.SetClipboardText(AnimationsManager._instance.Animations[selectedAnimationCode].ToString());
+        }
+        ImGui.SameLine();
+        if (ImGui.Button("Save to source##animation") && AnimationsManager._instance.Animations.Count > 0)
+        {
+            QueueSourceSave(TrySaveAnimationToSource(selectedAnimationCode, AnimationsManager._instance.Animations[selectedAnimationCode]), status => _transformSaveStatus = status);
+        }
+        if (!string.IsNullOrEmpty(_transformSaveStatus))
+        {
+            ImGui.TextWrapped(_transformSaveStatus);
+        }
 
-            DrawAnimationPlaybackControls(selectedAnimationCode, selectedAnimation, deltaSeconds);
-            DrawImGuiAnimationViewport(selectedAnimationCode);
-            DrawAnimationTimeline(selectedAnimationCode, selectedAnimation);
-            DrawAnimationValidationPanel(selectedAnimationCode, selectedAnimation);
+        ImGui.SetNextItemWidth(200);
+        ImGui.SliderFloat("Animation speed", ref _animationSpeed, 0.1f, 2);
 
-            if (ImGui.Button("Export to clipboard") && AnimationsManager._instance.Animations.Count > 0)
-            {
-                ImGui.SetClipboardText(AnimationsManager._instance.Animations[selectedAnimationCode].ToString());
-            }
-            ImGui.SameLine();
-            if (ImGui.Button("Save to source##animation") && AnimationsManager._instance.Animations.Count > 0)
-            {
-                QueueSourceSave(TrySaveAnimationToSource(selectedAnimationCode, AnimationsManager._instance.Animations[selectedAnimationCode]), status => _transformSaveStatus = status);
-            }
-            if (!string.IsNullOrEmpty(_transformSaveStatus))
-            {
-                ImGui.TextWrapped(_transformSaveStatus);
-            }
-            ImGui.SameLine();
+        DrawAnimationValidationPanel(selectedAnimationCode, selectedAnimation);
 
-            ImGui.SetNextItemWidth(200);
-            ImGui.SliderFloat("Animation speed", ref _animationSpeed, 0.1f, 2);
-            selectedAnimation = AnimationsManager._instance.Animations[selectedAnimationCode];
-            _animationHistoryExplicitEditThisFrame = false;
-            Animation beforeEdit = selectedAnimation.Clone();
-            string beforeEditSerialized = AnimationEditorHistory.Serialize(selectedAnimation);
-            selectedAnimation.Edit(selectedAnimationCode);
-            DrawRigPoseEditor(selectedAnimationCode, selectedAnimation);
-            TrackAnimationEditorChanges(selectedAnimationCode, beforeEdit, beforeEditSerialized, selectedAnimation, "Editor edit");
-            selectedAnimation = AnimationsManager._instance.Animations[selectedAnimationCode];
-            if (_showAnimationEditor)
-            {
-                SetEditorFrameOverride(selectedAnimation.StillPlayerFrame(selectedAnimation._playerFrameIndex, selectedAnimation._frameProgress));
-            }
-            else
-            {
-                SetEditorFrameOverride(null);
-            }
+        selectedAnimation = AnimationsManager._instance.Animations[selectedAnimationCode];
+        _animationHistoryExplicitEditThisFrame = false;
+        Animation beforeEdit = selectedAnimation.Clone();
+        string beforeEditSerialized = AnimationEditorHistory.Serialize(selectedAnimation);
+        selectedAnimation.Edit(selectedAnimationCode);
+        DrawRigPoseEditor(selectedAnimationCode, selectedAnimation);
+        TrackAnimationEditorChanges(selectedAnimationCode, beforeEdit, beforeEditSerialized, selectedAnimation, "Editor edit");
+        ImGui.EndChild();
+
+        ImGui.BeginChild("##animation-bottom-panel", new NVector2(available.X, bottomHeight), true);
+        selectedAnimation = AnimationsManager._instance.Animations[selectedAnimationCode];
+        DrawAnimationTimeline(selectedAnimationCode, selectedAnimation);
+        ImGui.EndChild();
+
+        selectedAnimation = AnimationsManager._instance.Animations[selectedAnimationCode];
+        if (_showAnimationEditor)
+        {
+            SetEditorFrameOverride(selectedAnimation.StillPlayerFrame(selectedAnimation._playerFrameIndex, selectedAnimation._frameProgress));
+        }
+        else
+        {
+            SetEditorFrameOverride(null);
         }
     }
 
@@ -1227,14 +1259,15 @@ public sealed partial class DebugWindowManager
         }
     }
 
-    private void DrawImGuiAnimationViewport(string animationCode)
+    private void DrawImGuiAnimationViewport(string animationCode, NVector2 requestedSize = default)
     {
-        ImGui.SeparatorText("Viewport");
-
-        NVector2 available = ImGui.GetContentRegionAvail();
+        NVector2 available = requestedSize.X > 0 && requestedSize.Y > 0
+            ? requestedSize
+            : ImGui.GetContentRegionAvail();
         float width = Math.Max(420f, available.X);
-        float targetHeight = ImGui.GetIO().DisplaySize.Y * 0.42f;
-        float height = Math.Clamp(targetHeight, 280f, Math.Max(280f, available.Y * 0.58f));
+        float height = requestedSize.X > 0 && requestedSize.Y > 0
+            ? Math.Max(240f, available.Y)
+            : Math.Clamp(ImGui.GetIO().DisplaySize.Y * 0.42f, 280f, Math.Max(280f, available.Y * 0.58f));
         NVector2 size = new(width, height);
 
         ImGui.InvisibleButton($"##animation-viewport-{animationCode}", size);
