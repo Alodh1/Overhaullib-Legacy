@@ -29,7 +29,7 @@ public sealed partial class DebugWindowManager
         _transformGizmoRenderer = new TransformGizmoRenderer(api, this);
         _detachedEditorCamera = new DetachedEditorCamera(api);
 #endif
-        api.Input.RegisterHotKey("combatOverhaul_editor", "Show animation editor", GlKeys.L, ctrlPressed: true);
+        api.Input.RegisterHotKey("combatOverhaul_editor", "Show dev tools", GlKeys.L, ctrlPressed: true);
         api.Input.SetHotKeyHandler("combatOverhaul_editor", keys => _showAnimationEditor = !_showAnimationEditor);
         _instance = this;
 
@@ -54,14 +54,14 @@ public sealed partial class DebugWindowManager
     {
         _transforms[code] = new EditableTransform(transform);
     }
-    private void RegisterTransform(ModelTransform transform, string code, Action<ModelTransform> apply, System.Func<ModelTransform, string>? saveToSource = null)
+    private void RegisterTransform(ModelTransform transform, string code, Action<ModelTransform> apply, System.Func<ModelTransform, SourceSaveResult>? saveToSource = null)
     {
         _transforms[code] = new EditableTransform(transform, apply, saveToSource);
     }
 
     private sealed class EditableTransform
     {
-        public EditableTransform(ModelTransform transform, Action<ModelTransform>? apply = null, System.Func<ModelTransform, string>? saveToSource = null)
+        public EditableTransform(ModelTransform transform, Action<ModelTransform>? apply = null, System.Func<ModelTransform, SourceSaveResult>? saveToSource = null)
         {
             Transform = transform;
             Apply = apply;
@@ -70,7 +70,47 @@ public sealed partial class DebugWindowManager
 
         public ModelTransform Transform { get; }
         public Action<ModelTransform>? Apply { get; }
-        public System.Func<ModelTransform, string>? SaveToSource { get; }
+        public System.Func<ModelTransform, SourceSaveResult>? SaveToSource { get; }
+    }
+
+    private sealed class SourceSaveRequest
+    {
+        private readonly System.Func<string> _commit;
+
+        public SourceSaveRequest(string sourceFile, string oldText, string newText, string successStatus, System.Func<string> commit)
+        {
+            SourceFile = sourceFile;
+            OldText = oldText;
+            NewText = newText;
+            SuccessStatus = successStatus;
+            _commit = commit;
+        }
+
+        public string SourceFile { get; }
+        public string OldText { get; }
+        public string NewText { get; }
+        public string SuccessStatus { get; }
+
+        public string Commit()
+        {
+            string result = _commit();
+            return string.IsNullOrWhiteSpace(result) ? SuccessStatus : result;
+        }
+    }
+
+    private sealed class SourceSaveResult
+    {
+        private SourceSaveResult(string status, SourceSaveRequest? request)
+        {
+            Status = status;
+            Request = request;
+        }
+
+        public string Status { get; }
+        public SourceSaveRequest? Request { get; }
+
+        public static SourceSaveResult Fail(string status) => new(status, null);
+        public static SourceSaveResult Preview(SourceSaveRequest request) => new("", request);
     }
 
     private void RegisterCollectibleTransformAttributes(ICoreClientAPI api)
@@ -161,17 +201,23 @@ public sealed partial class DebugWindowManager
         return JToken.Parse(JsonUtil.ToPrettyString(transform));
     }
 
-    private static string TrySaveTransformToSource(CollectibleObject collectible, string attributeCode, ModelTransform transform, string? typedKey = null)
+    private static SourceSaveResult TrySaveTransformToSource(CollectibleObject collectible, string attributeCode, ModelTransform transform, string? typedKey = null)
     {
         string? sourceFile = FindCollectibleSourceFile(collectible);
         if (sourceFile == null)
         {
-            return $"Source not found for {collectible.Code}.";
+            return SourceSaveResult.Fail($"Source not found for {collectible.Code}.");
         }
 
         try
         {
-            JObject json = JObject.Parse(File.ReadAllText(sourceFile));
+            string oldText = File.ReadAllText(sourceFile);
+            if (SourceHasComments(oldText))
+            {
+                return SourceSaveResult.Fail("Source has comments; cannot safely rewrite. Strip comments first or edit by hand.");
+            }
+
+            JObject json = JObject.Parse(oldText);
             JObject attributes = json["attributes"] as JObject ?? new JObject();
 
             if (typedKey == null)
@@ -186,12 +232,18 @@ public sealed partial class DebugWindowManager
             }
 
             json["attributes"] = attributes;
-            File.WriteAllText(sourceFile, JsonUtil.ToPrettyString(json));
-            return $"Saved {attributeCode} to {sourceFile}.";
+            string newText = JsonUtil.ToPrettyString(json);
+            SourceSaveRequest request = new(
+                sourceFile,
+                oldText,
+                newText,
+                $"Saved {attributeCode} to {sourceFile}.",
+                () => AtomicWriteWithBackup(sourceFile, newText));
+            return SourceSaveResult.Preview(request);
         }
         catch (Exception exception)
         {
-            return $"Save failed for {sourceFile}: {exception.Message}";
+            return SourceSaveResult.Fail($"Save failed for {sourceFile}: {exception.Message}");
         }
     }
 
@@ -254,17 +306,17 @@ public sealed partial class DebugWindowManager
         return bestFile;
     }
 
-    private static string TrySaveAnimationToSource(string animationCode, Animation animation)
+    private static SourceSaveResult TrySaveAnimationToSource(string animationCode, Animation animation)
     {
         if (!AnimationsManager._instance.AnimationSources.TryGetValue(animationCode, out AnimationSource? source))
         {
-            return $"Source not tracked for {animationCode}.";
+            return SourceSaveResult.Fail($"Source not tracked for {animationCode}.");
         }
 
         string? sourceRoot = GetSourceRoot();
         if (sourceRoot == null || !Directory.Exists(sourceRoot))
         {
-            return "ModsNeedUpdate source root not found.";
+            return SourceSaveResult.Fail("ModsNeedUpdate source root not found.");
         }
 
         IEnumerable<string> candidates = Directory.EnumerateFiles(sourceRoot, "*.json", SearchOption.AllDirectories)
@@ -279,12 +331,29 @@ public sealed partial class DebugWindowManager
         {
             try
             {
-                JObject json = JObject.Parse(File.ReadAllText(file));
+                string oldText = File.ReadAllText(file);
+                if (SourceHasComments(oldText))
+                {
+                    if (oldText.Contains(source.SourceKey, StringComparison.OrdinalIgnoreCase))
+                    {
+                        return SourceSaveResult.Fail("Source has comments; cannot safely rewrite. Strip comments first or edit by hand.");
+                    }
+
+                    continue;
+                }
+
+                JObject json = JObject.Parse(oldText);
                 if (!json.ContainsKey(source.SourceKey)) continue;
 
                 json[source.SourceKey] = JToken.Parse(AnimationJson.FromAnimation(animation).ToString());
-                File.WriteAllText(file, JsonUtil.ToPrettyString(json));
-                return $"Saved {animationCode} to {file}.";
+                string newText = JsonUtil.ToPrettyString(json);
+                SourceSaveRequest request = new(
+                    file,
+                    oldText,
+                    newText,
+                    $"Saved {animationCode} to {file}.",
+                    () => AtomicWriteWithBackup(file, newText));
+                return SourceSaveResult.Preview(request);
             }
             catch
             {
@@ -292,7 +361,65 @@ public sealed partial class DebugWindowManager
             }
         }
 
-        return $"Source JSON not found for {animationCode}.";
+        return SourceSaveResult.Fail($"Source JSON not found for {animationCode}.");
+    }
+
+    private static bool SourceHasComments(string text)
+    {
+        if (text.Contains("/*", StringComparison.Ordinal)) return true;
+
+        using StringReader reader = new(text);
+        string? line;
+        while ((line = reader.ReadLine()) != null)
+        {
+            string trimmed = line.TrimStart();
+            if (trimmed.StartsWith("//", StringComparison.Ordinal) || trimmed.StartsWith("#", StringComparison.Ordinal)) return true;
+        }
+
+        return false;
+    }
+
+    private static string AtomicWriteWithBackup(string sourceFile, string newText)
+    {
+        string tmpPath = sourceFile + ".tmp";
+        try
+        {
+            CreateSourceBackup(sourceFile);
+
+            using (FileStream stream = new(tmpPath, FileMode.Create, FileAccess.Write, FileShare.None, 4096, FileOptions.WriteThrough))
+            using (StreamWriter writer = new(stream))
+            {
+                writer.Write(newText);
+                writer.Flush();
+                stream.Flush(flushToDisk: true);
+            }
+
+            File.Move(tmpPath, sourceFile, overwrite: true);
+            return "";
+        }
+        finally
+        {
+            if (File.Exists(tmpPath))
+            {
+                File.Delete(tmpPath);
+            }
+        }
+    }
+
+    private static void CreateSourceBackup(string sourceFile)
+    {
+        string backup = sourceFile + ".bak";
+        DateTime now = DateTime.Now;
+        if (File.Exists(backup))
+        {
+            DateTime last = File.GetLastWriteTime(backup);
+            if (last.Year == now.Year && last.Month == now.Month && last.Day == now.Day && last.Hour == now.Hour && last.Minute == now.Minute)
+            {
+                return;
+            }
+        }
+
+        File.Copy(sourceFile, backup, overwrite: true);
     }
 
     private static string? GetSourceRoot()
@@ -373,6 +500,9 @@ public sealed partial class DebugWindowManager
     private TransformGizmoAxes? _activeGizmoWorldAxes;
     private bool _animationHistoryExternalDragActive;
     private bool _animationHistoryExplicitEditThisFrame;
+    private SourceSaveRequest? _pendingSourceSaveRequest;
+    private Action<string>? _pendingSourceSaveStatus;
+    private bool _openSourceSavePopup;
     internal TransformGizmoMode GizmoMode { get; private set; } = TransformGizmoMode.Move;
     internal bool GizmoLocalSpace { get; private set; } = true;
     internal bool IncludeGizmoInIncrement { get; private set; } = true;
@@ -423,7 +553,7 @@ public sealed partial class DebugWindowManager
             return CallbackGUIStatus.Closed;
         }
 
-        if (ImGui.Begin("Combat Overhaul - Animations editor and debug tools", ref _showAnimationEditor))
+        if (ImGui.Begin("Dev tools", ref _showAnimationEditor))
         {
             ImGui.BeginTabBar($"##main_tab_bar");
             if (ImGui.BeginTabItem($"Animations"))
@@ -509,6 +639,7 @@ public sealed partial class DebugWindowManager
                 ImGui.EndTabItem();
             }
             ImGui.EndTabBar();
+            DrawSourceSavePopup();
 
             ImGui.End();
         }
@@ -516,6 +647,132 @@ public sealed partial class DebugWindowManager
         _detachedEditorCamera?.Update(deltaSeconds, _showAnimationEditor);
 
         return _showAnimationEditor ? CallbackGUIStatus.GrabMouse : CallbackGUIStatus.Closed;
+    }
+
+    private void QueueSourceSave(SourceSaveResult result, Action<string> setStatus)
+    {
+        if (result.Request == null)
+        {
+            setStatus(result.Status);
+            return;
+        }
+
+        _pendingSourceSaveRequest = result.Request;
+        _pendingSourceSaveStatus = setStatus;
+        _openSourceSavePopup = true;
+    }
+
+    private void DrawSourceSavePopup()
+    {
+        const string popupId = "Save to source preview";
+        if (_openSourceSavePopup)
+        {
+            ImGui.OpenPopup(popupId);
+            _openSourceSavePopup = false;
+        }
+
+        bool open = true;
+        ImGui.SetNextWindowSize(new System.Numerics.Vector2(1100, 650), ImGuiCond.Appearing);
+        if (!ImGui.BeginPopupModal(popupId, ref open))
+        {
+            return;
+        }
+
+        SourceSaveRequest? request = _pendingSourceSaveRequest;
+        if (request == null)
+        {
+            ImGui.TextUnformatted("No source save is pending.");
+            if (ImGui.Button("Close"))
+            {
+                ImGui.CloseCurrentPopup();
+            }
+
+            ImGui.EndPopup();
+            return;
+        }
+
+        ImGui.TextUnformatted($"Save to {request.SourceFile}?");
+        ImGui.Separator();
+
+        string[] oldLines = SplitSourceLines(request.OldText);
+        string[] newLines = SplitSourceLines(request.NewText);
+        float paneWidth = Math.Max(320f, (ImGui.GetContentRegionAvail().X - 12f) * 0.5f);
+        System.Numerics.Vector2 paneSize = new(paneWidth, 500f);
+
+        DrawSourceSavePane("Current file##source-save-old", oldLines, newLines, paneSize);
+        ImGui.SameLine();
+        DrawSourceSavePane("New file##source-save-new", newLines, oldLines, paneSize);
+
+        if (ImGui.Button("Save##source-save-commit"))
+        {
+            string status;
+            try
+            {
+                status = request.Commit();
+            }
+            catch (Exception exception)
+            {
+                status = $"Save failed for {request.SourceFile}: {exception.Message}";
+            }
+
+            _pendingSourceSaveStatus?.Invoke(status);
+            ClearSourceSavePopup();
+            ImGui.CloseCurrentPopup();
+        }
+
+        ImGui.SameLine();
+        if (ImGui.Button("Cancel##source-save-cancel"))
+        {
+            _pendingSourceSaveStatus?.Invoke($"Save canceled for {request.SourceFile}.");
+            ClearSourceSavePopup();
+            ImGui.CloseCurrentPopup();
+        }
+
+        if (!open)
+        {
+            ClearSourceSavePopup();
+        }
+
+        ImGui.EndPopup();
+    }
+
+    private static void DrawSourceSavePane(string title, string[] lines, string[] otherLines, System.Numerics.Vector2 size)
+    {
+        ImGui.BeginChild(title, size, true, ImGuiWindowFlags.HorizontalScrollbar);
+        ImGui.TextUnformatted(title.Split("##", StringSplitOptions.None)[0]);
+        ImGui.Separator();
+
+        int count = Math.Max(lines.Length, otherLines.Length);
+        for (int i = 0; i < count; i++)
+        {
+            string line = i < lines.Length ? lines[i] : "";
+            bool changed = i >= lines.Length || i >= otherLines.Length || line != otherLines[i];
+            if (changed)
+            {
+                ImGui.PushStyleColor(ImGuiCol.Text, new System.Numerics.Vector4(1f, 0.9f, 0.25f, 1f));
+            }
+
+            ImGui.TextUnformatted($"{i + 1,5}: {line}");
+
+            if (changed)
+            {
+                ImGui.PopStyleColor();
+            }
+        }
+
+        ImGui.EndChild();
+    }
+
+    private static string[] SplitSourceLines(string text)
+    {
+        return text.Replace("\r\n", "\n", StringComparison.Ordinal).Replace('\r', '\n').Split('\n');
+    }
+
+    private void ClearSourceSavePopup()
+    {
+        _pendingSourceSaveRequest = null;
+        _pendingSourceSaveStatus = null;
+        _openSourceSavePopup = false;
     }
 
     private void EditFov()
@@ -647,7 +904,7 @@ public sealed partial class DebugWindowManager
             ImGui.SameLine();
             if (ImGui.Button("Save to source##animation") && AnimationsManager._instance.Animations.Count > 0)
             {
-                _transformSaveStatus = TrySaveAnimationToSource(selectedAnimationCode, AnimationsManager._instance.Animations[selectedAnimationCode]);
+                QueueSourceSave(TrySaveAnimationToSource(selectedAnimationCode, AnimationsManager._instance.Animations[selectedAnimationCode]), status => _transformSaveStatus = status);
             }
             if (!string.IsNullOrEmpty(_transformSaveStatus))
             {
@@ -811,7 +1068,7 @@ public sealed partial class DebugWindowManager
         if (editableTransform.SaveToSource != null && ImGui.Button("Save to source##transform"))
         {
             editableTransform.Apply?.Invoke(transform);
-            _transformSaveStatus = editableTransform.SaveToSource(transform);
+            QueueSourceSave(editableTransform.SaveToSource(transform), status => _transformSaveStatus = status);
         }
         if (!string.IsNullOrEmpty(_transformSaveStatus))
         {
@@ -887,7 +1144,7 @@ public sealed partial class DebugWindowManager
     private GenericDisplayProto? _currentBlock;
     private BlockPos? _currentDisplayBlockPos;
     private Action<ModelTransform>? _currentDisplayApply;
-    private System.Func<ModelTransform, string>? _currentDisplaySaveToSource;
+    private System.Func<ModelTransform, SourceSaveResult>? _currentDisplaySaveToSource;
     private Action? _currentDisplayRedraw;
     private string _currentDisplayContext = "";
     private string _displaySaveStatus = "";
@@ -931,7 +1188,7 @@ public sealed partial class DebugWindowManager
         if (_currentDisplaySaveToSource != null && ImGui.Button("Save to source##GenericDisplayTab"))
         {
             _currentDisplayApply?.Invoke(transform);
-            _displaySaveStatus = _currentDisplaySaveToSource(transform);
+            QueueSourceSave(_currentDisplaySaveToSource(transform), status => _displaySaveStatus = status);
         }
 
         ImGui.SameLine();
