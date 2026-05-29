@@ -512,6 +512,10 @@ public sealed partial class DebugWindowManager
     private int _editorPlaybackLoopStartKeyframe;
     private int _editorPlaybackLoopEndKeyframe;
     private double _editorPlaybackTimeMs;
+    private string _timelineRetimingAnimationCode = "";
+    private int _timelineRetimingPlayerKeyframeIndex = -1;
+    private bool _timelineRetimingPlayerKeyframeActive;
+    private static readonly MethodInfo? ProcessPlayerKeyFramesMethod = typeof(Animation).GetMethod("ProcessPlayerKeyFrames", BindingFlags.NonPublic | BindingFlags.Instance, null, Type.EmptyTypes, null);
     internal TransformGizmoMode GizmoMode { get; private set; } = TransformGizmoMode.Move;
     internal TransformGizmoSpace GizmoSpace { get; private set; } = TransformGizmoSpace.Local;
     internal bool IncludeGizmoInIncrement { get; private set; } = true;
@@ -935,7 +939,7 @@ public sealed partial class DebugWindowManager
         if (animation.PlayerKeyFrames.Count == 0) return;
 
         ImGui.SeparatorText("Timeline");
-        ImGui.TextDisabled("Click timeline to scrub. Click a player marker to select that keyframe.");
+        ImGui.TextDisabled("Click timeline to scrub. Click a player marker to select it; drag player markers to retime.");
 
         double durationMs = GetEditorAnimationDurationMs(animation);
         float scrubMs = (float)Math.Clamp(GetEditorFrameTimeMs(animation), 0, durationMs);
@@ -991,9 +995,27 @@ public sealed partial class DebugWindowManager
         if (ImGui.IsItemClicked(ImGuiMouseButton.Left))
         {
             NVector2 mouse = ImGui.GetIO().MousePos;
-            if (!TrySelectTimelinePlayerMarker(animation, mouse, trackStart, trackWidth, RowY(0), durationMs))
+            if (TryFindTimelinePlayerMarker(animation, mouse, trackStart, trackWidth, RowY(0), durationMs, out int markerIndex))
+            {
+                SelectEditorTimelinePlayerKeyframe(animation, markerIndex);
+                BeginTimelinePlayerRetiming(animationCode, animation, markerIndex);
+            }
+            else
             {
                 ScrubEditorTimeline(animation, XToTime(mouse.X));
+            }
+        }
+
+        if (_timelineRetimingPlayerKeyframeActive && _timelineRetimingAnimationCode == animationCode)
+        {
+            NVector2 mouse = ImGui.GetIO().MousePos;
+            if (ImGui.IsMouseDown(ImGuiMouseButton.Left))
+            {
+                RetimingTimelinePlayerKeyframe(animation, _timelineRetimingPlayerKeyframeIndex, XToTime(mouse.X));
+            }
+            else
+            {
+                EndTimelinePlayerRetiming(animationCode, animation);
             }
         }
     }
@@ -1219,12 +1241,12 @@ public sealed partial class DebugWindowManager
         _editorPlaybackTimeMs = GetEditorFrameTimeMs(animation);
     }
 
-    private bool TrySelectTimelinePlayerMarker(Animation animation, NVector2 mouse, float trackStart, float trackWidth, float rowY, double durationMs)
+    private bool TryFindTimelinePlayerMarker(Animation animation, NVector2 mouse, float trackStart, float trackWidth, float rowY, double durationMs, out int markerIndex)
     {
+        markerIndex = -1;
         const float hitRadius = 8;
         if (Math.Abs(mouse.Y - rowY) > hitRadius + 2) return false;
 
-        int selected = -1;
         float bestDistance = float.MaxValue;
         for (int index = 0; index < animation.PlayerKeyFrames.Count; index++)
         {
@@ -1233,13 +1255,56 @@ public sealed partial class DebugWindowManager
             if (distance >= bestDistance || distance > hitRadius) continue;
 
             bestDistance = distance;
-            selected = index;
+            markerIndex = index;
         }
 
-        if (selected < 0) return false;
+        return markerIndex >= 0;
+    }
 
-        SelectEditorTimelinePlayerKeyframe(animation, selected);
-        return true;
+    private void BeginTimelinePlayerRetiming(string animationCode, Animation animation, int keyframeIndex)
+    {
+        if (_timelineRetimingPlayerKeyframeActive && _timelineRetimingAnimationCode == animationCode && _timelineRetimingPlayerKeyframeIndex == keyframeIndex) return;
+
+        _timelineRetimingAnimationCode = animationCode;
+        _timelineRetimingPlayerKeyframeIndex = keyframeIndex;
+        _timelineRetimingPlayerKeyframeActive = true;
+        _animationHistory.BeginEdit(animationCode, animation, $"Retiming player keyframe {keyframeIndex}");
+    }
+
+    private void EndTimelinePlayerRetiming(string animationCode, Animation animation)
+    {
+        if (!_timelineRetimingPlayerKeyframeActive || _timelineRetimingAnimationCode != animationCode) return;
+
+        _animationHistory.CommitEdit(animationCode, animation);
+        _timelineRetimingAnimationCode = "";
+        _timelineRetimingPlayerKeyframeIndex = -1;
+        _timelineRetimingPlayerKeyframeActive = false;
+    }
+
+    private void RetimingTimelinePlayerKeyframe(Animation animation, int keyframeIndex, double requestedTimeMs)
+    {
+        if (keyframeIndex < 0 || keyframeIndex >= animation.PlayerKeyFrames.Count) return;
+
+        double minMs = keyframeIndex == 0 ? 0 : animation.PlayerKeyFrames[keyframeIndex - 1].Time.TotalMilliseconds + 1;
+        double maxMs = keyframeIndex == animation.PlayerKeyFrames.Count - 1
+            ? Math.Max(minMs, animation.PlayerKeyFrames[keyframeIndex].Time.TotalMilliseconds)
+            : animation.PlayerKeyFrames[keyframeIndex + 1].Time.TotalMilliseconds - 1;
+        double timeMs = Math.Clamp(requestedTimeMs, minMs, Math.Max(minMs, maxMs));
+
+        PLayerKeyFrame frame = animation.PlayerKeyFrames[keyframeIndex];
+        animation.PlayerKeyFrames[keyframeIndex] = new PLayerKeyFrame(frame.Frame, TimeSpan.FromMilliseconds(timeMs), frame.EasingFunction, frame.EasingType, frame.FrameProgressRange);
+        animation._playerFrameIndex = keyframeIndex;
+        animation._frameProgress = 0;
+        animation._playerFrameEdited = true;
+        ProcessPlayerKeyFramesForEditor(animation);
+        _editorPlaybackPlaying = false;
+        _editorPlaybackPaused = true;
+        _editorPlaybackTimeMs = GetEditorFrameTimeMs(animation);
+    }
+
+    private static void ProcessPlayerKeyFramesForEditor(Animation animation)
+    {
+        ProcessPlayerKeyFramesMethod?.Invoke(animation, null);
     }
 
     private TimelineMarker[] BuildPlayerTimelineMarkers(Animation animation)
