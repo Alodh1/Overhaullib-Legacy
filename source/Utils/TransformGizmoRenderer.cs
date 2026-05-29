@@ -40,6 +40,7 @@ internal enum TransformGizmoAxis
 }
 
 internal readonly record struct TransformGizmoGhostModel(MultiTextureMeshRef MeshRef, float[] ModelMatrix, float[] AnimationMatrices, int MaxJointId, Vec4f Color, BlockPos LightPos);
+internal readonly record struct TransformGizmoMotionPath(IReadOnlyList<Vec3d> Points, Vec3d? CurrentPoint, int PastColor, int FutureColor, int CurrentColor, float Thickness, bool SplitAtCurrentTime, double CurrentFraction);
 
 internal readonly struct TransformGizmoAxes
 {
@@ -106,9 +107,10 @@ internal sealed class TransformGizmoRenderer : IRenderer
 
         bool hasHighlight = _debugManager.TryGetRigPartHighlightCorners(out Vec3d[] highlightCorners);
         bool hasOnionSkins = _debugManager.TryGetRigOnionSkinModels(out IReadOnlyList<TransformGizmoGhostModel> onionSkinModels);
+        bool hasMotionPaths = _debugManager.TryGetRigMotionPaths(out IReadOnlyList<TransformGizmoMotionPath> motionPaths);
         GizmoState state = default;
         bool hasGizmo = ShouldDraw && TryBuildState(out state);
-        if (!hasHighlight && !hasOnionSkins && !hasGizmo) return;
+        if (!hasHighlight && !hasOnionSkins && !hasMotionPaths && !hasGizmo) return;
 
         if (hasGizmo && _draggedAxis == TransformGizmoAxis.None)
         {
@@ -121,6 +123,7 @@ internal sealed class TransformGizmoRenderer : IRenderer
         }
 
         _api.Render.GLDisableDepthTest();
+        if (hasMotionPaths) DrawMotionPaths(motionPaths);
         if (hasHighlight) DrawWireBox(highlightCorners, Highlight);
         if (hasGizmo) DrawActiveGizmo(state);
         _api.Render.GLEnableDepthTest();
@@ -464,10 +467,53 @@ internal sealed class TransformGizmoRenderer : IRenderer
         DrawLine(points[3], points[7], color);
     }
 
-    private void DrawLine(Vec3d start, Vec3d end, int color)
+    private void DrawLine(Vec3d start, Vec3d end, int color) => DrawLine(start, end, color, 1f);
+
+    private void DrawLine(Vec3d start, Vec3d end, int color, float thickness)
+    {
+        DrawLineRaw(start, end, color);
+        int extraLines = Math.Clamp((int)Math.Round(thickness) - 1, 0, 4);
+        if (extraLines <= 0) return;
+
+        GetCameraBasis(out _, out Vec3d right, out Vec3d up);
+        double offset = 0.0035 * Math.Max(1, thickness);
+        for (int index = 1; index <= extraLines; index++)
+        {
+            double scaledOffset = offset * index;
+            Vec3d horizontal = Scale(right, scaledOffset);
+            Vec3d vertical = Scale(up, scaledOffset);
+            DrawLineRaw(Add(start, horizontal), Add(end, horizontal), color);
+            DrawLineRaw(Sub(start, horizontal), Sub(end, horizontal), color);
+            DrawLineRaw(Add(start, vertical), Add(end, vertical), color);
+            DrawLineRaw(Sub(start, vertical), Sub(end, vertical), color);
+        }
+    }
+
+    private void DrawLineRaw(Vec3d start, Vec3d end, int color)
     {
         BlockPos origin = new((int)Math.Floor(start.X), (int)Math.Floor(start.Y), (int)Math.Floor(start.Z));
         _api.Render.RenderLine(origin, (float)(start.X - origin.X), (float)(start.Y - origin.Y), (float)(start.Z - origin.Z), (float)(end.X - origin.X), (float)(end.Y - origin.Y), (float)(end.Z - origin.Z), color);
+    }
+
+    private void DrawMotionPaths(IReadOnlyList<TransformGizmoMotionPath> paths)
+    {
+        foreach (TransformGizmoMotionPath path in paths)
+        {
+            if (path.Points.Count < 2) continue;
+
+            int segmentCount = path.Points.Count - 1;
+            for (int index = 1; index < path.Points.Count; index++)
+            {
+                double segmentFraction = (index - 0.5) / segmentCount;
+                int color = path.SplitAtCurrentTime && segmentFraction > path.CurrentFraction ? path.FutureColor : path.PastColor;
+                DrawLine(path.Points[index - 1], path.Points[index], color, path.Thickness);
+            }
+
+            if (path.CurrentPoint != null)
+            {
+                DrawWireCube(path.CurrentPoint, 0.035 * Math.Max(1, path.Thickness), path.CurrentColor);
+            }
+        }
     }
 
     private void DrawOnionSkinModels(IReadOnlyList<TransformGizmoGhostModel> models)
