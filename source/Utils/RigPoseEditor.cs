@@ -38,6 +38,7 @@ public sealed partial class DebugWindowManager
     private int _rigIkDragKeyframeIndex = -1;
     private EnumAnimatedElement _rigIkDragPart = EnumAnimatedElement.Unknown;
     private PlayerFrame _rigIkDragStartFrame = PlayerFrame.Zero;
+    private RigIkDragCache? _rigIkDragCache;
     private bool _rigPartClipboardHasValue;
     private EnumAnimatedElement _rigPartClipboardPart = EnumAnimatedElement.Unknown;
     private AnimationElement _rigPartClipboard = AnimationElement.Zero;
@@ -93,11 +94,11 @@ public sealed partial class DebugWindowManager
         ImGui.SameLine();
         ImGui.Checkbox("Highlight selected part##rig", ref _highlightSelectedRigPart);
         ImGui.SameLine();
-        ImGui.Checkbox("IK follow parents##rig", ref _rigIkFollowParents);
+        ImGui.Checkbox("Two-bone IK on Move##rig", ref _rigIkFollowParents);
         ImGui.TextDisabled("Shift-click a player body part to select it.");
         if (_rigIkFollowParents)
         {
-            ImGui.TextDisabled("IK affects Move gizmo drags on child parts; Rotate stays FK.");
+            ImGui.TextDisabled("Drag a hand/foot; shoulder/hip rotates and elbow/knee bends. Rotate-mode drags stay FK.");
         }
 
         EnumAnimatedElement selectedPart = RigEditableParts[_rigPartIndex];
@@ -280,6 +281,7 @@ public sealed partial class DebugWindowManager
         _rigIkDragKeyframeIndex = index;
         _rigIkDragPart = selectedPart;
         _rigIkDragStartFrame = animation.PlayerKeyFrames[index].Frame;
+        _rigIkDragCache = TryCreateRigIkDragCache(selectedPart, _rigIkDragStartFrame, out RigIkDragCache? cache) ? cache : null;
     }
 
     private void EndRigGizmoDrag(string animationCode, Animation animation)
@@ -300,11 +302,12 @@ public sealed partial class DebugWindowManager
         _rigIkDragKeyframeIndex = -1;
         _rigIkDragPart = EnumAnimatedElement.Unknown;
         _rigIkDragStartFrame = PlayerFrame.Zero;
+        _rigIkDragCache = null;
     }
 
     private bool ApplyRigIkMove(Animation animation, EnumAnimatedElement selectedPart, AnimationElement desiredElement)
     {
-        if (!TryGetIkFollowRoot(selectedPart, out EnumAnimatedElement rootPart)) return false;
+        if (!TryGetIkChain(selectedPart, out RigIkChain chain)) return false;
 
         int index = animation._playerFrameIndex;
         if (!_rigIkDragActive || _rigIkDragKeyframeIndex != index || _rigIkDragPart != selectedPart)
@@ -313,51 +316,157 @@ public sealed partial class DebugWindowManager
         }
 
         if (!_rigIkDragActive || index < 0 || index >= animation.PlayerKeyFrames.Count) return false;
+        if (_rigIkDragCache == null || _rigIkDragCache.Chain.SelectedPart != selectedPart) return false;
+        if (!TrySolveRigIk(_rigIkDragCache, desiredElement, out AnimationElement solvedUpper, out AnimationElement solvedLower)) return false;
 
-        AnimationElement startSelected = GetRigElement(_rigIkDragStartFrame, selectedPart, out bool selectedExists);
-        if (!selectedExists) return false;
-
-        AnimationElement startRoot = GetRigElement(_rigIkDragStartFrame, rootPart, out bool rootExists);
-        if (!rootExists) startRoot = AnimationElement.Zero;
-
-        AnimationElement solvedRoot = TranslateElementBy(startRoot, desiredElement, startSelected);
         PLayerKeyFrame keyFrame = animation.PlayerKeyFrames[index];
-        PlayerFrame solvedFrame = SetRigElement(_rigIkDragStartFrame, rootPart, solvedRoot);
+        PlayerFrame solvedFrame = SetRigElement(_rigIkDragStartFrame, chain.UpperPart, solvedUpper);
+        solvedFrame = SetRigElement(solvedFrame, chain.LowerPart, solvedLower);
         animation.PlayerKeyFrames[index] = new PLayerKeyFrame(solvedFrame, keyFrame.Time, keyFrame.EasingFunction, keyFrame.EasingType, keyFrame.FrameProgressRange);
         animation._playerFrameEdited = true;
         return true;
     }
 
-    private static bool TryGetIkFollowRoot(EnumAnimatedElement selectedPart, out EnumAnimatedElement rootPart)
+    private bool TryCreateRigIkDragCache(EnumAnimatedElement selectedPart, PlayerFrame startFrame, out RigIkDragCache? cache)
     {
-        rootPart = selectedPart switch
+        cache = null;
+        if (!TryGetIkChain(selectedPart, out RigIkChain chain)) return false;
+        if (!TryGetRigPartWorldInfo(chain.UpperPart, out RigPoseWorldInfo upperInfo)) return false;
+        if (!TryGetRigPartWorldInfo(chain.LowerPart, out RigPoseWorldInfo lowerInfo)) return false;
+        if (!TryGetRigPartWorldOrigin(selectedPart, out Vec3d? selectedOrigin) || selectedOrigin == null) return false;
+        if (!TryGetRigPartWorldAxes(selectedPart, out TransformGizmoAxes selectedAxes))
         {
-            EnumAnimatedElement.ItemAnchor => EnumAnimatedElement.UpperArmR,
-            EnumAnimatedElement.LowerArmR => EnumAnimatedElement.UpperArmR,
-            EnumAnimatedElement.ItemAnchorL => EnumAnimatedElement.UpperArmL,
-            EnumAnimatedElement.LowerArmL => EnumAnimatedElement.UpperArmL,
-            EnumAnimatedElement.LowerFootR => EnumAnimatedElement.UpperFootR,
-            EnumAnimatedElement.LowerFootL => EnumAnimatedElement.UpperFootL,
-            EnumAnimatedElement.Head => EnumAnimatedElement.Neck,
-            _ => EnumAnimatedElement.Unknown
-        };
+            selectedAxes = new TransformGizmoAxes(new Vec3d(1, 0, 0), new Vec3d(0, 1, 0), new Vec3d(0, 0, 1));
+        }
 
-        return rootPart != EnumAnimatedElement.Unknown;
+        Vec3d endOrigin;
+        if (chain.EndPart != EnumAnimatedElement.Unknown && TryGetRigPartWorldOrigin(chain.EndPart, out Vec3d? realEndOrigin) && realEndOrigin != null)
+        {
+            endOrigin = realEndOrigin;
+        }
+        else if (!TryGetDistalEndpointWorld(chain.LowerPart, lowerInfo.Origin, out endOrigin))
+        {
+            return false;
+        }
+
+        double upperOriginDistance = Distance(upperInfo.Origin, lowerInfo.Origin);
+        double lowerOriginDistance = Distance(lowerInfo.Origin, endOrigin);
+        double upperLength = GetBoneLength(upperInfo.Pose.ForElement, upperOriginDistance);
+        double lowerLength = GetBoneLength(lowerInfo.Pose.ForElement, lowerOriginDistance);
+        if (upperLength <= 0.0001 || lowerLength <= 0.0001) return false;
+
+        AnimationElement selectedStart = GetRigElement(startFrame, selectedPart, out bool selectedExists);
+        if (!selectedExists) selectedStart = AnimationElement.Zero;
+        AnimationElement upperStart = GetRigElement(startFrame, chain.UpperPart, out bool upperExists);
+        if (!upperExists) upperStart = AnimationElement.Zero;
+        AnimationElement lowerStart = GetRigElement(startFrame, chain.LowerPart, out bool lowerExists);
+        if (!lowerExists) lowerStart = AnimationElement.Zero;
+
+        Vec3d rootToEnd = SafeNormalize(Sub(endOrigin, upperInfo.Origin), upperInfo.WorldRotation.TransformDirection(new Vec3d(0, 0, 1)));
+        Vec3d poleHint = ProjectOntoPlane(Sub(lowerInfo.Origin, upperInfo.Origin), rootToEnd);
+        if (poleHint.LengthSq() < 0.000001)
+        {
+            // Preserve the side's natural bend when possible; right/left chains mirror through this cached pole.
+            poleHint = ProjectOntoPlane(upperInfo.WorldRotation.TransformDirection(new Vec3d(0, 0, chain.PoleSign)), rootToEnd);
+        }
+        poleHint = SafeNormalize(poleHint, SafePoleFallback(rootToEnd));
+
+        cache = new RigIkDragCache(
+            chain,
+            upperInfo,
+            lowerInfo,
+            selectedOrigin,
+            endOrigin,
+            selectedAxes,
+            selectedStart,
+            upperStart,
+            lowerStart,
+            upperLength,
+            lowerLength,
+            poleHint);
+        return true;
     }
 
-    private static AnimationElement TranslateElementBy(AnimationElement rootStart, AnimationElement desiredSelected, AnimationElement selectedStart)
+    private bool TrySolveRigIk(RigIkDragCache cache, AnimationElement desiredElement, out AnimationElement solvedUpper, out AnimationElement solvedLower)
     {
-        float dx = (desiredSelected.OffsetX ?? 0) - (selectedStart.OffsetX ?? 0);
-        float dy = (desiredSelected.OffsetY ?? 0) - (selectedStart.OffsetY ?? 0);
-        float dz = (desiredSelected.OffsetZ ?? 0) - (selectedStart.OffsetZ ?? 0);
+        solvedUpper = cache.UpperStartElement;
+        solvedLower = cache.LowerStartElement;
 
+        Vec3d selectedTarget = GetDesiredSelectedWorldOrigin(cache, desiredElement);
+        Vec3d target = Add(cache.EndOrigin, Sub(selectedTarget, cache.SelectedOrigin));
+        Vec3d root = cache.UpperInfo.Origin;
+        Vec3d rootToTarget = Sub(target, root);
+        double requestedDistance = rootToTarget.Length();
+        if (requestedDistance < 0.0001) return false;
+
+        Vec3d axis = Scale(rootToTarget, 1.0 / requestedDistance);
+        double epsilon = 0.0001;
+        double minDistance = Math.Abs(cache.UpperLength - cache.LowerLength) + epsilon;
+        double maxDistance = cache.UpperLength + cache.LowerLength - epsilon;
+        double distance = Math.Clamp(requestedDistance, minDistance, maxDistance);
+        target = Add(root, Scale(axis, distance));
+
+        double upperSquared = cache.UpperLength * cache.UpperLength;
+        double lowerSquared = cache.LowerLength * cache.LowerLength;
+        double along = (upperSquared - lowerSquared + distance * distance) / (2.0 * distance);
+        double heightSquared = Math.Max(0, upperSquared - along * along);
+        double height = Math.Sqrt(heightSquared);
+
+        Vec3d pole = ProjectOntoPlane(cache.PoleHint, axis);
+        if (pole.LengthSq() < 0.000001) pole = ProjectOntoPlane(new Vec3d(0, 1, 0), axis);
+        if (pole.LengthSq() < 0.000001) pole = ProjectOntoPlane(new Vec3d(1, 0, 0), axis);
+        pole = SafeNormalize(pole, SafePoleFallback(axis));
+
+        Vec3d joint = Add(Add(root, Scale(axis, along)), Scale(pole, height));
+
+        Vec3d upperStartDirection = SafeNormalize(Sub(cache.LowerInfo.Origin, cache.UpperInfo.Origin), cache.UpperInfo.WorldRotation.TransformDirection(new Vec3d(0, 0, 1)));
+        Vec3d upperTargetDirection = SafeNormalize(Sub(joint, cache.UpperInfo.Origin), upperStartDirection);
+        Vec3d lowerStartDirection = SafeNormalize(Sub(cache.EndOrigin, cache.LowerInfo.Origin), cache.LowerInfo.WorldRotation.TransformDirection(new Vec3d(0, 0, 1)));
+        Vec3d lowerTargetDirection = SafeNormalize(Sub(target, joint), lowerStartDirection);
+
+        RigIkMatrix3 upperWorld = RigIkMatrix3.FromTo(upperStartDirection, upperTargetDirection).Mul(cache.UpperInfo.WorldRotation).Orthonormalized();
+        RigIkMatrix3 upperLocal = cache.UpperInfo.ParentWorldRotation.Inverted().Mul(upperWorld).Orthonormalized();
+        Vec3d upperEuler = Sub(upperLocal.ToEulerDegrees(), cache.UpperInfo.BaseRotationDegrees);
+
+        RigIkMatrix3 lowerWorld = RigIkMatrix3.FromTo(lowerStartDirection, lowerTargetDirection).Mul(cache.LowerInfo.WorldRotation).Orthonormalized();
+        RigIkMatrix3 lowerLocal = upperWorld.Inverted().Mul(lowerWorld).Orthonormalized();
+        Vec3d lowerEuler = Sub(lowerLocal.ToEulerDegrees(), cache.LowerInfo.BaseRotationDegrees);
+
+        solvedUpper = WithRotation(cache.UpperStartElement, upperEuler);
+        solvedLower = WithRotation(cache.LowerStartElement, lowerEuler);
+        return true;
+    }
+
+    private static bool TryGetIkChain(EnumAnimatedElement selectedPart, out RigIkChain chain)
+    {
+        chain = selectedPart switch
+        {
+            EnumAnimatedElement.ItemAnchor or EnumAnimatedElement.LowerArmR => new RigIkChain(selectedPart, EnumAnimatedElement.UpperArmR, EnumAnimatedElement.LowerArmR, EnumAnimatedElement.ItemAnchor, 1),
+            EnumAnimatedElement.ItemAnchorL or EnumAnimatedElement.LowerArmL => new RigIkChain(selectedPart, EnumAnimatedElement.UpperArmL, EnumAnimatedElement.LowerArmL, EnumAnimatedElement.ItemAnchorL, -1),
+            EnumAnimatedElement.LowerFootR => new RigIkChain(selectedPart, EnumAnimatedElement.UpperFootR, EnumAnimatedElement.LowerFootR, EnumAnimatedElement.Unknown, 1),
+            EnumAnimatedElement.LowerFootL => new RigIkChain(selectedPart, EnumAnimatedElement.UpperFootL, EnumAnimatedElement.LowerFootL, EnumAnimatedElement.Unknown, -1),
+            _ => default
+        };
+
+        return chain.UpperPart != EnumAnimatedElement.Unknown;
+    }
+
+    private static AnimationElement WithRotation(AnimationElement source, Vec3d rotation)
+    {
         return new AnimationElement(
-            (rootStart.OffsetX ?? 0) + dx,
-            (rootStart.OffsetY ?? 0) + dy,
-            (rootStart.OffsetZ ?? 0) + dz,
-            rootStart.RotationX,
-            rootStart.RotationY,
-            rootStart.RotationZ);
+            source.OffsetX,
+            source.OffsetY,
+            source.OffsetZ,
+            NormalizeDegrees((float)rotation.X),
+            NormalizeDegrees((float)rotation.Y),
+            NormalizeDegrees((float)rotation.Z));
+    }
+
+    private static float NormalizeDegrees(float degrees)
+    {
+        while (degrees > 180) degrees -= 360;
+        while (degrees < -180) degrees += 360;
+        return degrees;
     }
 
     private static ModelTransform RigElementToTransform(AnimationElement element)
@@ -668,7 +777,7 @@ public sealed partial class DebugWindowManager
     {
         corners = Array.Empty<Vec3d>();
         if (!TryGetRigPartPose(selectedPart, out EntityPlayer playerEntity, out ElementPose? pose)) return false;
-        if (pose.ForElement == null) return false;
+        if (pose?.ForElement == null) return false;
 
         Matrixf matrix = new();
         BuildPlayerModelMatrix(matrix, playerEntity);
@@ -690,26 +799,39 @@ public sealed partial class DebugWindowManager
 
     private bool TryGetRigPartPose(EnumAnimatedElement selectedPart, out EntityPlayer playerEntity, out ElementPose? pose)
     {
+        return TryGetRigPartPose(selectedPart, out playerEntity, out pose, out _);
+    }
+
+    private bool TryGetRigPartPose(EnumAnimatedElement selectedPart, out EntityPlayer playerEntity, out ElementPose? pose, out ElementPose? parentPose)
+    {
         playerEntity = _api.World.Player.Entity;
         pose = null;
+        parentPose = null;
         if (playerEntity.AnimManager?.Animator is not AnimatorBase animator || animator.RootPoses == null) return false;
-        return TryFindPose(animator.RootPoses, selectedPart, out pose);
+        return TryFindPose(animator.RootPoses, selectedPart, null, out pose, out parentPose);
     }
 
     private static bool TryFindPose(IEnumerable<ElementPose> poses, EnumAnimatedElement selectedPart, out ElementPose? result)
+    {
+        return TryFindPose(poses, selectedPart, null, out result, out _);
+    }
+
+    private static bool TryFindPose(IEnumerable<ElementPose> poses, EnumAnimatedElement selectedPart, ElementPose? parent, out ElementPose? result, out ElementPose? parentResult)
     {
         foreach (ElementPose pose in poses)
         {
             if (PoseMatches(pose, selectedPart))
             {
                 result = pose;
+                parentResult = parent;
                 return true;
             }
 
-            if (TryFindPose(pose.ChildElementPoses, selectedPart, out result)) return true;
+            if (TryFindPose(pose.ChildElementPoses, selectedPart, pose, out result, out parentResult)) return true;
         }
 
         result = null;
+        parentResult = null;
         return false;
     }
 
@@ -783,6 +905,80 @@ public sealed partial class DebugWindowManager
         ];
     }
 
+    private bool TryGetRigPartWorldInfo(EnumAnimatedElement selectedPart, out RigPoseWorldInfo info)
+    {
+        info = default;
+        if (!TryGetRigPartPose(selectedPart, out EntityPlayer playerEntity, out ElementPose? pose, out ElementPose? parentPose)) return false;
+        if (pose?.ForElement == null) return false;
+
+        Matrixf worldMatrix = new();
+        BuildPlayerModelMatrix(worldMatrix, playerEntity);
+        worldMatrix.Mul(pose.AnimModelMatrix);
+
+        Matrixf parentMatrix = new();
+        BuildPlayerModelMatrix(parentMatrix, playerEntity);
+        if (parentPose != null) parentMatrix.Mul(parentPose.AnimModelMatrix);
+
+        if (!TryGetRigPartWorldOrigin(selectedPart, out Vec3d? origin) || origin == null) return false;
+
+        info = new RigPoseWorldInfo(
+            pose,
+            origin,
+            RigIkMatrix3.FromMatrixf(worldMatrix).Orthonormalized(),
+            RigIkMatrix3.FromMatrixf(parentMatrix).Orthonormalized(),
+            new Vec3d(pose.ForElement.RotationX, pose.ForElement.RotationY, pose.ForElement.RotationZ));
+        return true;
+    }
+
+    private bool TryGetDistalEndpointWorld(EnumAnimatedElement lowerPart, Vec3d jointOrigin, out Vec3d endpoint)
+    {
+        endpoint = jointOrigin;
+        if (!TryGetRigPartPose(lowerPart, out EntityPlayer playerEntity, out ElementPose? pose)) return false;
+        if (pose?.ForElement == null) return false;
+
+        Matrixf matrix = new();
+        BuildPlayerModelMatrix(matrix, playerEntity);
+        matrix.Mul(pose.AnimModelMatrix);
+
+        Vec3f[] localCorners = GetElementLocalBoxCorners(pose.ForElement);
+        Vec3d camera = playerEntity.CameraPos;
+        double best = -1;
+
+        foreach (Vec3f local in localCorners)
+        {
+            Vec4f relative = matrix.TransformVector(new Vec4f(local.X, local.Y, local.Z, 1f));
+            Vec3d world = new(camera.X + relative.X, camera.Y + relative.Y, camera.Z + relative.Z);
+            double distance = Sub(world, jointOrigin).LengthSq();
+            if (distance <= best) continue;
+
+            best = distance;
+            endpoint = world;
+        }
+
+        return best > 0.000001;
+    }
+
+    private Vec3d GetDesiredSelectedWorldOrigin(RigIkDragCache cache, AnimationElement desiredElement)
+    {
+        double dx = ((desiredElement.OffsetX ?? 0) - (cache.SelectedStartElement.OffsetX ?? 0)) / 16.0;
+        double dy = ((desiredElement.OffsetY ?? 0) - (cache.SelectedStartElement.OffsetY ?? 0)) / 16.0;
+        double dz = ((desiredElement.OffsetZ ?? 0) - (cache.SelectedStartElement.OffsetZ ?? 0)) / 16.0;
+
+        return Add(cache.SelectedOrigin, Add(Add(Scale(cache.SelectedAxes.X, dx), Scale(cache.SelectedAxes.Y, dy)), Scale(cache.SelectedAxes.Z, dz)));
+    }
+
+    private static double GetBoneLength(ShapeElement element, double originDistance)
+    {
+        if (originDistance > 0.0001) return originDistance;
+        if (element.From == null || element.To == null || element.From.Length < 3 || element.To.Length < 3) return 0;
+
+        double x = Math.Abs(element.To[0] - element.From[0]) / 16.0;
+        double y = Math.Abs(element.To[1] - element.From[1]) / 16.0;
+        double z = Math.Abs(element.To[2] - element.From[2]) / 16.0;
+        double length = Math.Max(x, Math.Max(y, z));
+        return length > 0.0001 ? length : 0;
+    }
+
     private static bool TryIntersectRayBox(Vec3d origin, Vec3d direction, Vec3d[] corners, out double distance)
     {
         distance = double.PositiveInfinity;
@@ -834,8 +1030,20 @@ public sealed partial class DebugWindowManager
         return distance >= 0;
     }
 
+    private static double Distance(Vec3d left, Vec3d right) => Sub(left, right).Length();
     private static double Dot(Vec3d left, Vec3d right) => left.X * right.X + left.Y * right.Y + left.Z * right.Z;
+    private static Vec3d Add(Vec3d left, Vec3d right) => new(left.X + right.X, left.Y + right.Y, left.Z + right.Z);
     private static Vec3d Sub(Vec3d left, Vec3d right) => new(left.X - right.X, left.Y - right.Y, left.Z - right.Z);
+    private static Vec3d Scale(Vec3d value, double scale) => new(value.X * scale, value.Y * scale, value.Z * scale);
+    private static Vec3d ProjectOntoPlane(Vec3d vector, Vec3d normal) => Sub(vector, Scale(normal, Dot(vector, normal)));
+    private static Vec3d SafeNormalize(Vec3d value, Vec3d fallback) => value.LengthSq() < 0.000001 ? fallback : value.Normalize();
+
+    private static Vec3d SafePoleFallback(Vec3d axis)
+    {
+        Vec3d fallback = ProjectOntoPlane(new Vec3d(0, 1, 0), axis);
+        if (fallback.LengthSq() < 0.000001) fallback = ProjectOntoPlane(new Vec3d(1, 0, 0), axis);
+        return SafeNormalize(fallback, new Vec3d(0, 0, 1));
+    }
 
     private static void BuildPlayerModelMatrix(Matrixf matrix, EntityPlayer playerEntity)
     {
@@ -865,6 +1073,151 @@ public sealed partial class DebugWindowManager
         _rigPoseEditorEnabled = false;
         DebugPoseFreezeActive = false;
         DebugRigPoseOverrideActive = false;
+    }
+
+    private readonly record struct RigIkChain(EnumAnimatedElement SelectedPart, EnumAnimatedElement UpperPart, EnumAnimatedElement LowerPart, EnumAnimatedElement EndPart, double PoleSign);
+
+    private readonly record struct RigPoseWorldInfo(ElementPose Pose, Vec3d Origin, RigIkMatrix3 WorldRotation, RigIkMatrix3 ParentWorldRotation, Vec3d BaseRotationDegrees);
+
+    private sealed record RigIkDragCache(
+        RigIkChain Chain,
+        RigPoseWorldInfo UpperInfo,
+        RigPoseWorldInfo LowerInfo,
+        Vec3d SelectedOrigin,
+        Vec3d EndOrigin,
+        TransformGizmoAxes SelectedAxes,
+        AnimationElement SelectedStartElement,
+        AnimationElement UpperStartElement,
+        AnimationElement LowerStartElement,
+        double UpperLength,
+        double LowerLength,
+        Vec3d PoleHint);
+
+    private readonly struct RigIkMatrix3
+    {
+        public static RigIkMatrix3 Identity => new(1, 0, 0, 0, 1, 0, 0, 0, 1);
+
+        private readonly double m00, m01, m02, m10, m11, m12, m20, m21, m22;
+
+        public RigIkMatrix3(double m00, double m01, double m02, double m10, double m11, double m12, double m20, double m21, double m22)
+        {
+            this.m00 = m00;
+            this.m01 = m01;
+            this.m02 = m02;
+            this.m10 = m10;
+            this.m11 = m11;
+            this.m12 = m12;
+            this.m20 = m20;
+            this.m21 = m21;
+            this.m22 = m22;
+        }
+
+        public static RigIkMatrix3 FromMatrixf(Matrixf matrix)
+        {
+            float[] v = matrix.Values;
+            return new RigIkMatrix3(v[0], v[4], v[8], v[1], v[5], v[9], v[2], v[6], v[10]);
+        }
+
+        public static RigIkMatrix3 FromEulerDegrees(double xDegrees, double yDegrees, double zDegrees)
+        {
+            double x = xDegrees * GameMath.DEG2RAD;
+            double y = yDegrees * GameMath.DEG2RAD;
+            double z = zDegrees * GameMath.DEG2RAD;
+            double sx = Math.Sin(x), cx = Math.Cos(x), sy = Math.Sin(y), cy = Math.Cos(y), sz = Math.Sin(z), cz = Math.Cos(z);
+
+            return new RigIkMatrix3(
+                cy * cz, -cy * sz, sy,
+                cx * sz + sx * sy * cz, cx * cz - sx * sy * sz, -sx * cy,
+                -cx * sy * cz + sx * sz, cx * sy * sz + sx * cz, cx * cy
+            );
+        }
+
+        public static RigIkMatrix3 FromAxisAngle(Vec3d axis, double radians)
+        {
+            axis = SafeNormalize(new Vec3d(axis.X, axis.Y, axis.Z), new Vec3d(1, 0, 0));
+            double x = axis.X, y = axis.Y, z = axis.Z, s = Math.Sin(radians), c = Math.Cos(radians), t = 1 - c;
+
+            return new RigIkMatrix3(
+                t * x * x + c, t * x * y - s * z, t * x * z + s * y,
+                t * x * y + s * z, t * y * y + c, t * y * z - s * x,
+                t * x * z - s * y, t * y * z + s * x, t * z * z + c
+            );
+        }
+
+        public static RigIkMatrix3 FromTo(Vec3d from, Vec3d to)
+        {
+            from = SafeNormalize(from, new Vec3d(1, 0, 0));
+            to = SafeNormalize(to, new Vec3d(1, 0, 0));
+            double dot = Math.Clamp(Dot(from, to), -1, 1);
+            if (dot > 0.999999) return Identity;
+
+            if (dot < -0.999999)
+            {
+                return FromAxisAngle(SafePoleFallback(from), Math.PI);
+            }
+
+            Vec3d axis = from.Cross(to);
+            return FromAxisAngle(axis, Math.Acos(dot));
+        }
+
+        public RigIkMatrix3 Mul(RigIkMatrix3 right)
+        {
+            return new RigIkMatrix3(
+                m00 * right.m00 + m01 * right.m10 + m02 * right.m20, m00 * right.m01 + m01 * right.m11 + m02 * right.m21, m00 * right.m02 + m01 * right.m12 + m02 * right.m22,
+                m10 * right.m00 + m11 * right.m10 + m12 * right.m20, m10 * right.m01 + m11 * right.m11 + m12 * right.m21, m10 * right.m02 + m11 * right.m12 + m12 * right.m22,
+                m20 * right.m00 + m21 * right.m10 + m22 * right.m20, m20 * right.m01 + m21 * right.m11 + m22 * right.m21, m20 * right.m02 + m21 * right.m12 + m22 * right.m22
+            );
+        }
+
+        public RigIkMatrix3 Inverted()
+        {
+            double determinant = m00 * (m11 * m22 - m12 * m21) - m01 * (m10 * m22 - m12 * m20) + m02 * (m10 * m21 - m11 * m20);
+            if (Math.Abs(determinant) < 0.000001) return Identity;
+
+            double inv = 1 / determinant;
+            return new RigIkMatrix3(
+                (m11 * m22 - m12 * m21) * inv, (m02 * m21 - m01 * m22) * inv, (m01 * m12 - m02 * m11) * inv,
+                (m12 * m20 - m10 * m22) * inv, (m00 * m22 - m02 * m20) * inv, (m02 * m10 - m00 * m12) * inv,
+                (m10 * m21 - m11 * m20) * inv, (m01 * m20 - m00 * m21) * inv, (m00 * m11 - m01 * m10) * inv
+            );
+        }
+
+        public RigIkMatrix3 Orthonormalized()
+        {
+            Vec3d x = SafeNormalize(new Vec3d(m00, m10, m20), new Vec3d(1, 0, 0));
+            Vec3d y = Sub(new Vec3d(m01, m11, m21), Scale(x, Dot(new Vec3d(m01, m11, m21), x)));
+            y = SafeNormalize(y, SafePoleFallback(x));
+            Vec3d z = SafeNormalize(x.Cross(y), new Vec3d(0, 0, 1));
+            y = SafeNormalize(z.Cross(x), new Vec3d(0, 1, 0));
+            return new RigIkMatrix3(x.X, y.X, z.X, x.Y, y.Y, z.Y, x.Z, y.Z, z.Z);
+        }
+
+        public Vec3d TransformDirection(Vec3d direction) => new(
+            m00 * direction.X + m01 * direction.Y + m02 * direction.Z,
+            m10 * direction.X + m11 * direction.Y + m12 * direction.Z,
+            m20 * direction.X + m21 * direction.Y + m22 * direction.Z
+        );
+
+        public Vec3d ToEulerDegrees()
+        {
+            double y = Math.Asin(Math.Clamp(m02, -1, 1));
+            double cy = Math.Cos(y);
+            double x;
+            double z;
+
+            if (Math.Abs(cy) > 0.00001)
+            {
+                x = Math.Atan2(-m12, m22);
+                z = Math.Atan2(-m01, m00);
+            }
+            else
+            {
+                z = 0;
+                x = m02 > 0 ? Math.Atan2(m10, m11) : Math.Atan2(-m10, m11);
+            }
+
+            return new Vec3d(x * GameMath.RAD2DEG, y * GameMath.RAD2DEG, z * GameMath.RAD2DEG);
+        }
     }
 }
 #endif
