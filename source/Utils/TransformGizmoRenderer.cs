@@ -19,7 +19,8 @@ internal enum TransformGizmoContext
     MainHand,
     OffHand,
     Ground,
-    Display
+    Display,
+    RigPart
 }
 
 internal enum TransformGizmoAxis
@@ -563,10 +564,15 @@ internal sealed class TransformGizmoRenderer : IRenderer
     private bool TryBuildState(out GizmoState state)
     {
         state = default;
-        if (!_debugManager.TryGetActiveTransformGizmo(out ModelTransform transform, out TransformGizmoContext context, out BlockPos? blockPos)) return false;
+        if (!_debugManager.TryGetActiveTransformGizmo(out ModelTransform transform, out TransformGizmoContext context, out BlockPos? blockPos, out Vec3d? worldCenter)) return false;
 
         GetCameraBasis(out Vec3d forward, out Vec3d right, out Vec3d up);
-        if (!TryGetRenderedCenter(transform, context, blockPos, out Vec3d center))
+        Vec3d center;
+        if (worldCenter != null)
+        {
+            center = worldCenter;
+        }
+        else if (!TryGetRenderedCenter(transform, context, blockPos, out center))
         {
             center = GetFallbackCenter(transform, context, blockPos, forward, right, up);
         }
@@ -610,6 +616,11 @@ internal sealed class TransformGizmoRenderer : IRenderer
 
     private TranslationBasis BuildTranslationBasis(ModelTransform transform, TransformGizmoContext context, BlockPos? blockPos, Vec3d center)
     {
+        if (context == TransformGizmoContext.RigPart)
+        {
+            return new TranslationBasis(new Vec3d(1, 0, 0), new Vec3d(0, 1, 0), new Vec3d(0, 0, 1));
+        }
+
         Vec3d x = TryGetRenderedCenter(WithTranslationOffset(transform, 1, 0, 0), context, blockPos, out Vec3d centerX) ? Sub(centerX, center) : new Vec3d(1, 0, 0);
         Vec3d y = TryGetRenderedCenter(WithTranslationOffset(transform, 0, 1, 0), context, blockPos, out Vec3d centerY) ? Sub(centerY, center) : new Vec3d(0, 1, 0);
         Vec3d z = TryGetRenderedCenter(WithTranslationOffset(transform, 0, 0, 1), context, blockPos, out Vec3d centerZ) ? Sub(centerZ, center) : new Vec3d(0, 0, 1);

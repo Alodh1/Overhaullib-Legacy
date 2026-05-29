@@ -17,7 +17,7 @@ using VSImGui.API;
 
 namespace CombatOverhaul.Animations;
 
-public sealed class DebugWindowManager
+public sealed partial class DebugWindowManager
 {
     public static bool PlayAnimationsInThirdPerson { get; set; } = false;
     public static bool RenderDebugColliders { get; set; } = false;
@@ -27,6 +27,7 @@ public sealed class DebugWindowManager
 #if DEBUG
         api.ModLoader.GetModSystem<ImGuiModSystem>().Draw += DrawEditor;
         _transformGizmoRenderer = new TransformGizmoRenderer(api, this);
+        _detachedEditorCamera = new DetachedEditorCamera(api);
 #endif
         api.Input.RegisterHotKey("combatOverhaul_editor", "Show animation editor", GlKeys.L, ctrlPressed: true);
         api.Input.SetHotKeyHandler("combatOverhaul_editor", keys => _showAnimationEditor = !_showAnimationEditor);
@@ -361,9 +362,11 @@ public sealed class DebugWindowManager
     internal static LineSegmentCollider? _currentCollider = null;
 #if DEBUG
     private TransformGizmoRenderer? _transformGizmoRenderer;
+    private DetachedEditorCamera? _detachedEditorCamera;
     private ModelTransform? _activeGizmoTransform;
     private TransformGizmoContext _activeGizmoContext = TransformGizmoContext.Free;
     private BlockPos? _activeGizmoBlockPos;
+    private Vec3d? _activeGizmoWorldCenter;
     private Action<ModelTransform>? _activeGizmoApply;
     internal TransformGizmoMode GizmoMode { get; private set; } = TransformGizmoMode.Move;
     internal bool GizmoLocalSpace { get; private set; } = true;
@@ -408,7 +411,11 @@ public sealed class DebugWindowManager
     {
         _currentCollider = null;
         ClearActiveTransformGizmo();
-        if (!_showAnimationEditor) return CallbackGUIStatus.Closed;
+        if (!_showAnimationEditor)
+        {
+            OnDebugEditorClosed();
+            return CallbackGUIStatus.Closed;
+        }
 
         if (ImGui.Begin("Combat Overhaul - Animations editor and debug tools", ref _showAnimationEditor))
         {
@@ -499,6 +506,8 @@ public sealed class DebugWindowManager
 
             ImGui.End();
         }
+
+        _detachedEditorCamera?.Update(deltaSeconds, _showAnimationEditor);
 
         return _showAnimationEditor ? CallbackGUIStatus.GrabMouse : CallbackGUIStatus.Closed;
     }
@@ -637,21 +646,23 @@ public sealed class DebugWindowManager
             ImGui.SetNextItemWidth(200);
             ImGui.SliderFloat("Animation speed", ref _animationSpeed, 0.1f, 2);
             ImGui.Checkbox("Overwrite current frame", ref _overwriteFrame);
-            AnimationsManager._instance.Animations[codes[_selectedAnimationIndex]].Edit(codes[_selectedAnimationIndex]);
-            if (_overwriteFrame)
+            Animation selectedAnimation = AnimationsManager._instance.Animations[codes[_selectedAnimationIndex]];
+            selectedAnimation.Edit(codes[_selectedAnimationIndex]);
+            bool rigPoseOverridesFrame = DrawRigPoseEditor(codes[_selectedAnimationIndex], selectedAnimation);
+            if (_overwriteFrame || rigPoseOverridesFrame)
             {
-                if (AnimationsManager._instance.Animations[codes[_selectedAnimationIndex]]._playerFrameEdited)
+                if (rigPoseOverridesFrame || selectedAnimation._playerFrameEdited)
                 {
-                    _behavior.FrameOverride = AnimationsManager._instance.Animations[codes[_selectedAnimationIndex]].StillPlayerFrame(AnimationsManager._instance.Animations[codes[_selectedAnimationIndex]]._playerFrameIndex, AnimationsManager._instance.Animations[codes[_selectedAnimationIndex]]._frameProgress);
+                    if (_behavior != null) _behavior.FrameOverride = selectedAnimation.StillPlayerFrame(selectedAnimation._playerFrameIndex, selectedAnimation._frameProgress);
                 }
                 else
                 {
-                    _behavior.FrameOverride = AnimationsManager._instance.Animations[codes[_selectedAnimationIndex]].StillItemFrame(AnimationsManager._instance.Animations[codes[_selectedAnimationIndex]]._itemFrameIndex, AnimationsManager._instance.Animations[codes[_selectedAnimationIndex]]._frameProgress);
+                    if (_behavior != null) _behavior.FrameOverride = selectedAnimation.StillItemFrame(selectedAnimation._itemFrameIndex, selectedAnimation._frameProgress);
                 }
             }
             else
             {
-                _behavior.FrameOverride = null;
+                if (_behavior != null) _behavior.FrameOverride = null;
             }
         }
     }
@@ -938,9 +949,15 @@ public sealed class DebugWindowManager
 
     internal bool TryGetActiveTransformGizmo(out ModelTransform transform, out TransformGizmoContext context, out BlockPos? blockPos)
     {
+        return TryGetActiveTransformGizmo(out transform, out context, out blockPos, out _);
+    }
+
+    internal bool TryGetActiveTransformGizmo(out ModelTransform transform, out TransformGizmoContext context, out BlockPos? blockPos, out Vec3d? worldCenter)
+    {
         transform = _activeGizmoTransform!;
         context = _activeGizmoContext;
         blockPos = _activeGizmoBlockPos;
+        worldCenter = _activeGizmoWorldCenter;
         return _activeGizmoTransform != null;
     }
 
@@ -984,19 +1001,33 @@ public sealed class DebugWindowManager
         _activeGizmoTransform = null;
         _activeGizmoApply = null;
         _activeGizmoBlockPos = null;
+        _activeGizmoWorldCenter = null;
         _activeGizmoContext = TransformGizmoContext.Free;
     }
 
-    private void DrawTransformGizmoControls(string id, ModelTransform transform, TransformGizmoContext context, Action<ModelTransform>? apply, BlockPos? blockPos = null)
+    private void DrawTransformGizmoControls(string id, ModelTransform transform, TransformGizmoContext context, Action<ModelTransform>? apply, BlockPos? blockPos = null, Vec3d? worldCenter = null, bool allowMove = true, bool allowScale = true, bool allowRotate = true)
     {
         ImGui.SeparatorText("Gizmo");
 
-        if (ImGui.RadioButton($"Move##gizmo-mode-{id}", GizmoMode == TransformGizmoMode.Move)) GizmoMode = TransformGizmoMode.Move;
-        ImGui.SameLine();
-        if (ImGui.RadioButton($"Scale##gizmo-mode-{id}", GizmoMode == TransformGizmoMode.Scale)) GizmoMode = TransformGizmoMode.Scale;
-        ImGui.SameLine();
-        if (ImGui.RadioButton($"Rotate##gizmo-mode-{id}", GizmoMode == TransformGizmoMode.Rotate)) GizmoMode = TransformGizmoMode.Rotate;
-        ImGui.SameLine();
+        if (GizmoMode == TransformGizmoMode.Move && !allowMove) GizmoMode = allowRotate ? TransformGizmoMode.Rotate : TransformGizmoMode.None;
+        if (GizmoMode == TransformGizmoMode.Scale && !allowScale) GizmoMode = allowRotate ? TransformGizmoMode.Rotate : TransformGizmoMode.None;
+        if (GizmoMode == TransformGizmoMode.Rotate && !allowRotate) GizmoMode = allowMove ? TransformGizmoMode.Move : TransformGizmoMode.None;
+
+        if (allowMove)
+        {
+            if (ImGui.RadioButton($"Move##gizmo-mode-{id}", GizmoMode == TransformGizmoMode.Move)) GizmoMode = TransformGizmoMode.Move;
+            ImGui.SameLine();
+        }
+        if (allowScale)
+        {
+            if (ImGui.RadioButton($"Scale##gizmo-mode-{id}", GizmoMode == TransformGizmoMode.Scale)) GizmoMode = TransformGizmoMode.Scale;
+            ImGui.SameLine();
+        }
+        if (allowRotate)
+        {
+            if (ImGui.RadioButton($"Rotate##gizmo-mode-{id}", GizmoMode == TransformGizmoMode.Rotate)) GizmoMode = TransformGizmoMode.Rotate;
+            ImGui.SameLine();
+        }
         if (ImGui.RadioButton($"Off##gizmo-mode-{id}", GizmoMode == TransformGizmoMode.None)) GizmoMode = TransformGizmoMode.None;
 
         bool localSpace = GizmoLocalSpace;
@@ -1018,6 +1049,7 @@ public sealed class DebugWindowManager
         _activeGizmoContext = context;
         _activeGizmoApply = apply;
         _activeGizmoBlockPos = blockPos;
+        _activeGizmoWorldCenter = worldCenter;
     }
 
     private static TransformGizmoContext GetGizmoContextForTransformCode(string transformCode)

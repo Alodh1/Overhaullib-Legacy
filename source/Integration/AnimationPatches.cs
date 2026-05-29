@@ -343,7 +343,12 @@ internal static class AnimationPatches
                     or EnumAnimatedElement.LowerFootR
                     or EnumAnimatedElement.LowerFootL;
 
-                if (!isLegElement)
+#if DEBUG
+                bool allowDebugLegPose = DebugWindowManager.DebugRigPoseOverrideActive;
+#else
+                const bool allowDebugLegPose = false;
+#endif
+                if (!isLegElement || allowDebugLegPose)
                 {
                     pose.Clear();
                     frame.Apply(pose, animatedElement, eyePosition, eyeHeight, pitch, applyCameraPitch);
