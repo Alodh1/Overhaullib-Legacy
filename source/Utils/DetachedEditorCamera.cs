@@ -9,8 +9,16 @@ using Vintagestory.Client.NoObf;
 
 namespace CombatOverhaul.Animations;
 
+internal enum RigEditorCameraMode
+{
+    FirstPerson,
+    Orbiting,
+    Detached
+}
+
 internal sealed class DetachedEditorCamera : IRenderer
 {
+    private static readonly string[] CameraModeNames = ["First person", "Orbiting", "Detached"];
     private static DetachedEditorCamera? _activeInstance;
     private static readonly FieldInfo? CameraModeField = typeof(Camera).GetField("CameraMode", BindingFlags.Instance | BindingFlags.NonPublic);
 
@@ -24,10 +32,12 @@ internal sealed class DetachedEditorCamera : IRenderer
     private double _pitch = -0.15;
     private double _distance = 4.0;
     private Vec3d _targetOffset = new();
+    private Vec3d _detachedPosition = new();
     private float _moveSpeed = 2.5f;
     private float _orbitSensitivity = 0.006f;
+    private RigEditorCameraMode _mode = RigEditorCameraMode.FirstPerson;
 
-    public bool Enabled { get; private set; }
+    public bool Enabled => _mode != RigEditorCameraMode.FirstPerson;
     public double RenderOrder => 0.98;
     public int RenderRange => 9999;
     internal static bool IsActive => _activeInstance?.Enabled == true;
@@ -43,7 +53,7 @@ internal sealed class DetachedEditorCamera : IRenderer
     {
         if (!editorOpen)
         {
-            SetEnabled(false);
+            SetMode(RigEditorCameraMode.FirstPerson);
             return;
         }
 
@@ -57,10 +67,17 @@ internal sealed class DetachedEditorCamera : IRenderer
 
     public void DrawControls(string id)
     {
-        bool enabled = Enabled;
-        if (ImGui.Checkbox($"Detached camera##{id}", ref enabled))
+        int modeIndex = (int)_mode;
+        ImGui.SetNextItemWidth(150);
+        if (ImGui.Combo($"Camera mode##{id}", ref modeIndex, CameraModeNames, CameraModeNames.Length))
         {
-            SetEnabled(enabled);
+            SetMode((RigEditorCameraMode)modeIndex);
+        }
+
+        if (_mode == RigEditorCameraMode.FirstPerson)
+        {
+            ImGui.TextDisabled("Uses the normal game camera.");
+            return;
         }
 
         ImGui.SameLine();
@@ -68,39 +85,66 @@ internal sealed class DetachedEditorCamera : IRenderer
         ImGui.SameLine();
         if (ImGui.Button($"Reset camera##{id}")) ResetCamera();
 
-        float distance = (float)_distance;
-        ImGui.SetNextItemWidth(140);
-        if (ImGui.SliderFloat($"Distance##{id}", ref distance, 0.75f, 12f)) _distance = distance;
+        if (_mode == RigEditorCameraMode.Orbiting)
+        {
+            float distance = (float)_distance;
+            ImGui.SetNextItemWidth(140);
+            if (ImGui.SliderFloat($"Distance##{id}", ref distance, 0.75f, 12f)) _distance = distance;
 
-        ImGui.SameLine();
-        ImGui.SetNextItemWidth(140);
-        ImGui.SliderFloat($"Move speed##{id}", ref _moveSpeed, 0.25f, 12f);
+            ImGui.TextDisabled("RMB drag orbits the frozen player. Mouse wheel zooms.");
+        }
+        else
+        {
+            ImGui.SetNextItemWidth(140);
+            ImGui.SliderFloat($"Move speed##{id}", ref _moveSpeed, 0.25f, 12f);
 
-        ImGui.TextDisabled("RMB drag orbits. Mouse wheel zooms. WASD pans the camera, Q/E moves down/up. Shift speeds up.");
+            ImGui.TextDisabled("RMB drag looks around. WASD moves the camera, Q/E moves down/up. Shift speeds up.");
+        }
     }
 
     public void SetEnabled(bool enabled)
     {
-        if (Enabled == enabled) return;
+        SetMode(enabled ? RigEditorCameraMode.Orbiting : RigEditorCameraMode.FirstPerson);
+    }
 
-        Enabled = enabled;
-        if (enabled)
-        {
-            _activeInstance = this;
-            EnsureInitialized(force: true);
-            CaptureCameraState();
-            ApplyDetachedCameraState();
-        }
-        else
+    private void SetMode(RigEditorCameraMode mode)
+    {
+        if (_mode == mode) return;
+
+        bool wasEnabled = Enabled;
+        _mode = mode;
+
+        if (!Enabled)
         {
             RestoreCameraState();
+            return;
         }
+
+        _activeInstance = this;
+        EnsureInitialized(force: !wasEnabled);
+
+        if (_mode == RigEditorCameraMode.Detached)
+        {
+            SetDetachedPositionFromOrbit();
+        }
+
+        if (!wasEnabled)
+        {
+            CaptureCameraState();
+        }
+
+        ApplyDetachedCameraState();
     }
 
     public void FocusPlayer()
     {
         _targetOffset.Set(0, 0, 0);
         EnsureInitialized(force: true);
+
+        if (_mode == RigEditorCameraMode.Detached)
+        {
+            SetDetachedPositionFromOrbit();
+        }
     }
 
     public void ResetCamera()
@@ -110,6 +154,11 @@ internal sealed class DetachedEditorCamera : IRenderer
         _pitch = -0.15;
         _yaw = _api.World.Player.CameraYaw;
         _initialized = true;
+
+        if (_mode == RigEditorCameraMode.Detached)
+        {
+            SetDetachedPositionFromOrbit();
+        }
     }
 
     internal static bool SuppressVanillaCameraUpdate(ClientMain client)
@@ -156,10 +205,12 @@ internal sealed class DetachedEditorCamera : IRenderer
             _pitch = Math.Clamp(_pitch - io.MouseDelta.Y * _orbitSensitivity, -1.35, 1.35);
         }
 
-        if (!io.WantCaptureMouse && Math.Abs(io.MouseWheel) > 0.001f)
+        if (_mode == RigEditorCameraMode.Orbiting && !io.WantCaptureMouse && Math.Abs(io.MouseWheel) > 0.001f)
         {
             _distance = Math.Clamp(_distance - io.MouseWheel * 0.35, 0.75, 12.0);
         }
+
+        if (_mode != RigEditorCameraMode.Detached) return;
 
         if (io.WantTextInput) return;
 
@@ -176,7 +227,7 @@ internal sealed class DetachedEditorCamera : IRenderer
 
         move.Normalize();
         double speed = _moveSpeed * (ImGui.IsKeyDown(ImGuiKey.LeftShift) || ImGui.IsKeyDown(ImGuiKey.RightShift) ? 3.0 : 1.0);
-        _targetOffset.Add(move.Mul(speed * deltaSeconds));
+        _detachedPosition.Add(move.Mul(speed * deltaSeconds));
     }
 
     private void OverrideCamera(PlayerCamera camera, ClientMain client)
@@ -298,10 +349,29 @@ internal sealed class DetachedEditorCamera : IRenderer
 
     private void GetCameraPoints(out Vec3d cameraPos, out Vec3d targetPos)
     {
+        if (_mode == RigEditorCameraMode.Detached)
+        {
+            cameraPos = _detachedPosition.Clone();
+            GetBasis(out Vec3d forward, out _, out _);
+            targetPos = cameraPos.AddCopy(forward);
+            return;
+        }
+
+        GetOrbitCameraPoints(out cameraPos, out targetPos);
+    }
+
+    private void GetOrbitCameraPoints(out Vec3d cameraPos, out Vec3d targetPos)
+    {
         EntityPlayer player = _api.World.Player.Entity;
         targetPos = new Vec3d(player.Pos.X, player.Pos.InternalY + player.SelectionBox.Y2 * 0.55, player.Pos.Z).Add(_targetOffset);
         GetBasis(out Vec3d forward, out _, out _);
         cameraPos = targetPos.SubCopy(forward.Mul(_distance));
+    }
+
+    private void SetDetachedPositionFromOrbit()
+    {
+        GetOrbitCameraPoints(out Vec3d cameraPos, out _);
+        _detachedPosition.Set(cameraPos);
     }
 
     private void GetBasis(out Vec3d forward, out Vec3d right, out Vec3d up)
