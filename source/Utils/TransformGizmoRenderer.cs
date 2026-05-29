@@ -39,7 +39,7 @@ internal enum TransformGizmoAxis
     Z
 }
 
-internal readonly record struct TransformGizmoWireBox(Vec3d[] Corners, int Color);
+internal readonly record struct TransformGizmoGhostModel(MultiTextureMeshRef MeshRef, float[] ModelMatrix, float[] AnimationMatrices, int MaxJointId, Vec4f Color, BlockPos LightPos);
 
 internal readonly struct TransformGizmoAxes
 {
@@ -105,7 +105,7 @@ internal sealed class TransformGizmoRenderer : IRenderer
         if (stage != EnumRenderStage.Opaque) return;
 
         bool hasHighlight = _debugManager.TryGetRigPartHighlightCorners(out Vec3d[] highlightCorners);
-        bool hasOnionSkins = _debugManager.TryGetRigOnionSkinBoxes(out IReadOnlyList<TransformGizmoWireBox> onionSkinBoxes);
+        bool hasOnionSkins = _debugManager.TryGetRigOnionSkinModels(out IReadOnlyList<TransformGizmoGhostModel> onionSkinModels);
         GizmoState state = default;
         bool hasGizmo = ShouldDraw && TryBuildState(out state);
         if (!hasHighlight && !hasOnionSkins && !hasGizmo) return;
@@ -115,14 +115,12 @@ internal sealed class TransformGizmoRenderer : IRenderer
             _hoveredAxis = PickAxis(state, _api.Input.MouseX, _api.Input.MouseY);
         }
 
-        _api.Render.GLDisableDepthTest();
         if (hasOnionSkins)
         {
-            foreach (TransformGizmoWireBox box in onionSkinBoxes)
-            {
-                DrawWireBox(box.Corners, box.Color);
-            }
+            DrawOnionSkinModels(onionSkinModels);
         }
+
+        _api.Render.GLDisableDepthTest();
         if (hasHighlight) DrawWireBox(highlightCorners, Highlight);
         if (hasGizmo) DrawActiveGizmo(state);
         _api.Render.GLEnableDepthTest();
@@ -470,6 +468,53 @@ internal sealed class TransformGizmoRenderer : IRenderer
     {
         BlockPos origin = new((int)Math.Floor(start.X), (int)Math.Floor(start.Y), (int)Math.Floor(start.Z));
         _api.Render.RenderLine(origin, (float)(start.X - origin.X), (float)(start.Y - origin.Y), (float)(start.Z - origin.Z), (float)(end.X - origin.X), (float)(end.Y - origin.Y), (float)(end.Z - origin.Z), color);
+    }
+
+    private void DrawOnionSkinModels(IReadOnlyList<TransformGizmoGhostModel> models)
+    {
+        if (models.Count == 0) return;
+
+        IRenderAPI render = _api.Render;
+        IShaderProgram? previousShader = render.CurrentActiveShader;
+        previousShader?.Stop();
+
+        render.GlToggleBlend(true, EnumBlendMode.Standard);
+        render.GLDepthMask(false);
+
+        IShaderProgram shader = render.GetEngineShader(EnumShaderProgram.Entityanimated);
+        shader.Use();
+
+        foreach (TransformGizmoGhostModel model in models)
+        {
+            if (model.MeshRef.Disposed || !model.MeshRef.Initialized) continue;
+
+            Vec4f light = _api.World.BlockAccessor.GetLightRGBs(model.LightPos.X, model.LightPos.Y, model.LightPos.Z);
+            shader.Uniform("extraGlow", 0);
+            shader.Uniform("rgbaAmbientIn", render.AmbientColor);
+            shader.Uniform("rgbaFogIn", render.FogColor);
+            shader.Uniform("fogMinIn", render.FogMin);
+            shader.Uniform("fogDensityIn", render.FogDensity);
+            shader.Uniform("rgbaLightIn", light);
+            shader.Uniform("renderColor", model.Color);
+            shader.Uniform("alphaTest", 0.01f);
+            shader.UniformMatrix("projectionMatrix", render.CurrentProjectionMatrix);
+            shader.UniformMatrix("modelMatrix", model.ModelMatrix);
+            shader.UniformMatrix("viewMatrix", render.CameraMatrixOriginf);
+            shader.Uniform("addRenderFlags", 0);
+            shader.Uniform("windWaveIntensity", 0f);
+            shader.Uniform("entityId", 0);
+            shader.Uniform("glitchFlicker", 0);
+            shader.Uniform("frostAlpha", 0f);
+            shader.Uniform("waterWaveCounter", render.ShaderUniforms.WaterWaveCounter);
+            shader.Uniform("glitchEffectStrength", 0f);
+            shader.UBOs["Animation"].Update(model.AnimationMatrices, 0, model.MaxJointId * 16 * 4);
+            render.RenderMultiTextureMesh(model.MeshRef, "entityTex", 0);
+        }
+
+        shader.Stop();
+        render.GLDepthMask(true);
+        render.GlToggleBlend(false);
+        previousShader?.Use();
     }
 
     private TransformGizmoAxis PickAxis(GizmoState state, int mouseX, int mouseY) => _debugManager.GizmoMode == TransformGizmoMode.Rotate ? PickCircleAxis(state, mouseX, mouseY) : PickLinearAxis(state, mouseX, mouseY);

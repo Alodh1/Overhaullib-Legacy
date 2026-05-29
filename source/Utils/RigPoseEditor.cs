@@ -3,9 +3,11 @@ using CombatOverhaul.Integration.Transpilers;
 using ImGuiNET;
 using NVector3 = System.Numerics.Vector3;
 using OpenTK.Mathematics;
+using System.Reflection;
 using Vintagestory.API.Client;
 using Vintagestory.API.Common;
 using Vintagestory.API.MathTools;
+using Vintagestory.GameContent;
 
 namespace CombatOverhaul.Animations;
 
@@ -31,8 +33,9 @@ public sealed partial class DebugWindowManager
     ];
 
     private static readonly string[] RigEditablePartNames = RigEditableParts.Select(part => part.ToString()).ToArray();
-    private static readonly int RigOnionPreviousColor = ColorUtil.ColorFromRgba(70, 210, 255, 150);
-    private static readonly int RigOnionNextColor = ColorUtil.ColorFromRgba(255, 170, 45, 150);
+    private static readonly Vec4f RigOnionPreviousColor = new(0.27f, 0.82f, 1.0f, 0.34f);
+    private static readonly Vec4f RigOnionNextColor = new(1.0f, 0.66f, 0.18f, 0.34f);
+    private static readonly FieldInfo? EntityShapeRendererMeshRefOpaque = typeof(EntityShapeRenderer).GetField("meshRefOpaque", BindingFlags.Instance | BindingFlags.NonPublic);
 
     private bool _rigPoseEditorEnabled;
     private bool _highlightSelectedRigPart = true;
@@ -798,10 +801,10 @@ public sealed partial class DebugWindowManager
         return TryGetRigPartWorldBox(RigEditableParts[_rigPartIndex], out corners);
     }
 
-    internal bool TryGetRigOnionSkinBoxes(out IReadOnlyList<TransformGizmoWireBox> boxes)
+    internal bool TryGetRigOnionSkinModels(out IReadOnlyList<TransformGizmoGhostModel> models)
     {
-        List<TransformGizmoWireBox> result = [];
-        boxes = result;
+        List<TransformGizmoGhostModel> result = [];
+        models = result;
 
         if (!_showAnimationEditor || !_rigPoseEditorEnabled || !_rigOnionSkinEnabled) return false;
         if (_rigOnionSkinAnimation == null || _rigOnionSkinAnimation.PlayerKeyFrames.Count == 0) return false;
@@ -817,29 +820,26 @@ public sealed partial class DebugWindowManager
             AppendRigOnionSkinFrame(_rigOnionSkinAnimation.PlayerKeyFrames[currentIndex + 1].Frame, RigOnionNextColor, result);
         }
 
-        boxes = result;
+        models = result;
         return result.Count > 0;
     }
 
-    private void AppendRigOnionSkinFrame(PlayerFrame frame, int color, List<TransformGizmoWireBox> boxes)
+    private void AppendRigOnionSkinFrame(PlayerFrame frame, Vec4f color, List<TransformGizmoGhostModel> models)
     {
         EntityPlayer playerEntity = _api.World.Player.Entity;
         if (playerEntity.AnimManager?.Animator is not AnimatorBase animator || animator.RootPoses == null) return;
+        if (playerEntity.Properties.Client.Renderer is not EntityShapeRenderer renderer) return;
+        if (EntityShapeRendererMeshRefOpaque?.GetValue(renderer) is not MultiTextureMeshRef meshRef || meshRef.Disposed || !meshRef.Initialized) return;
 
         List<ElementPose> ghostPoses = ClonePoseTree(animator.RootPoses);
+        float[] ghostMatrices = CreateIdentityMatrices(animator.MaxJointId);
         Vector3 eyePosition = new((float)playerEntity.LocalEyePos.X, (float)playerEntity.LocalEyePos.Y, (float)playerEntity.LocalEyePos.Z);
         float eyeHeight = (float)playerEntity.Properties.EyeHeight;
-        ApplyOnionSkinPlayerFrame(frame, ghostPoses, Mat4f.Create(), eyePosition, eyeHeight, playerEntity.Pos.HeadPitch);
+        ApplyOnionSkinPlayerFrame(frame, ghostPoses, Mat4f.Create(), ghostMatrices, new HashSet<int>(), eyePosition, eyeHeight, playerEntity.Pos.HeadPitch);
 
-        foreach (EnumAnimatedElement part in RigEditableParts)
-        {
-            if (!TryFindPose(ghostPoses, part, out ElementPose? pose)) continue;
-            if (pose?.ForElement == null) continue;
-            if (TryGetPoseWorldBox(playerEntity, pose, out Vec3d[] corners))
-            {
-                boxes.Add(new TransformGizmoWireBox(corners, color));
-            }
-        }
+        Matrixf modelMatrix = new();
+        BuildPlayerModelMatrix(modelMatrix, playerEntity);
+        models.Add(new TransformGizmoGhostModel(meshRef, (float[])modelMatrix.Values.Clone(), ghostMatrices, animator.MaxJointId, color, playerEntity.Pos.AsBlockPos));
     }
 
     private static List<ElementPose> ClonePoseTree(IEnumerable<ElementPose> poses)
@@ -858,11 +858,23 @@ public sealed partial class DebugWindowManager
         return result;
     }
 
-    private static void ApplyOnionSkinPlayerFrame(PlayerFrame frame, List<ElementPose>? poses, float[] parentMatrix, Vector3 eyePosition, float eyeHeight, float pitch)
+    private static float[] CreateIdentityMatrices(int maxJointId)
+    {
+        float[] matrices = new float[Math.Max(1, maxJointId) * 16];
+        for (int index = 0; index < matrices.Length; index += 16)
+        {
+            Array.Copy(Mat4f.Create(), 0, matrices, index, 16);
+        }
+
+        return matrices;
+    }
+
+    private static void ApplyOnionSkinPlayerFrame(PlayerFrame frame, List<ElementPose>? poses, float[] parentMatrix, float[] transformationMatrices, HashSet<int> jointsDone, Vector3 eyePosition, float eyeHeight, float pitch)
     {
         if (poses == null) return;
 
         float[] localTransform = Mat4f.Create();
+        float[] jointTransform = Mat4f.Create();
         foreach (ElementPose pose in poses)
         {
             ShapeElement element = pose.ForElement;
@@ -879,7 +891,17 @@ public sealed partial class DebugWindowManager
             element.GetLocalTransformMatrix(0, localTransform, pose);
             Mat4f.Mul(pose.AnimModelMatrix, pose.AnimModelMatrix, localTransform);
 
-            ApplyOnionSkinPlayerFrame(frame, pose.ChildElementPoses, pose.AnimModelMatrix, eyePosition, eyeHeight, pitch);
+            if (element.JointId > 0 && jointsDone.Add(element.JointId))
+            {
+                int matrixIndex = 16 * element.JointId;
+                if (matrixIndex + 16 <= transformationMatrices.Length)
+                {
+                    Mat4f.Mul(jointTransform, pose.AnimModelMatrix, element.inverseModelTransform);
+                    Array.Copy(jointTransform, 0, transformationMatrices, matrixIndex, 16);
+                }
+            }
+
+            ApplyOnionSkinPlayerFrame(frame, pose.ChildElementPoses, pose.AnimModelMatrix, transformationMatrices, jointsDone, eyePosition, eyeHeight, pitch);
         }
     }
 
