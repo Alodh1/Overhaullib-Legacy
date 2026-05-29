@@ -133,14 +133,22 @@ public sealed partial class DebugWindowManager
 
         _rigGizmoTransform = RigElementToTransform(element);
         TryGetRigPartWorldCenter(selectedPart, out Vec3d? worldCenter);
-        TransformGizmoAxes? worldAxes = TryGetRigPartWorldAxes(selectedPart, out TransformGizmoAxes axes) ? axes : null;
+        TransformGizmoAxes? selectedAxes = TryGetRigPartWorldAxes(selectedPart, out TransformGizmoAxes localAxes) ? localAxes : null;
+        TransformGizmoAxes? parentAxes = TryGetRigPartParentWorldAxes(selectedPart, out TransformGizmoAxes parentWorldAxes) ? parentWorldAxes : null;
+        TransformGizmoAxes? activeAxes = GizmoSpace switch
+        {
+            TransformGizmoSpace.Local => selectedAxes,
+            TransformGizmoSpace.Parent => parentAxes,
+            _ => null
+        };
         DrawTransformGizmoControls(
             "rig-pose",
             _rigGizmoTransform,
             TransformGizmoContext.RigPart,
             transform => ApplyRigTransform(animation, selectedPart, transform),
             worldCenter: worldCenter,
-            worldAxes: worldAxes,
+            worldAxes: activeAxes,
+            parentAxes: parentAxes,
             allowScale: false,
             dragStarted: () => BeginRigGizmoDrag(animationCode, animation, selectedPart),
             dragEnded: () => EndRigGizmoDrag(animationCode, animation));
@@ -706,6 +714,27 @@ public sealed partial class DebugWindowManager
         Matrixf matrix = new();
         BuildPlayerModelMatrix(matrix, playerEntity);
         matrix.Mul(pose.AnimModelMatrix);
+
+        Vec3d origin = TransformLocalPoint(matrix, 0, 0, 0);
+        Vec3d x = Sub(TransformLocalPoint(matrix, 1, 0, 0), origin);
+        Vec3d y = Sub(TransformLocalPoint(matrix, 0, 1, 0), origin);
+        Vec3d z = Sub(TransformLocalPoint(matrix, 0, 0, 1), origin);
+
+        if (x.LengthSq() < 0.000001 || y.LengthSq() < 0.000001 || z.LengthSq() < 0.000001) return false;
+
+        axes = new TransformGizmoAxes(x.Normalize(), y.Normalize(), z.Normalize());
+        return true;
+    }
+
+    private bool TryGetRigPartParentWorldAxes(EnumAnimatedElement selectedPart, out TransformGizmoAxes axes)
+    {
+        axes = default;
+        if (!TryGetRigPartPose(selectedPart, out EntityPlayer playerEntity, out ElementPose? pose, out ElementPose? parentPose)) return false;
+        if (pose?.ForElement == null || parentPose == null) return false;
+
+        Matrixf matrix = new();
+        BuildPlayerModelMatrix(matrix, playerEntity);
+        matrix.Mul(parentPose.AnimModelMatrix);
 
         Vec3d origin = TransformLocalPoint(matrix, 0, 0, 0);
         Vec3d x = Sub(TransformLocalPoint(matrix, 1, 0, 0), origin);

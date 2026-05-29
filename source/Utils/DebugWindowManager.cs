@@ -498,13 +498,14 @@ public sealed partial class DebugWindowManager
     private Action? _activeGizmoDragStarted;
     private Action? _activeGizmoDragEnded;
     private TransformGizmoAxes? _activeGizmoWorldAxes;
+    private TransformGizmoAxes? _activeGizmoParentAxes;
     private bool _animationHistoryExternalDragActive;
     private bool _animationHistoryExplicitEditThisFrame;
     private SourceSaveRequest? _pendingSourceSaveRequest;
     private Action<string>? _pendingSourceSaveStatus;
     private bool _openSourceSavePopup;
     internal TransformGizmoMode GizmoMode { get; private set; } = TransformGizmoMode.Move;
-    internal bool GizmoLocalSpace { get; private set; } = true;
+    internal TransformGizmoSpace GizmoSpace { get; private set; } = TransformGizmoSpace.Local;
     internal bool IncludeGizmoInIncrement { get; private set; } = true;
     internal float TransformGizmoIncrement { get; private set; } = 0.1f;
     internal static bool DebugPoseFreezeActive { get; private set; }
@@ -1327,11 +1328,17 @@ public sealed partial class DebugWindowManager
 
     internal bool TryGetActiveTransformGizmo(out ModelTransform transform, out TransformGizmoContext context, out BlockPos? blockPos, out Vec3d? worldCenter, out TransformGizmoAxes? worldAxes)
     {
+        return TryGetActiveTransformGizmo(out transform, out context, out blockPos, out worldCenter, out worldAxes, out _);
+    }
+
+    internal bool TryGetActiveTransformGizmo(out ModelTransform transform, out TransformGizmoContext context, out BlockPos? blockPos, out Vec3d? worldCenter, out TransformGizmoAxes? worldAxes, out TransformGizmoAxes? parentAxes)
+    {
         transform = _activeGizmoTransform!;
         context = _activeGizmoContext;
         blockPos = _activeGizmoBlockPos;
         worldCenter = _activeGizmoWorldCenter;
         worldAxes = _activeGizmoWorldAxes;
+        parentAxes = _activeGizmoParentAxes;
         return _activeGizmoTransform != null;
     }
 
@@ -1389,10 +1396,11 @@ public sealed partial class DebugWindowManager
         _activeGizmoBlockPos = null;
         _activeGizmoWorldCenter = null;
         _activeGizmoWorldAxes = null;
+        _activeGizmoParentAxes = null;
         _activeGizmoContext = TransformGizmoContext.Free;
     }
 
-    private void DrawTransformGizmoControls(string id, ModelTransform transform, TransformGizmoContext context, Action<ModelTransform>? apply, BlockPos? blockPos = null, Vec3d? worldCenter = null, TransformGizmoAxes? worldAxes = null, bool allowMove = true, bool allowScale = true, bool allowRotate = true, Action? dragStarted = null, Action? dragEnded = null)
+    private void DrawTransformGizmoControls(string id, ModelTransform transform, TransformGizmoContext context, Action<ModelTransform>? apply, BlockPos? blockPos = null, Vec3d? worldCenter = null, TransformGizmoAxes? worldAxes = null, TransformGizmoAxes? parentAxes = null, bool allowMove = true, bool allowScale = true, bool allowRotate = true, Action? dragStarted = null, Action? dragEnded = null)
     {
         ImGui.SeparatorText("Gizmo");
 
@@ -1417,8 +1425,18 @@ public sealed partial class DebugWindowManager
         }
         if (ImGui.RadioButton($"Off##gizmo-mode-{id}", GizmoMode == TransformGizmoMode.None)) GizmoMode = TransformGizmoMode.None;
 
-        bool localSpace = GizmoLocalSpace;
-        if (ImGui.Checkbox($"Local axes##gizmo-local-{id}", ref localSpace)) GizmoLocalSpace = localSpace;
+        if (context != TransformGizmoContext.RigPart && GizmoSpace == TransformGizmoSpace.Parent)
+        {
+            GizmoSpace = TransformGizmoSpace.Local;
+        }
+
+        if (ImGui.RadioButton($"World axes##gizmo-space-world-{id}", GizmoSpace == TransformGizmoSpace.World)) GizmoSpace = TransformGizmoSpace.World;
+        ImGui.SameLine();
+        if (ImGui.RadioButton($"Local axes##gizmo-space-local-{id}", GizmoSpace == TransformGizmoSpace.Local)) GizmoSpace = TransformGizmoSpace.Local;
+        ImGui.SameLine();
+        if (context != TransformGizmoContext.RigPart) ImGui.BeginDisabled();
+        if (ImGui.RadioButton($"Parent axes##gizmo-space-parent-{id}", GizmoSpace == TransformGizmoSpace.Parent)) GizmoSpace = TransformGizmoSpace.Parent;
+        if (context != TransformGizmoContext.RigPart) ImGui.EndDisabled();
         ImGui.SameLine();
         bool snap = IncludeGizmoInIncrement;
         if (ImGui.Checkbox($"Snap drag##gizmo-snap-{id}", ref snap)) IncludeGizmoInIncrement = snap;
@@ -1440,6 +1458,7 @@ public sealed partial class DebugWindowManager
         _activeGizmoBlockPos = blockPos;
         _activeGizmoWorldCenter = worldCenter;
         _activeGizmoWorldAxes = worldAxes;
+        _activeGizmoParentAxes = parentAxes;
     }
 
     private void SetEditorFrameOverride(PlayerItemFrame? frame)

@@ -24,6 +24,13 @@ internal enum TransformGizmoContext
     RigPart
 }
 
+internal enum TransformGizmoSpace
+{
+    World,
+    Local,
+    Parent
+}
+
 internal enum TransformGizmoAxis
 {
     None,
@@ -278,7 +285,7 @@ internal sealed class TransformGizmoRenderer : IRenderer
         );
 
         Matrix3 newActualRotation;
-        if (_debugManager.GizmoLocalSpace)
+        if (_debugManager.GizmoSpace == TransformGizmoSpace.Local)
         {
             Matrix3 axisRotation = Matrix3.FromAxisAngle(GetCanonicalAxis(_draggedAxis), snappedDegrees * GameMath.DEG2RAD);
             newActualRotation = startActualRotation.Mul(axisRotation);
@@ -615,7 +622,7 @@ internal sealed class TransformGizmoRenderer : IRenderer
     private bool TryBuildState(out GizmoState state)
     {
         state = default;
-        if (!_debugManager.TryGetActiveTransformGizmo(out ModelTransform transform, out TransformGizmoContext context, out BlockPos? blockPos, out Vec3d? worldCenter, out TransformGizmoAxes? worldAxes)) return false;
+        if (!_debugManager.TryGetActiveTransformGizmo(out ModelTransform transform, out TransformGizmoContext context, out BlockPos? blockPos, out Vec3d? worldCenter, out TransformGizmoAxes? worldAxes, out TransformGizmoAxes? parentAxes)) return false;
 
         GetCameraBasis(out Vec3d forward, out Vec3d right, out Vec3d up);
         Vec3d center;
@@ -635,12 +642,20 @@ internal sealed class TransformGizmoRenderer : IRenderer
             attachmentRotation = new FastVec3f();
         }
 
+        if (parentAxes.HasValue)
+        {
+            rotationParentBasis = Matrix3.FromAxes(parentAxes.Value.X, parentAxes.Value.Y, parentAxes.Value.Z).Orthonormalized();
+        }
+
         Matrix3 actualRotation = Matrix3.FromEulerDegrees(transform.Rotation.X + attachmentRotation.X, transform.Rotation.Y + attachmentRotation.Y, transform.Rotation.Z + attachmentRotation.Z);
         Matrix3 worldRotation;
         if (worldAxes.HasValue)
         {
             worldRotation = Matrix3.FromAxes(worldAxes.Value.X, worldAxes.Value.Y, worldAxes.Value.Z).Orthonormalized();
-            rotationParentBasis = worldRotation.Mul(actualRotation.Inverted()).Orthonormalized();
+            if (!parentAxes.HasValue)
+            {
+                rotationParentBasis = worldRotation.Mul(actualRotation.Inverted()).Orthonormalized();
+            }
         }
         else
         {
@@ -651,7 +666,7 @@ internal sealed class TransformGizmoRenderer : IRenderer
         Vec3d axisY = new(0, 1, 0);
         Vec3d axisZ = new(0, 0, 1);
 
-        if (_debugManager.GizmoLocalSpace)
+        if (_debugManager.GizmoSpace != TransformGizmoSpace.World)
         {
             axisX = worldRotation.TransformDirection(axisX).Normalize();
             axisY = worldRotation.TransformDirection(axisY).Normalize();
@@ -677,6 +692,11 @@ internal sealed class TransformGizmoRenderer : IRenderer
 
     private TranslationBasis BuildTranslationBasis(ModelTransform transform, TransformGizmoContext context, BlockPos? blockPos, Vec3d center, TransformGizmoAxes? worldAxes)
     {
+        if (_debugManager.GizmoSpace == TransformGizmoSpace.World)
+        {
+            return new TranslationBasis(new Vec3d(1, 0, 0), new Vec3d(0, 1, 0), new Vec3d(0, 0, 1));
+        }
+
         if (worldAxes.HasValue)
         {
             return new TranslationBasis(
