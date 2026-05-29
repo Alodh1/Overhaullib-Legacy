@@ -1,4 +1,7 @@
 using CombatOverhaul.Colliders;
+#if DEBUG
+using CombatOverhaul.Animations.EditorUI;
+#endif
 using CombatOverhaul.Integration;
 using CombatOverhaul.Integration.Transpilers;
 using CombatOverhaul.MeleeSystems;
@@ -26,17 +29,19 @@ public sealed partial class DebugWindowManager
 
     public DebugWindowManager(ICoreClientAPI api, ParticleEffectsManager particleEffectsManager)
     {
+        _api = api;
+        _particleEffectsManager = particleEffectsManager;
 #if DEBUG
+        _editorInputRouter = new EditorInputRouter();
+        _devToolsDialog = new DevToolsDialog(api, this, _editorAppState, _editorInputRouter);
         api.ModLoader.GetModSystem<ImGuiModSystem>().Draw += DrawEditor;
         _transformGizmoRenderer = new TransformGizmoRenderer(api, this);
         _detachedEditorCamera = new DetachedEditorCamera(api);
-#endif
         api.Input.RegisterHotKey("combatOverhaul_editor", "Show dev tools", GlKeys.L, ctrlPressed: true);
-        api.Input.SetHotKeyHandler("combatOverhaul_editor", keys => _showAnimationEditor = !_showAnimationEditor);
+        api.Input.SetHotKeyHandler("combatOverhaul_editor", _ => ToggleDevTools());
+#endif
         _instance = this;
 
-        _api = api;
-        _particleEffectsManager = particleEffectsManager;
         _colliders.Clear();
     }
 
@@ -489,6 +494,10 @@ public sealed partial class DebugWindowManager
     private static Dictionary<string, Dictionary<string, (Action<LineSegmentCollider> setter, System.Func<LineSegmentCollider> getter)>> _colliders = new();
     internal static LineSegmentCollider? _currentCollider = null;
 #if DEBUG
+    private readonly EditorAppState _editorAppState = new();
+    private EditorInputRouter? _editorInputRouter;
+    private DevToolsDialog? _devToolsDialog;
+    internal EditorUiMode CurrentEditorUiMode { get; private set; } = EditorUiMode.ProperUi;
     private readonly AnimationEditorHistory _animationHistory = new();
     private TransformGizmoRenderer? _transformGizmoRenderer;
     private DetachedEditorCamera? _detachedEditorCamera;
@@ -561,10 +570,76 @@ public sealed partial class DebugWindowManager
     };
 
 #if DEBUG
+    private bool ToggleDevTools()
+    {
+        if (CurrentEditorUiMode == EditorUiMode.ProperUi)
+        {
+            if (_devToolsDialog?.IsOpened() == true)
+            {
+                _devToolsDialog.TryClose();
+                return true;
+            }
+
+            OpenProperDevTools();
+            return true;
+        }
+
+        _showAnimationEditor = !_showAnimationEditor;
+        if (!_showAnimationEditor)
+        {
+            OnDebugEditorClosed();
+        }
+
+        return true;
+    }
+
+    private void OpenProperDevTools()
+    {
+        CurrentEditorUiMode = EditorUiMode.ProperUi;
+        _showAnimationEditor = true;
+        _devToolsDialog?.TryOpen(withFocus: true);
+    }
+
+    internal void SwitchToImGuiDevTools()
+    {
+        CurrentEditorUiMode = EditorUiMode.ImGui;
+        _devToolsDialog?.TryClose();
+        _showAnimationEditor = true;
+    }
+
+    internal void SwitchToProperDevTools()
+    {
+        OpenProperDevTools();
+    }
+
+    internal void NotifyProperDevToolsClosed()
+    {
+        if (CurrentEditorUiMode != EditorUiMode.ProperUi) return;
+
+        _showAnimationEditor = false;
+        OnDebugEditorClosed();
+    }
+
     private CallbackGUIStatus DrawEditor(float deltaSeconds)
     {
         _currentCollider = null;
         ClearActiveTransformGizmo();
+        if (CurrentEditorUiMode == EditorUiMode.ProperUi)
+        {
+            if (_showAnimationEditor && _devToolsDialog?.IsOpened() != true)
+            {
+                _devToolsDialog?.TryOpen(withFocus: true);
+            }
+
+            if (!_showAnimationEditor)
+            {
+                OnDebugEditorClosed();
+                return CallbackGUIStatus.Closed;
+            }
+
+            return _devToolsDialog?.IsOpened() == true ? CallbackGUIStatus.GrabMouse : CallbackGUIStatus.Closed;
+        }
+
         if (!_showAnimationEditor)
         {
             OnDebugEditorClosed();
@@ -573,6 +648,15 @@ public sealed partial class DebugWindowManager
 
         if (ImGui.Begin("Dev tools", ref _showAnimationEditor))
         {
+            if (ImGui.Button("Switch to proper UI##editor-ui-mode"))
+            {
+                SwitchToProperDevTools();
+                ImGui.End();
+                return CallbackGUIStatus.GrabMouse;
+            }
+            ImGui.SameLine();
+            ImGui.TextDisabled("UI mode: ImGui fallback");
+
             ImGui.BeginTabBar($"##main_tab_bar");
             if (ImGui.BeginTabItem($"Animations"))
             {
@@ -2785,6 +2869,11 @@ public sealed partial class DebugWindowManager
 
     internal bool PointInsideDebugUi()
     {
+        if (CurrentEditorUiMode == EditorUiMode.ProperUi)
+        {
+            return _editorInputRouter?.CapturesInput ?? false;
+        }
+
         return ImGui.GetIO().WantCaptureMouse;
     }
 
