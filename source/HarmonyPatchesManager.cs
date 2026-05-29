@@ -34,6 +34,9 @@ internal static class HarmonyPatchesManager
     private const string _harmonyIdInventory = _harmonyId + "Inventory";
     private const string _harmonyIdAnimation = _harmonyId + "Animation";
     private const string _harmonyIdGeneral = _harmonyId + "General";
+#if DEBUG
+    private const string _harmonyIdDetachedCamera = _harmonyId + "DetachedCamera";
+#endif
 
     private static ICoreAPI? _api;
     private static bool _patchedUniversalSide = false;
@@ -51,6 +54,9 @@ internal static class HarmonyPatchesManager
         AimingPatches.Patch(_harmonyIdAiming);
         MouseWheelPatch.Patch(_harmonyIdMouseWheel, api);
         GuiDialogPatches.Patch(_harmonyIdGuiDialog, api);
+#if DEBUG
+        DetachedEditorCameraPatches.Patch(_harmonyIdDetachedCamera);
+#endif
     }
     private static void UnpatchClientSide()
     {
@@ -64,6 +70,9 @@ internal static class HarmonyPatchesManager
         AimingPatches.Unpatch(_harmonyIdAiming);
         MouseWheelPatch.Unpatch(_harmonyIdMouseWheel);
         GuiDialogPatches.Unpatch(_harmonyIdGuiDialog);
+#if DEBUG
+        DetachedEditorCameraPatches.Unpatch(_harmonyIdDetachedCamera);
+#endif
     }
 
     private static void PatchUniversalSide(ICoreAPI api)

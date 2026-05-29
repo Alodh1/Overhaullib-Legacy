@@ -8,8 +8,10 @@ using Vintagestory.Client.NoObf;
 
 namespace CombatOverhaul.Animations;
 
-internal sealed class DetachedEditorCamera : IRenderer
+internal sealed class DetachedEditorCamera
 {
+    private static DetachedEditorCamera? _activeInstance;
+
     private readonly ICoreClientAPI _api;
     private bool _initialized;
     private double _yaw;
@@ -20,13 +22,11 @@ internal sealed class DetachedEditorCamera : IRenderer
     private float _orbitSensitivity = 0.006f;
 
     public bool Enabled { get; private set; }
-    public double RenderOrder => 0.01;
-    public int RenderRange => 9999;
 
     public DetachedEditorCamera(ICoreClientAPI api)
     {
         _api = api;
-        api.Event.RegisterRenderer(this, EnumRenderStage.Before, "overhaullib-detached-editor-camera");
+        _activeInstance = this;
     }
 
     public void Update(float deltaSeconds, bool editorOpen)
@@ -94,11 +94,24 @@ internal sealed class DetachedEditorCamera : IRenderer
         _initialized = true;
     }
 
-    public void OnRenderFrame(float deltaTime, EnumRenderStage stage)
+    internal static bool SuppressVanillaCameraUpdate(ClientMain client)
     {
-        if (stage != EnumRenderStage.Before || !Enabled) return;
-        SuppressPlayerMovementControls();
-        OverrideCamera();
+        if (_activeInstance?.Enabled != true) return false;
+
+        _activeInstance.SuppressPlayerMovementControls();
+        client.MouseDeltaX = 0;
+        client.MouseDeltaY = 0;
+        client.DelayedMouseDeltaX = 0;
+        client.DelayedMouseDeltaY = 0;
+        return true;
+    }
+
+    internal static void ApplyActiveCameraOverride(PlayerCamera camera)
+    {
+        if (_activeInstance?.Enabled != true) return;
+
+        _activeInstance.SuppressPlayerMovementControls();
+        _activeInstance.OverrideCamera(camera);
     }
 
     private void EnsureInitialized(bool force = false)
@@ -145,10 +158,8 @@ internal sealed class DetachedEditorCamera : IRenderer
         _targetOffset.Add(move.Mul(speed * deltaSeconds));
     }
 
-    private void OverrideCamera()
+    private void OverrideCamera(PlayerCamera camera)
     {
-        if (_api.World is not ClientMain client || client.MainCamera == null) return;
-
         GetCameraPoints(out Vec3d cameraPos, out Vec3d targetPos);
         double[] view = Mat4d.Create();
         Mat4d.LookAt(view, cameraPos.ToDoubleArray(), targetPos.ToDoubleArray(), new double[] { 0, 1, 0 });
@@ -156,7 +167,6 @@ internal sealed class DetachedEditorCamera : IRenderer
         double[] originView = Mat4d.Create();
         Mat4d.LookAt(originView, new double[] { 0, 0, 0 }, relativeTarget.ToDoubleArray(), new double[] { 0, 1, 0 });
 
-        PlayerCamera camera = client.MainCamera;
         camera.CameraEyePos.Set(cameraPos);
         camera.CamSourcePosition.Set(cameraPos);
         camera.OriginPosition.Set(cameraPos);
@@ -217,7 +227,10 @@ internal sealed class DetachedEditorCamera : IRenderer
 
     public void Dispose()
     {
-        _api.Event.UnregisterRenderer(this, EnumRenderStage.Before);
+        if (_activeInstance == this)
+        {
+            _activeInstance = null;
+        }
     }
 }
 #endif
