@@ -902,6 +902,7 @@ public sealed partial class DebugWindowManager
 
             DrawAnimationPlaybackControls(selectedAnimationCode, selectedAnimation, deltaSeconds);
             DrawAnimationTimeline(selectedAnimationCode, selectedAnimation);
+            DrawAnimationValidationPanel(selectedAnimationCode, selectedAnimation);
 
             if (ImGui.Button("Export to clipboard") && AnimationsManager._instance.Animations.Count > 0)
             {
@@ -1119,6 +1120,163 @@ public sealed partial class DebugWindowManager
         {
             AdvanceEditorPlayback(animation, deltaSeconds);
         }
+    }
+
+    private void DrawAnimationValidationPanel(string animationCode, Animation animation)
+    {
+        List<AnimationValidationMessage> messages = BuildAnimationValidationMessages(animation);
+        int errorCount = messages.Count(message => message.Severity == AnimationValidationSeverity.Error);
+        int warningCount = messages.Count(message => message.Severity == AnimationValidationSeverity.Warning);
+        string label = messages.Count == 0
+            ? "Validation: OK##animation-validation"
+            : $"Validation: {errorCount} errors, {warningCount} warnings##animation-validation";
+
+        if (!ImGui.CollapsingHeader(label)) return;
+
+        if (messages.Count == 0)
+        {
+            ImGui.TextColored(new NVector4(0.45f, 1.0f, 0.45f, 1f), "No validation issues found.");
+            return;
+        }
+
+        if (ImGui.Button("Copy validation report##animation-validation"))
+        {
+            ImGui.SetClipboardText(string.Join(Environment.NewLine, messages.Select(message => $"{message.Severity}: {message.Text}")));
+        }
+
+        ImGui.BeginChild($"##animation-validation-list-{animationCode}", new NVector2(0, Math.Min(220, 24 + messages.Count * 22)), true);
+        foreach (AnimationValidationMessage message in messages)
+        {
+            NVector4 color = message.Severity == AnimationValidationSeverity.Error
+                ? new NVector4(1.0f, 0.38f, 0.30f, 1f)
+                : new NVector4(1.0f, 0.82f, 0.35f, 1f);
+            ImGui.TextColored(color, $"{message.Severity}: {message.Text}");
+        }
+        ImGui.EndChild();
+    }
+
+    private static List<AnimationValidationMessage> BuildAnimationValidationMessages(Animation animation)
+    {
+        List<AnimationValidationMessage> messages = new();
+        ValidatePlayerTimeline(animation, messages);
+        ValidateItemTimeline(animation, messages);
+        ValidateEventTimeline("Sound", animation.SoundFrames.Count, index => animation.SoundFrames[index].DurationFraction, index => IsBlankSoundFrame(animation.SoundFrames[index]), messages);
+        ValidateEventTimeline("Particle", animation.ParticlesFrames.Count, index => animation.ParticlesFrames[index].DurationFraction, index => string.IsNullOrWhiteSpace(animation.ParticlesFrames[index].Code), messages);
+        ValidateEventTimeline("Callback", animation.CallbackFrames.Count, index => animation.CallbackFrames[index].DurationFraction, index => string.IsNullOrWhiteSpace(animation.CallbackFrames[index].Code), messages);
+        return messages;
+    }
+
+    private static void ValidatePlayerTimeline(Animation animation, List<AnimationValidationMessage> messages)
+    {
+        if (animation.PlayerKeyFrames.Count == 0)
+        {
+            messages.Add(AnimationValidationMessage.Error("Player timeline has no keyframes."));
+            return;
+        }
+
+        double previousMs = double.NegativeInfinity;
+        for (int index = 0; index < animation.PlayerKeyFrames.Count; index++)
+        {
+            double timeMs = animation.PlayerKeyFrames[index].Time.TotalMilliseconds;
+            if (timeMs < 0)
+            {
+                messages.Add(AnimationValidationMessage.Error($"Player keyframe {index} has negative time {timeMs:0} ms."));
+            }
+
+            if (index > 0 && timeMs <= previousMs)
+            {
+                messages.Add(AnimationValidationMessage.Error($"Player keyframe {index} time {timeMs:0} ms is not after keyframe {index - 1} time {previousMs:0} ms."));
+            }
+
+            previousMs = timeMs;
+        }
+
+        if (animation.PlayerKeyFrames[0].Time.TotalMilliseconds > 0.0001)
+        {
+            messages.Add(AnimationValidationMessage.Warning($"First player keyframe starts at {animation.PlayerKeyFrames[0].Time.TotalMilliseconds:0} ms; playback begins from an implicit zero pose."));
+        }
+    }
+
+    private static void ValidateItemTimeline(Animation animation, List<AnimationValidationMessage> messages)
+    {
+        if (animation.ItemKeyFrames.Count == 0) return;
+
+        double playerDurationMs = GetEditorPlayerDurationMs(animation);
+        double startMs = animation.ItemAnimationStart.TotalMilliseconds;
+        double endMs = animation.ItemAnimationEnd.TotalMilliseconds;
+        double spanMs = endMs - startMs;
+
+        if (startMs < 0)
+        {
+            messages.Add(AnimationValidationMessage.Error($"Item animation starts before zero at {startMs:0} ms."));
+        }
+
+        if (endMs < startMs)
+        {
+            messages.Add(AnimationValidationMessage.Error($"Item animation end {endMs:0} ms is before start {startMs:0} ms."));
+        }
+
+        if (playerDurationMs > 0.0001 && endMs > playerDurationMs)
+        {
+            messages.Add(AnimationValidationMessage.Warning($"Item animation ends at {endMs:0} ms after player duration {playerDurationMs:0} ms."));
+        }
+
+        if (spanMs <= 0.0001)
+        {
+            messages.Add(AnimationValidationMessage.Error("Item timeline has keyframes but no positive animation duration."));
+            return;
+        }
+
+        ValidateFractionSequence("Item", animation.ItemKeyFrames.Count, index => animation.ItemKeyFrames[index].DurationFraction, messages);
+    }
+
+    private static void ValidateEventTimeline(string trackName, int count, System.Func<int, float> fractionProvider, System.Func<int, bool> isBlank, List<AnimationValidationMessage> messages)
+    {
+        if (count == 0) return;
+
+        ValidateFractionSequence(trackName, count, fractionProvider, messages);
+        for (int index = 0; index < count; index++)
+        {
+            if (isBlank(index))
+            {
+                messages.Add(AnimationValidationMessage.Warning($"{trackName} marker {index} has blank content."));
+            }
+        }
+    }
+
+    private static void ValidateFractionSequence(string trackName, int count, System.Func<int, float> fractionProvider, List<AnimationValidationMessage> messages)
+    {
+        float previous = float.NegativeInfinity;
+        for (int index = 0; index < count; index++)
+        {
+            float fraction = fractionProvider(index);
+            if (float.IsNaN(fraction) || float.IsInfinity(fraction))
+            {
+                messages.Add(AnimationValidationMessage.Error($"{trackName} marker {index} has invalid fraction {fraction}."));
+                continue;
+            }
+
+            if (fraction < 0 || fraction > 1)
+            {
+                messages.Add(AnimationValidationMessage.Error($"{trackName} marker {index} fraction {fraction:0.###} is outside 0..1."));
+            }
+
+            if (index > 0 && fraction < previous)
+            {
+                messages.Add(AnimationValidationMessage.Error($"{trackName} marker {index} fraction {fraction:0.###} is before marker {index - 1} fraction {previous:0.###}."));
+            }
+            else if (index > 0 && Math.Abs(fraction - previous) < 0.000001f)
+            {
+                messages.Add(AnimationValidationMessage.Warning($"{trackName} marker {index} has the same time as marker {index - 1}."));
+            }
+
+            previous = fraction;
+        }
+    }
+
+    private static bool IsBlankSoundFrame(SoundFrame frame)
+    {
+        return frame.Code == null || frame.Code.Length == 0 || frame.Code.All(string.IsNullOrWhiteSpace);
     }
 
     private void EnsureEditorPlaybackState(string animationCode, Animation animation)
@@ -2148,6 +2306,27 @@ public sealed partial class DebugWindowManager
         Player,
         Item,
         Event
+    }
+
+    private enum AnimationValidationSeverity
+    {
+        Warning,
+        Error
+    }
+
+    private readonly struct AnimationValidationMessage
+    {
+        public AnimationValidationMessage(AnimationValidationSeverity severity, string text)
+        {
+            Severity = severity;
+            Text = text;
+        }
+
+        public AnimationValidationSeverity Severity { get; }
+        public string Text { get; }
+
+        public static AnimationValidationMessage Warning(string text) => new(AnimationValidationSeverity.Warning, text);
+        public static AnimationValidationMessage Error(string text) => new(AnimationValidationSeverity.Error, text);
     }
 
     private readonly struct TimelineMarker
