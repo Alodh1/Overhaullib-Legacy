@@ -2,6 +2,7 @@
 using CombatOverhaul.Integration.Transpilers;
 using ImGuiNET;
 using NVector3 = System.Numerics.Vector3;
+using OpenTK.Mathematics;
 using Vintagestory.API.Client;
 using Vintagestory.API.Common;
 using Vintagestory.API.MathTools;
@@ -30,9 +31,15 @@ public sealed partial class DebugWindowManager
     ];
 
     private static readonly string[] RigEditablePartNames = RigEditableParts.Select(part => part.ToString()).ToArray();
+    private static readonly int RigOnionPreviousColor = ColorUtil.ColorFromRgba(70, 210, 255, 150);
+    private static readonly int RigOnionNextColor = ColorUtil.ColorFromRgba(255, 170, 45, 150);
 
     private bool _rigPoseEditorEnabled;
     private bool _highlightSelectedRigPart = true;
+    private bool _rigOnionSkinEnabled = true;
+    private bool _rigOnionSkinPrevious = true;
+    private bool _rigOnionSkinNext = true;
+    private Animation? _rigOnionSkinAnimation;
     private bool _rigIkFollowParents;
     private bool _rigIkDragActive;
     private int _rigIkDragKeyframeIndex = -1;
@@ -70,12 +77,15 @@ public sealed partial class DebugWindowManager
         if (!_rigPoseEditorEnabled)
         {
             DebugRigPoseOverrideActive = false;
+            _rigOnionSkinAnimation = null;
             return false;
         }
 
         DebugRigPoseOverrideActive = true;
+        _rigOnionSkinAnimation = animation;
         if (animation.PlayerKeyFrames.Count == 0)
         {
+            _rigOnionSkinAnimation = null;
             ImGui.Text("No player keyframes.");
             return true;
         }
@@ -93,6 +103,15 @@ public sealed partial class DebugWindowManager
         ImGui.Combo("Rig part##rig", ref _rigPartIndex, RigEditablePartNames, RigEditablePartNames.Length);
         ImGui.SameLine();
         ImGui.Checkbox("Highlight selected part##rig", ref _highlightSelectedRigPart);
+        ImGui.SameLine();
+        ImGui.Checkbox("Onion skins##rig", ref _rigOnionSkinEnabled);
+        if (_rigOnionSkinEnabled)
+        {
+            ImGui.SameLine();
+            ImGui.Checkbox("Previous##rig-onion", ref _rigOnionSkinPrevious);
+            ImGui.SameLine();
+            ImGui.Checkbox("Next##rig-onion", ref _rigOnionSkinNext);
+        }
         ImGui.SameLine();
         ImGui.Checkbox("Two-bone IK on Move##rig", ref _rigIkFollowParents);
         ImGui.TextDisabled("Shift-click a player body part to select it.");
@@ -779,6 +798,91 @@ public sealed partial class DebugWindowManager
         return TryGetRigPartWorldBox(RigEditableParts[_rigPartIndex], out corners);
     }
 
+    internal bool TryGetRigOnionSkinBoxes(out IReadOnlyList<TransformGizmoWireBox> boxes)
+    {
+        List<TransformGizmoWireBox> result = [];
+        boxes = result;
+
+        if (!_showAnimationEditor || !_rigPoseEditorEnabled || !_rigOnionSkinEnabled) return false;
+        if (_rigOnionSkinAnimation == null || _rigOnionSkinAnimation.PlayerKeyFrames.Count == 0) return false;
+
+        int currentIndex = Math.Clamp(_rigOnionSkinAnimation._playerFrameIndex, 0, _rigOnionSkinAnimation.PlayerKeyFrames.Count - 1);
+        if (_rigOnionSkinPrevious && currentIndex > 0)
+        {
+            AppendRigOnionSkinFrame(_rigOnionSkinAnimation.PlayerKeyFrames[currentIndex - 1].Frame, RigOnionPreviousColor, result);
+        }
+
+        if (_rigOnionSkinNext && currentIndex + 1 < _rigOnionSkinAnimation.PlayerKeyFrames.Count)
+        {
+            AppendRigOnionSkinFrame(_rigOnionSkinAnimation.PlayerKeyFrames[currentIndex + 1].Frame, RigOnionNextColor, result);
+        }
+
+        boxes = result;
+        return result.Count > 0;
+    }
+
+    private void AppendRigOnionSkinFrame(PlayerFrame frame, int color, List<TransformGizmoWireBox> boxes)
+    {
+        EntityPlayer playerEntity = _api.World.Player.Entity;
+        if (playerEntity.AnimManager?.Animator is not AnimatorBase animator || animator.RootPoses == null) return;
+
+        List<ElementPose> ghostPoses = ClonePoseTree(animator.RootPoses);
+        Vector3 eyePosition = new((float)playerEntity.LocalEyePos.X, (float)playerEntity.LocalEyePos.Y, (float)playerEntity.LocalEyePos.Z);
+        float eyeHeight = (float)playerEntity.Properties.EyeHeight;
+        ApplyOnionSkinPlayerFrame(frame, ghostPoses, Mat4f.Create(), eyePosition, eyeHeight, playerEntity.Pos.HeadPitch);
+
+        foreach (EnumAnimatedElement part in RigEditableParts)
+        {
+            if (!TryFindPose(ghostPoses, part, out ElementPose? pose)) continue;
+            if (pose?.ForElement == null) continue;
+            if (TryGetPoseWorldBox(playerEntity, pose, out Vec3d[] corners))
+            {
+                boxes.Add(new TransformGizmoWireBox(corners, color));
+            }
+        }
+    }
+
+    private static List<ElementPose> ClonePoseTree(IEnumerable<ElementPose> poses)
+    {
+        List<ElementPose> result = [];
+        foreach (ElementPose pose in poses)
+        {
+            result.Add(new ElementPose
+            {
+                ForElement = pose.ForElement,
+                AnimModelMatrix = Mat4f.Create(),
+                ChildElementPoses = ClonePoseTree(pose.ChildElementPoses)
+            });
+        }
+
+        return result;
+    }
+
+    private static void ApplyOnionSkinPlayerFrame(PlayerFrame frame, List<ElementPose>? poses, float[] parentMatrix, Vector3 eyePosition, float eyeHeight, float pitch)
+    {
+        if (poses == null) return;
+
+        float[] localTransform = Mat4f.Create();
+        foreach (ElementPose pose in poses)
+        {
+            ShapeElement element = pose.ForElement;
+            if (pose.AnimModelMatrix == null) pose.AnimModelMatrix = Mat4f.Create();
+            Array.Copy(parentMatrix, pose.AnimModelMatrix, Math.Min(parentMatrix.Length, pose.AnimModelMatrix.Length));
+
+            if (Enum.TryParse(element.Name, out EnumAnimatedElement animatedElement) && animatedElement != EnumAnimatedElement.Unknown)
+            {
+                pose.Clear();
+                frame.Apply(pose, animatedElement, eyePosition, eyeHeight, pitch, applyCameraPitch: false, overrideTorso: true);
+            }
+
+            Mat4f.Identity(localTransform);
+            element.GetLocalTransformMatrix(0, localTransform, pose);
+            Mat4f.Mul(pose.AnimModelMatrix, pose.AnimModelMatrix, localTransform);
+
+            ApplyOnionSkinPlayerFrame(frame, pose.ChildElementPoses, pose.AnimModelMatrix, eyePosition, eyeHeight, pitch);
+        }
+    }
+
     internal bool TryPickRigPart(Vec3d rayOrigin, Vec3d rayDirection)
     {
         if (!_rigPoseEditorEnabled || !_showAnimationEditor) return false;
@@ -807,6 +911,14 @@ public sealed partial class DebugWindowManager
         corners = Array.Empty<Vec3d>();
         if (!TryGetRigPartPose(selectedPart, out EntityPlayer playerEntity, out ElementPose? pose)) return false;
         if (pose?.ForElement == null) return false;
+
+        return TryGetPoseWorldBox(playerEntity, pose, out corners);
+    }
+
+    private static bool TryGetPoseWorldBox(EntityPlayer playerEntity, ElementPose pose, out Vec3d[] corners)
+    {
+        corners = Array.Empty<Vec3d>();
+        if (pose.ForElement == null) return false;
 
         Matrixf matrix = new();
         BuildPlayerModelMatrix(matrix, playerEntity);
@@ -1100,6 +1212,7 @@ public sealed partial class DebugWindowManager
         SetEditorFrameOverride(null);
         _detachedEditorCamera?.SetEnabled(false);
         _rigPoseEditorEnabled = false;
+        _rigOnionSkinAnimation = null;
         DebugPoseFreezeActive = false;
         DebugRigPoseOverrideActive = false;
     }

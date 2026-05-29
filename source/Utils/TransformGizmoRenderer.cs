@@ -39,6 +39,8 @@ internal enum TransformGizmoAxis
     Z
 }
 
+internal readonly record struct TransformGizmoWireBox(Vec3d[] Corners, int Color);
+
 internal readonly struct TransformGizmoAxes
 {
     public TransformGizmoAxes(Vec3d x, Vec3d y, Vec3d z)
@@ -103,9 +105,10 @@ internal sealed class TransformGizmoRenderer : IRenderer
         if (stage != EnumRenderStage.Opaque) return;
 
         bool hasHighlight = _debugManager.TryGetRigPartHighlightCorners(out Vec3d[] highlightCorners);
+        bool hasOnionSkins = _debugManager.TryGetRigOnionSkinBoxes(out IReadOnlyList<TransformGizmoWireBox> onionSkinBoxes);
         GizmoState state = default;
         bool hasGizmo = ShouldDraw && TryBuildState(out state);
-        if (!hasHighlight && !hasGizmo) return;
+        if (!hasHighlight && !hasOnionSkins && !hasGizmo) return;
 
         if (hasGizmo && _draggedAxis == TransformGizmoAxis.None)
         {
@@ -113,6 +116,13 @@ internal sealed class TransformGizmoRenderer : IRenderer
         }
 
         _api.Render.GLDisableDepthTest();
+        if (hasOnionSkins)
+        {
+            foreach (TransformGizmoWireBox box in onionSkinBoxes)
+            {
+                DrawWireBox(box.Corners, box.Color);
+            }
+        }
         if (hasHighlight) DrawWireBox(highlightCorners, Highlight);
         if (hasGizmo) DrawActiveGizmo(state);
         _api.Render.GLEnableDepthTest();
