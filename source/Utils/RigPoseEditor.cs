@@ -291,17 +291,23 @@ public sealed partial class DebugWindowManager
     private bool TryGetRigPartWorldCenter(EnumAnimatedElement selectedPart, out Vec3d? center)
     {
         center = null;
-        if (!TryGetRigPartWorldBox(selectedPart, out Vec3d[] corners)) return false;
+        return TryGetRigPartWorldOrigin(selectedPart, out center);
+    }
 
-        Vec3d sum = new();
-        foreach (Vec3d corner in corners)
-        {
-            sum.X += corner.X;
-            sum.Y += corner.Y;
-            sum.Z += corner.Z;
-        }
+    private bool TryGetRigPartWorldOrigin(EnumAnimatedElement selectedPart, out Vec3d? origin)
+    {
+        origin = null;
+        if (!TryGetRigPartPose(selectedPart, out EntityPlayer playerEntity, out ElementPose? pose)) return false;
+        if (pose?.ForElement == null) return false;
 
-        center = new Vec3d(sum.X / corners.Length, sum.Y / corners.Length, sum.Z / corners.Length);
+        Matrixf matrix = new();
+        BuildPlayerModelMatrix(matrix, playerEntity);
+        matrix.Mul(pose.AnimModelMatrix);
+
+        Vec3f localOrigin = GetElementLocalRotationOrigin(pose);
+        Vec4f relative = matrix.TransformVector(new Vec4f(localOrigin.X, localOrigin.Y, localOrigin.Z, 1f));
+        Vec3d camera = playerEntity.CameraPos;
+        origin = new Vec3d(camera.X + relative.X, camera.Y + relative.Y, camera.Z + relative.Z);
         return true;
     }
 
@@ -340,9 +346,7 @@ public sealed partial class DebugWindowManager
     private bool TryGetRigPartWorldBox(EnumAnimatedElement selectedPart, out Vec3d[] corners)
     {
         corners = Array.Empty<Vec3d>();
-        EntityPlayer playerEntity = _api.World.Player.Entity;
-        if (playerEntity.AnimManager?.Animator is not AnimatorBase animator || animator.RootPoses == null) return false;
-        if (!TryFindPose(animator.RootPoses, selectedPart, out ElementPose? pose)) return false;
+        if (!TryGetRigPartPose(selectedPart, out EntityPlayer playerEntity, out ElementPose? pose)) return false;
         if (pose.ForElement == null) return false;
 
         Matrixf matrix = new();
@@ -361,6 +365,14 @@ public sealed partial class DebugWindowManager
         }
 
         return true;
+    }
+
+    private bool TryGetRigPartPose(EnumAnimatedElement selectedPart, out EntityPlayer playerEntity, out ElementPose? pose)
+    {
+        playerEntity = _api.World.Player.Entity;
+        pose = null;
+        if (playerEntity.AnimManager?.Animator is not AnimatorBase animator || animator.RootPoses == null) return false;
+        return TryFindPose(animator.RootPoses, selectedPart, out pose);
     }
 
     private static bool TryFindPose(IEnumerable<ElementPose> poses, EnumAnimatedElement selectedPart, out ElementPose? result)
@@ -393,6 +405,22 @@ public sealed partial class DebugWindowManager
             (float)((element.To[0] - element.From[0]) / 32.0),
             (float)((element.To[1] - element.From[1]) / 32.0),
             (float)((element.To[2] - element.From[2]) / 32.0));
+    }
+
+    private static Vec3f GetElementLocalRotationOrigin(ElementPose pose)
+    {
+        ShapeElement element = pose.ForElement;
+        if (element.From == null || element.From.Length < 3) return new Vec3f(-pose.translateX, -pose.translateY, -pose.translateZ);
+
+        double[]? rotationOrigin = element.RotationOrigin;
+        double originX = rotationOrigin != null && rotationOrigin.Length > 0 ? rotationOrigin[0] : 0;
+        double originY = rotationOrigin != null && rotationOrigin.Length > 1 ? rotationOrigin[1] : 0;
+        double originZ = rotationOrigin != null && rotationOrigin.Length > 2 ? rotationOrigin[2] : 0;
+
+        return new Vec3f(
+            (float)((originX - element.From[0]) / 16.0 - pose.translateX),
+            (float)((originY - element.From[1]) / 16.0 - pose.translateY),
+            (float)((originZ - element.From[2]) / 16.0 - pose.translateZ));
     }
 
     private static Vec3f[] GetElementLocalBoxCorners(ShapeElement element)
