@@ -1,5 +1,6 @@
 ﻿#if DEBUG
 using ImGuiNET;
+using System.Reflection;
 using Vintagestory.API.Client;
 using Vintagestory.API.Common;
 using Vintagestory.API.Common.Entities;
@@ -8,12 +9,17 @@ using Vintagestory.Client.NoObf;
 
 namespace CombatOverhaul.Animations;
 
-internal sealed class DetachedEditorCamera
+internal sealed class DetachedEditorCamera : IRenderer
 {
     private static DetachedEditorCamera? _activeInstance;
+    private static readonly FieldInfo? CameraModeField = typeof(Camera).GetField("CameraMode", BindingFlags.Instance | BindingFlags.NonPublic);
 
     private readonly ICoreClientAPI _api;
     private bool _initialized;
+    private bool _cameraStateCaptured;
+    private bool _previousAllowCameraControl;
+    private bool _previousUpdateCameraPos = true;
+    private EnumCameraMode? _previousCameraMode;
     private double _yaw;
     private double _pitch = -0.15;
     private double _distance = 4.0;
@@ -22,11 +28,14 @@ internal sealed class DetachedEditorCamera
     private float _orbitSensitivity = 0.006f;
 
     public bool Enabled { get; private set; }
+    public double RenderOrder => 0.98;
+    public int RenderRange => 9999;
 
     public DetachedEditorCamera(ICoreClientAPI api)
     {
         _api = api;
         _activeInstance = this;
+        api.Event.RegisterRenderer(this, EnumRenderStage.Before, "overhaullib-detached-editor-camera");
     }
 
     public void Update(float deltaSeconds, bool editorOpen)
@@ -40,6 +49,7 @@ internal sealed class DetachedEditorCamera
         if (!Enabled) return;
 
         EnsureInitialized();
+        ApplyDetachedCameraState();
         UpdateControls(deltaSeconds);
         SuppressPlayerMovementControls();
     }
@@ -75,7 +85,14 @@ internal sealed class DetachedEditorCamera
         Enabled = enabled;
         if (enabled)
         {
+            _activeInstance = this;
             EnsureInitialized(force: true);
+            CaptureCameraState();
+            ApplyDetachedCameraState();
+        }
+        else
+        {
+            RestoreCameraState();
         }
     }
 
@@ -98,6 +115,7 @@ internal sealed class DetachedEditorCamera
     {
         if (_activeInstance?.Enabled != true) return false;
 
+        _activeInstance.ApplyDetachedCameraState();
         _activeInstance.SuppressPlayerMovementControls();
         client.MouseDeltaX = 0;
         client.MouseDeltaY = 0;
@@ -106,12 +124,14 @@ internal sealed class DetachedEditorCamera
         return true;
     }
 
-    internal static void ApplyActiveCameraOverride(PlayerCamera camera)
+    public void OnRenderFrame(float deltaTime, EnumRenderStage stage)
     {
-        if (_activeInstance?.Enabled != true) return;
+        if (stage != EnumRenderStage.Before || !Enabled) return;
+        if (_api.World is not ClientMain client || client.MainCamera == null) return;
 
-        _activeInstance.SuppressPlayerMovementControls();
-        _activeInstance.OverrideCamera(camera);
+        ApplyDetachedCameraState();
+        SuppressPlayerMovementControls();
+        OverrideCamera(client.MainCamera, client);
     }
 
     private void EnsureInitialized(bool force = false)
@@ -158,7 +178,7 @@ internal sealed class DetachedEditorCamera
         _targetOffset.Add(move.Mul(speed * deltaSeconds));
     }
 
-    private void OverrideCamera(PlayerCamera camera)
+    private void OverrideCamera(PlayerCamera camera, ClientMain client)
     {
         GetCameraPoints(out Vec3d cameraPos, out Vec3d targetPos);
         double[] view = Mat4d.Create();
@@ -181,6 +201,72 @@ internal sealed class DetachedEditorCamera
         }
 
         for (int i = 0; i < 16; i++) camera.CameraMatrixOriginf[i] = (float)originView[i];
+
+        client.EntityPlayer.CameraPos.Set(cameraPos);
+        UpdateShaderCameraPosition(client, cameraPos);
+    }
+
+    private static void UpdateShaderCameraPosition(ClientMain client, Vec3d cameraPos)
+    {
+        if (client.shUniforms.playerReferencePos == null)
+        {
+            client.shUniforms.playerReferencePos = new Vec3d(client.BlockAccessor.MapSizeX / 2, 0.0, client.BlockAccessor.MapSizeZ / 2);
+            client.shUniforms.playerReferencePosForFoam = new Vec3d(client.BlockAccessor.MapSizeX / 2, 0.0, client.BlockAccessor.MapSizeZ / 2);
+        }
+
+        if (client.shUniforms.playerReferencePos.HorizontalSquareDistanceTo(cameraPos.X, cameraPos.Z) > 400000000.0)
+        {
+            client.shUniforms.playerReferencePos.Set((float)cameraPos.X, 0.0, (float)cameraPos.Z);
+        }
+
+        if (client.shUniforms.playerReferencePosForFoam.HorizontalSquareDistanceTo(cameraPos.X, cameraPos.Z) > 40000.0)
+        {
+            client.shUniforms.playerReferencePosForFoam.Set((float)cameraPos.X, 0.0, (float)cameraPos.Z);
+        }
+
+        client.shUniforms.PlayerPos.Set(cameraPos.SubCopy(client.shUniforms.playerReferencePos));
+        client.shUniforms.PlayerPosForFoam.Set(cameraPos.SubCopy(client.shUniforms.playerReferencePosForFoam));
+    }
+
+    private void CaptureCameraState()
+    {
+        if (_cameraStateCaptured || _api.World is not ClientMain client || client.MainCamera == null) return;
+
+        _previousAllowCameraControl = client.AllowCameraControl;
+        _previousUpdateCameraPos = client.MainCamera.UpdateCameraPos;
+        if (CameraModeField?.GetValue(client.MainCamera) is EnumCameraMode mode)
+        {
+            _previousCameraMode = mode;
+        }
+        _cameraStateCaptured = true;
+    }
+
+    private void ApplyDetachedCameraState()
+    {
+        if (_api.World is not ClientMain client || client.MainCamera == null) return;
+
+        CaptureCameraState();
+        client.AllowCameraControl = false;
+        client.MainCamera.UpdateCameraPos = false;
+        CameraModeField?.SetValue(client.MainCamera, EnumCameraMode.ThirdPerson);
+    }
+
+    private void RestoreCameraState()
+    {
+        if (!_cameraStateCaptured || _api.World is not ClientMain client || client.MainCamera == null)
+        {
+            _cameraStateCaptured = false;
+            return;
+        }
+
+        client.AllowCameraControl = _previousAllowCameraControl;
+        client.MainCamera.UpdateCameraPos = _previousUpdateCameraPos;
+        if (_previousCameraMode.HasValue)
+        {
+            CameraModeField?.SetValue(client.MainCamera, _previousCameraMode.Value);
+        }
+        _cameraStateCaptured = false;
+        _previousCameraMode = null;
     }
 
     private void SuppressPlayerMovementControls()
@@ -227,6 +313,8 @@ internal sealed class DetachedEditorCamera
 
     public void Dispose()
     {
+        SetEnabled(false);
+        _api.Event.UnregisterRenderer(this, EnumRenderStage.Before);
         if (_activeInstance == this)
         {
             _activeInstance = null;
