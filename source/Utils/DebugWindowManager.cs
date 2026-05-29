@@ -637,6 +637,7 @@ public sealed partial class DebugWindowManager
                 return CallbackGUIStatus.Closed;
             }
 
+            UpdateProperDevTools(deltaSeconds);
             return _devToolsDialog?.IsOpened() == true ? CallbackGUIStatus.GrabMouse : CallbackGUIStatus.Closed;
         }
 

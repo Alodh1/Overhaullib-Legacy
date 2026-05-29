@@ -1,4 +1,4 @@
-﻿#if DEBUG
+#if DEBUG
 using Vintagestory.API.Client;
 
 namespace CombatOverhaul.Animations.EditorUI;
@@ -24,7 +24,8 @@ internal sealed class DevToolsDialog : GuiDialog
     {
         base.OnGuiOpened();
         _inputRouter.SetActive(true);
-        _state.SetStatus("Proper UI shell active. Use ImGui fallback for full tools while panels are ported.");
+        _state.SetStatus("Proper UI active.");
+        _manager.EnsureProperAnimationSelection(_state);
         ComposeDialog();
     }
 
@@ -99,10 +100,124 @@ internal sealed class DevToolsDialog : GuiDialog
         ElementBounds properties = ElementBounds.Fixed(rightLeft, top, EditorTheme.RightPanelWidth, mainHeight);
         ElementBounds timeline = ElementBounds.Fixed(left, bottomTop, EditorTheme.WindowWidth - EditorTheme.Padding * 2, EditorTheme.BottomPanelHeight);
 
-        AddPanel(browser, "Animation browser", GetBrowserText());
-        AddPanel(viewport, "Viewport", GetViewportText());
-        AddPanel(properties, "Properties", GetPropertiesText());
-        AddPanel(timeline, "Timeline / dope sheet", GetTimelineText());
+        if (_state.SelectedTab == DevToolsTab.Animations)
+        {
+            ComposeAnimationBrowser(browser);
+            ComposeViewportPanel(viewport);
+            ComposeAnimationProperties(properties);
+            ComposeTimelinePanel(timeline);
+            return;
+        }
+
+        AddPanel(browser, $"{GetTabLabel(_state.SelectedTab)} browser", GetBrowserText());
+        AddPanel(viewport, $"{GetTabLabel(_state.SelectedTab)} viewport", GetViewportText());
+        AddPanel(properties, $"{GetTabLabel(_state.SelectedTab)} properties", GetPropertiesText());
+        AddPanel(timeline, $"{GetTabLabel(_state.SelectedTab)} timeline", GetTimelineText());
+    }
+
+    private void ComposeAnimationBrowser(ElementBounds bounds)
+    {
+        AddPanelFrame(bounds, "Animation browser");
+        SingleComposer.AddDynamicText(_manager.GetProperAnimationBrowserText(_state), EditorTheme.BodyFont, TextBounds(bounds, 38, 74), "animation-browser-summary");
+
+        double y = bounds.fixedY + 116;
+        double buttonHeight = 24;
+        double halfWidth = (bounds.fixedWidth - 26) / 2;
+        SingleComposer.AddButton("Prev", () => Run(state => _manager.SelectProperAnimationOffset(state, -1)), ElementBounds.Fixed(bounds.fixedX + 10, y, halfWidth, buttonHeight), EditorTheme.ButtonFont, EnumButtonStyle.Normal, "animation-prev");
+        SingleComposer.AddButton("Next", () => Run(state => _manager.SelectProperAnimationOffset(state, 1)), ElementBounds.Fixed(bounds.fixedX + 16 + halfWidth, y, halfWidth, buttonHeight), EditorTheme.ButtonFont, EnumButtonStyle.Normal, "animation-next");
+
+        y += buttonHeight + 10;
+        int row = 0;
+        foreach (string code in _manager.GetProperVisibleAnimationCodes(_state, 7))
+        {
+            string label = code == _state.SelectedAnimation ? $"* {Trim(code, 31)}" : Trim(code, 33);
+            string localCode = code;
+            SingleComposer.AddButton(label, () => Run(state => _manager.SelectProperAnimation(state, localCode)), ElementBounds.Fixed(bounds.fixedX + 10, y, bounds.fixedWidth - 20, buttonHeight), EditorTheme.ButtonFont, EnumButtonStyle.Normal, $"animation-row-{row++}");
+            y += buttonHeight + 4;
+        }
+    }
+
+    private void ComposeViewportPanel(ElementBounds bounds)
+    {
+        AddPanelFrame(bounds, "Viewport");
+        SingleComposer.AddDynamicText(_manager.GetProperViewportText(_state), EditorTheme.BodyFont, TextBounds(bounds, 38, 88), "viewport-summary");
+
+        double x = bounds.fixedX + 10;
+        double y = bounds.fixedY + 138;
+        double width = 78;
+        double height = 24;
+        SingleComposer.AddButton("Play", () => Run(state => _manager.ProperPlay(state)), ElementBounds.Fixed(x, y, width, height), EditorTheme.ButtonFont, EnumButtonStyle.Normal, "playback-play"); x += width + 6;
+        SingleComposer.AddButton("Pause", () => Run(state => _manager.ProperTogglePause(state)), ElementBounds.Fixed(x, y, width, height), EditorTheme.ButtonFont, EnumButtonStyle.Normal, "playback-pause"); x += width + 6;
+        SingleComposer.AddButton("Frame <", () => Run(state => _manager.ProperStepFrame(state, -1)), ElementBounds.Fixed(x, y, width, height), EditorTheme.ButtonFont, EnumButtonStyle.Normal, "playback-frame-prev"); x += width + 6;
+        SingleComposer.AddButton("Frame >", () => Run(state => _manager.ProperStepFrame(state, 1)), ElementBounds.Fixed(x, y, width, height), EditorTheme.ButtonFont, EnumButtonStyle.Normal, "playback-frame-next");
+
+        x = bounds.fixedX + 10;
+        y += height + 8;
+        SingleComposer.AddButton("Key <", () => Run(state => _manager.ProperStepKeyframe(state, -1)), ElementBounds.Fixed(x, y, width, height), EditorTheme.ButtonFont, EnumButtonStyle.Normal, "playback-key-prev"); x += width + 6;
+        SingleComposer.AddButton("Key >", () => Run(state => _manager.ProperStepKeyframe(state, 1)), ElementBounds.Fixed(x, y, width, height), EditorTheme.ButtonFont, EnumButtonStyle.Normal, "playback-key-next"); x += width + 6;
+        SingleComposer.AddButton("Speed -", () => Run(state => _manager.ProperAdjustPlaybackSpeed(state, -0.1f)), ElementBounds.Fixed(x, y, width, height), EditorTheme.ButtonFont, EnumButtonStyle.Normal, "playback-speed-down"); x += width + 6;
+        SingleComposer.AddButton("Speed +", () => Run(state => _manager.ProperAdjustPlaybackSpeed(state, 0.1f)), ElementBounds.Fixed(x, y, width, height), EditorTheme.ButtonFont, EnumButtonStyle.Normal, "playback-speed-up");
+
+        x = bounds.fixedX + 10;
+        y += height + 16;
+        SingleComposer.AddDynamicText("Camera", EditorTheme.HeaderFont, ElementBounds.Fixed(x, y, 86, height), "camera-header");
+        x += 86;
+        AddCameraButton("First", EditorCameraMode.FirstPerson, x, y); x += width + 6;
+        AddCameraButton("Orbit", EditorCameraMode.Orbit, x, y); x += width + 6;
+        AddCameraButton("Detach", EditorCameraMode.Detached, x, y);
+
+        x = bounds.fixedX + 10;
+        y += height + 10;
+        SingleComposer.AddButton("Third person", () => Run(state => _manager.ProperToggleThirdPersonAnimations(state)), ElementBounds.Fixed(x, y, 128, height), EditorTheme.ButtonFont, EnumButtonStyle.Normal, "third-person-toggle");
+        SingleComposer.AddButton("Render offset", () => Run(state => _manager.ProperToggleRenderingOffset(state)), ElementBounds.Fixed(x + 136, y, 128, height), EditorTheme.ButtonFont, EnumButtonStyle.Normal, "render-offset-toggle");
+    }
+
+    private void ComposeAnimationProperties(ElementBounds bounds)
+    {
+        AddPanelFrame(bounds, "Properties");
+        SingleComposer.AddDynamicText(_manager.GetProperAnimationPropertiesText(_state), EditorTheme.BodyFont, TextBounds(bounds, 38, 210), "animation-properties");
+
+        double y = bounds.fixedY + 260;
+        double height = 24;
+        double halfWidth = (bounds.fixedWidth - 26) / 2;
+        SingleComposer.AddButton("Undo", () => Run(state => _manager.ProperUndo(state)), ElementBounds.Fixed(bounds.fixedX + 10, y, halfWidth, height), EditorTheme.ButtonFont, EnumButtonStyle.Normal, "proper-undo");
+        SingleComposer.AddButton("Redo", () => Run(state => _manager.ProperRedo(state)), ElementBounds.Fixed(bounds.fixedX + 16 + halfWidth, y, halfWidth, height), EditorTheme.ButtonFont, EnumButtonStyle.Normal, "proper-redo");
+
+        y += height + 8;
+        SingleComposer.AddButton("Clear history", () => Run(state => _manager.ProperClearHistory(state)), ElementBounds.Fixed(bounds.fixedX + 10, y, bounds.fixedWidth - 20, height), EditorTheme.ButtonFont, EnumButtonStyle.Normal, "proper-clear-history");
+        y += height + 8;
+        SingleComposer.AddButton("Save to source", () => Run(state => _manager.ProperSaveAnimationToSource(state)), ElementBounds.Fixed(bounds.fixedX + 10, y, bounds.fixedWidth - 20, height), EditorTheme.ButtonFont, EnumButtonStyle.Normal, "proper-save-source");
+        y += height + 8;
+        SingleComposer.AddButton("Export JSON", () => Run(state => _manager.ProperExportAnimationToClipboard(state)), ElementBounds.Fixed(bounds.fixedX + 10, y, bounds.fixedWidth - 20, height), EditorTheme.ButtonFont, EnumButtonStyle.Normal, "proper-export-json");
+
+        y += height + 8;
+        SingleComposer.AddButton("Save buffer", () => Run(state => _manager.ProperSaveAnimationBuffer(state)), ElementBounds.Fixed(bounds.fixedX + 10, y, halfWidth, height), EditorTheme.ButtonFont, EnumButtonStyle.Normal, "proper-save-buffer");
+        SingleComposer.AddButton("Load buffer", () => Run(state => _manager.ProperLoadAnimationBuffer(state)), ElementBounds.Fixed(bounds.fixedX + 16 + halfWidth, y, halfWidth, height), EditorTheme.ButtonFont, EnumButtonStyle.Normal, "proper-load-buffer");
+
+        y += height + 14;
+        SingleComposer.AddDynamicText(_manager.GetProperValidationText(_state), EditorTheme.MutedFont, ElementBounds.Fixed(bounds.fixedX + 10, y, bounds.fixedWidth - 20, bounds.fixedHeight - (y - bounds.fixedY) - 10), "proper-validation");
+    }
+
+    private void ComposeTimelinePanel(ElementBounds bounds)
+    {
+        AddPanelFrame(bounds, "Timeline / dope sheet");
+        SingleComposer.AddDynamicText(_manager.GetProperTimelineText(_state), EditorTheme.BodyFont, ElementBounds.Fixed(bounds.fixedX + 10, bounds.fixedY + 38, 360, bounds.fixedHeight - 48), "timeline-text");
+
+        double x = bounds.fixedX + 390;
+        double y = bounds.fixedY + 38;
+        double width = 74;
+        double height = 24;
+        SingleComposer.AddButton("0%", () => Run(state => _manager.ProperScrubFraction(state, 0)), ElementBounds.Fixed(x, y, width, height), EditorTheme.ButtonFont, EnumButtonStyle.Normal, "scrub-0"); x += width + 6;
+        SingleComposer.AddButton("25%", () => Run(state => _manager.ProperScrubFraction(state, 0.25)), ElementBounds.Fixed(x, y, width, height), EditorTheme.ButtonFont, EnumButtonStyle.Normal, "scrub-25"); x += width + 6;
+        SingleComposer.AddButton("50%", () => Run(state => _manager.ProperScrubFraction(state, 0.5)), ElementBounds.Fixed(x, y, width, height), EditorTheme.ButtonFont, EnumButtonStyle.Normal, "scrub-50"); x += width + 6;
+        SingleComposer.AddButton("75%", () => Run(state => _manager.ProperScrubFraction(state, 0.75)), ElementBounds.Fixed(x, y, width, height), EditorTheme.ButtonFont, EnumButtonStyle.Normal, "scrub-75"); x += width + 6;
+        SingleComposer.AddButton("100%", () => Run(state => _manager.ProperScrubFraction(state, 1)), ElementBounds.Fixed(x, y, width, height), EditorTheme.ButtonFont, EnumButtonStyle.Normal, "scrub-100");
+
+        x = bounds.fixedX + 390;
+        y += height + 10;
+        SingleComposer.AddButton("Loop start", () => Run(state => _manager.ProperSetLoopStart(state)), ElementBounds.Fixed(x, y, 120, height), EditorTheme.ButtonFont, EnumButtonStyle.Normal, "loop-start");
+        SingleComposer.AddButton("Loop end", () => Run(state => _manager.ProperSetLoopEnd(state)), ElementBounds.Fixed(x + 128, y, 120, height), EditorTheme.ButtonFont, EnumButtonStyle.Normal, "loop-end");
+        SingleComposer.AddButton("Use ImGui timeline", SwitchToImGui, ElementBounds.Fixed(x + 256, y, 160, height), EditorTheme.ButtonFont, EnumButtonStyle.Normal, "imgui-timeline");
     }
 
     private void ComposeFooter()
@@ -121,15 +236,39 @@ internal sealed class DevToolsDialog : GuiDialog
 
     private void AddPanel(ElementBounds bounds, string title, string body)
     {
+        AddPanelFrame(bounds, title);
+        SingleComposer.AddDynamicText(body, EditorTheme.BodyFont, TextBounds(bounds, 38, bounds.fixedHeight - 46), $"panel-body-{SanitizeKey(title)}");
+    }
+
+    private void AddPanelFrame(ElementBounds bounds, string title)
+    {
         SingleComposer.AddInset(bounds, 1);
-        SingleComposer.AddDynamicText(title, EditorTheme.HeaderFont, ElementBounds.Fixed(bounds.fixedX + 10, bounds.fixedY + 8, bounds.fixedWidth - 20, 24), $"panel-title-{title}");
-        SingleComposer.AddDynamicText(body, EditorTheme.BodyFont, ElementBounds.Fixed(bounds.fixedX + 10, bounds.fixedY + 38, bounds.fixedWidth - 20, bounds.fixedHeight - 46), $"panel-body-{title}");
+        SingleComposer.AddDynamicText(title, EditorTheme.HeaderFont, ElementBounds.Fixed(bounds.fixedX + 10, bounds.fixedY + 8, bounds.fixedWidth - 20, 24), $"panel-title-{SanitizeKey(title)}");
+    }
+
+    private ElementBounds TextBounds(ElementBounds panelBounds, double top, double height)
+    {
+        return ElementBounds.Fixed(panelBounds.fixedX + 10, panelBounds.fixedY + top, panelBounds.fixedWidth - 20, height);
+    }
+
+    private void AddCameraButton(string label, EditorCameraMode mode, double x, double y)
+    {
+        string display = _state.CameraMode == mode ? $"* {label}" : label;
+        SingleComposer.AddButton(display, () => Run(state => _manager.ProperSetCameraMode(state, mode)), ElementBounds.Fixed(x, y, 78, 24), EditorTheme.ButtonFont, EnumButtonStyle.Normal, $"camera-{mode}");
     }
 
     private bool SelectTab(DevToolsTab tab)
     {
         _state.SelectedTab = tab;
-        _state.SetStatus($"Selected {GetTabLabel(tab)}. This panel will be ported from ImGui in a later slice.");
+        if (tab == DevToolsTab.Animations)
+        {
+            _manager.EnsureProperAnimationSelection(_state);
+            _state.SetStatus("Animation tools active.");
+        }
+        else
+        {
+            _state.SetStatus($"{GetTabLabel(tab)} is not ported yet. Use ImGui fallback for full tools.");
+        }
         ComposeDialog();
         return true;
     }
@@ -140,33 +279,42 @@ internal sealed class DevToolsDialog : GuiDialog
         return true;
     }
 
+    private bool Run(Func<EditorAppState, bool> action)
+    {
+        bool result = action(_state);
+        if (IsOpened())
+        {
+            ComposeDialog();
+        }
+        return result;
+    }
+
     private string GetBrowserText()
     {
         return _state.SelectedTab switch
         {
-            DevToolsTab.Animations => "Animation list, filters, and source grouping will live here.",
-            DevToolsTab.Transforms => "Registered item/block transforms will live here.",
-            DevToolsTab.Particles => "Particle effect presets will live here.",
-            DevToolsTab.Colliders => "Weapon collider sets will live here.",
-            DevToolsTab.Debug => "Runtime debug toggles will live here.",
-            DevToolsTab.GenericDisplay => "Generic display target list will live here.",
+            DevToolsTab.Transforms => "Transform editing is still in ImGui fallback.",
+            DevToolsTab.Particles => "Particle editing is still in ImGui fallback.",
+            DevToolsTab.Colliders => "Collider editing is still in ImGui fallback.",
+            DevToolsTab.Debug => "Runtime debug toggles are still in ImGui fallback.",
+            DevToolsTab.GenericDisplay => "Generic display tools are still in ImGui fallback.",
             _ => "Browser."
         };
     }
 
     private string GetViewportText()
     {
-        return "Player preview, gizmos, onion skins, and motion paths will render here once the tools are ported. For now, switch to ImGui for the functional editor.";
+        return "This proper UI panel is not ported yet. Use ImGui fallback for the full tool.";
     }
 
     private string GetPropertiesText()
     {
-        return $"Selected tab: {GetTabLabel(_state.SelectedTab)}\nAnimation: {_state.SelectedAnimation}\nKeyframe: {_state.SelectedKeyframe}\nRig part: {_state.SelectedRigPart}\nTool: {_state.SelectedTool}\nCamera: {_state.CameraMode}";
+        return $"Selected tab: {GetTabLabel(_state.SelectedTab)}\nAnimation: {_state.SelectedAnimation}\nKeyframe: {_state.SelectedKeyframe}\nRig part: {_state.SelectedRigPart}\nTool: {_state.SelectedTool}\nCamera: {_state.CameraMode}\n\nUse ImGui fallback for this tab until it is ported.";
     }
 
     private static string GetTimelineText()
     {
-        return "Timeline controls, marker selection, retiming, insert/delete/duplicate, and range actions will be moved here in later phases.";
+        return "Timeline controls are only ported on the Animations tab in this slice.";
     }
 
     private static string GetTabLabel(DevToolsTab tab)
@@ -176,6 +324,25 @@ internal sealed class DevToolsDialog : GuiDialog
             DevToolsTab.GenericDisplay => "Generic Display",
             _ => tab.ToString()
         };
+    }
+
+    private static string Trim(string value, int maxLength)
+    {
+        if (string.IsNullOrEmpty(value) || value.Length <= maxLength) return value;
+        return value[..Math.Max(0, maxLength - 1)] + "...";
+    }
+
+    private static string SanitizeKey(string value)
+    {
+        char[] chars = value.ToCharArray();
+        for (int i = 0; i < chars.Length; i++)
+        {
+            if (!char.IsLetterOrDigit(chars[i]))
+            {
+                chars[i] = '-';
+            }
+        }
+        return new string(chars);
     }
 }
 #endif

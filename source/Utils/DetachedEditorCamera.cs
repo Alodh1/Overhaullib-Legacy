@@ -107,6 +107,11 @@ internal sealed class DetachedEditorCamera : IRenderer
         SetMode(enabled ? RigEditorCameraMode.Orbiting : RigEditorCameraMode.FirstPerson);
     }
 
+    internal void SetEditorMode(RigEditorCameraMode mode)
+    {
+        SetMode(mode);
+    }
+
     private void SetMode(RigEditorCameraMode mode)
     {
         if (_mode == mode) return;
