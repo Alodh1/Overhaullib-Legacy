@@ -1,4 +1,5 @@
 #if DEBUG
+using ImGuiNET;
 using Vintagestory.API.Client;
 using Vintagestory.API.Common;
 using Vintagestory.API.MathTools;
@@ -43,6 +44,7 @@ internal sealed class TransformGizmoRenderer : IRenderer
     private static readonly int Green = ColorUtil.ColorFromRgba(35, 220, 35, 255);
     private static readonly int Blue = ColorUtil.ColorFromRgba(45, 120, 255, 255);
     private static readonly int Yellow = ColorUtil.ColorFromRgba(255, 230, 40, 255);
+    private static readonly int Highlight = ColorUtil.ColorFromRgba(255, 180, 45, 255);
 
     private readonly ICoreClientAPI _api;
     private readonly DebugWindowManager _debugManager;
@@ -77,15 +79,21 @@ internal sealed class TransformGizmoRenderer : IRenderer
 
     public void OnRenderFrame(float deltaTime, EnumRenderStage stage)
     {
-        if (stage != EnumRenderStage.Opaque || !ShouldDraw || !TryBuildState(out GizmoState state)) return;
+        if (stage != EnumRenderStage.Opaque) return;
 
-        if (_draggedAxis == TransformGizmoAxis.None)
+        bool hasHighlight = _debugManager.TryGetRigPartHighlightCorners(out Vec3d[] highlightCorners);
+        GizmoState state = default;
+        bool hasGizmo = ShouldDraw && TryBuildState(out state);
+        if (!hasHighlight && !hasGizmo) return;
+
+        if (hasGizmo && _draggedAxis == TransformGizmoAxis.None)
         {
             _hoveredAxis = PickAxis(state, _api.Input.MouseX, _api.Input.MouseY);
         }
 
         _api.Render.GLDisableDepthTest();
-        DrawActiveGizmo(state);
+        if (hasHighlight) DrawWireBox(highlightCorners, Highlight);
+        if (hasGizmo) DrawActiveGizmo(state);
         _api.Render.GLEnableDepthTest();
     }
 
@@ -93,8 +101,16 @@ internal sealed class TransformGizmoRenderer : IRenderer
 
     private void OnMouseDown(MouseEvent args)
     {
-        if (args.Handled || args.Button != EnumMouseButton.Left || !ShouldDraw) return;
+        if (args.Handled || args.Button != EnumMouseButton.Left) return;
         if (_debugManager.PointInsideDebugUi()) return;
+
+        if (IsShiftDown() && TryGetMouseRay(args.X, args.Y, out Vec3d rayOrigin, out Vec3d rayDirection) && _debugManager.TryPickRigPart(rayOrigin, rayDirection))
+        {
+            args.Handled = true;
+            return;
+        }
+
+        if (!ShouldDraw) return;
         if (!TryBuildState(out GizmoState state)) return;
 
         TransformGizmoAxis picked = PickAxis(state, args.X, args.Y);
@@ -383,6 +399,24 @@ internal sealed class TransformGizmoRenderer : IRenderer
             Add(center, Add(Add(Scale(x, 1), Scale(y, 1)), Scale(z, 1))),
             Add(center, Add(Add(Scale(x, -1), Scale(y, 1)), Scale(z, 1)))
         ];
+
+        DrawLine(points[0], points[1], color);
+        DrawLine(points[1], points[2], color);
+        DrawLine(points[2], points[3], color);
+        DrawLine(points[3], points[0], color);
+        DrawLine(points[4], points[5], color);
+        DrawLine(points[5], points[6], color);
+        DrawLine(points[6], points[7], color);
+        DrawLine(points[7], points[4], color);
+        DrawLine(points[0], points[4], color);
+        DrawLine(points[1], points[5], color);
+        DrawLine(points[2], points[6], color);
+        DrawLine(points[3], points[7], color);
+    }
+
+    private void DrawWireBox(Vec3d[] points, int color)
+    {
+        if (points.Length < 8) return;
 
         DrawLine(points[0], points[1], color);
         DrawLine(points[1], points[2], color);
@@ -811,6 +845,7 @@ internal sealed class TransformGizmoRenderer : IRenderer
     private static Vec3d Add(Vec3d left, Vec3d right) => new(left.X + right.X, left.Y + right.Y, left.Z + right.Z);
     private static Vec3d Sub(Vec3d left, Vec3d right) => new(left.X - right.X, left.Y - right.Y, left.Z - right.Z);
     private static Vec3d Scale(Vec3d value, double scale) => new(value.X * scale, value.Y * scale, value.Z * scale);
+    private static bool IsShiftDown() => ImGui.IsKeyDown(ImGuiKey.LeftShift) || ImGui.IsKeyDown(ImGuiKey.RightShift) || ImGui.GetIO().KeyShift;
 
     public void Dispose()
     {

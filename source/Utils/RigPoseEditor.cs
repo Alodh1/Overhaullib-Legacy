@@ -32,6 +32,7 @@ public sealed partial class DebugWindowManager
     private static readonly string[] RigEditablePartNames = RigEditableParts.Select(part => part.ToString()).ToArray();
 
     private bool _rigPoseEditorEnabled;
+    private bool _highlightSelectedRigPart = true;
     private int _rigPartIndex;
     private ModelTransform _rigGizmoTransform = CreateDefaultTransform();
 
@@ -79,6 +80,9 @@ public sealed partial class DebugWindowManager
         ImGui.SliderFloat("Frame progress##rig", ref animation._frameProgress, 0, 1);
         ImGui.SetNextItemWidth(260);
         ImGui.Combo("Rig part##rig", ref _rigPartIndex, RigEditablePartNames, RigEditablePartNames.Length);
+        ImGui.SameLine();
+        ImGui.Checkbox("Highlight selected part##rig", ref _highlightSelectedRigPart);
+        ImGui.TextDisabled("Shift-click a player body part to select it.");
 
         EnumAnimatedElement selectedPart = RigEditableParts[_rigPartIndex];
         PLayerKeyFrame keyFrame = animation.PlayerKeyFrames[animation._playerFrameIndex];
@@ -287,18 +291,75 @@ public sealed partial class DebugWindowManager
     private bool TryGetRigPartWorldCenter(EnumAnimatedElement selectedPart, out Vec3d? center)
     {
         center = null;
+        if (!TryGetRigPartWorldBox(selectedPart, out Vec3d[] corners)) return false;
+
+        Vec3d sum = new();
+        foreach (Vec3d corner in corners)
+        {
+            sum.X += corner.X;
+            sum.Y += corner.Y;
+            sum.Z += corner.Z;
+        }
+
+        center = new Vec3d(sum.X / corners.Length, sum.Y / corners.Length, sum.Z / corners.Length);
+        return true;
+    }
+
+    internal bool TryGetRigPartHighlightCorners(out Vec3d[] corners)
+    {
+        corners = Array.Empty<Vec3d>();
+        if (!_rigPoseEditorEnabled || !_highlightSelectedRigPart) return false;
+        if (_rigPartIndex < 0 || _rigPartIndex >= RigEditableParts.Length) return false;
+
+        return TryGetRigPartWorldBox(RigEditableParts[_rigPartIndex], out corners);
+    }
+
+    internal bool TryPickRigPart(Vec3d rayOrigin, Vec3d rayDirection)
+    {
+        if (!_rigPoseEditorEnabled || !_showAnimationEditor) return false;
+
+        int bestIndex = -1;
+        double bestDistance = double.PositiveInfinity;
+
+        for (int index = 0; index < RigEditableParts.Length; index++)
+        {
+            if (!TryGetRigPartWorldBox(RigEditableParts[index], out Vec3d[] corners)) continue;
+            if (!TryIntersectRayBox(rayOrigin, rayDirection, corners, out double distance)) continue;
+            if (distance >= bestDistance) continue;
+
+            bestDistance = distance;
+            bestIndex = index;
+        }
+
+        if (bestIndex < 0) return false;
+
+        _rigPartIndex = bestIndex;
+        return true;
+    }
+
+    private bool TryGetRigPartWorldBox(EnumAnimatedElement selectedPart, out Vec3d[] corners)
+    {
+        corners = Array.Empty<Vec3d>();
         EntityPlayer playerEntity = _api.World.Player.Entity;
         if (playerEntity.AnimManager?.Animator is not AnimatorBase animator || animator.RootPoses == null) return false;
         if (!TryFindPose(animator.RootPoses, selectedPart, out ElementPose? pose)) return false;
+        if (pose.ForElement == null) return false;
 
         Matrixf matrix = new();
         BuildPlayerModelMatrix(matrix, playerEntity);
         matrix.Mul(pose.AnimModelMatrix);
 
-        Vec3f localCenter = GetElementLocalCenter(pose.ForElement);
-        Vec4f relative = matrix.TransformVector(new Vec4f(localCenter.X, localCenter.Y, localCenter.Z, 1f));
+        Vec3f[] localCorners = GetElementLocalBoxCorners(pose.ForElement);
+        corners = new Vec3d[localCorners.Length];
         Vec3d camera = playerEntity.CameraPos;
-        center = new Vec3d(camera.X + relative.X, camera.Y + relative.Y, camera.Z + relative.Z);
+
+        for (int index = 0; index < localCorners.Length; index++)
+        {
+            Vec3f local = localCorners[index];
+            Vec4f relative = matrix.TransformVector(new Vec4f(local.X, local.Y, local.Z, 1f));
+            corners[index] = new Vec3d(camera.X + relative.X, camera.Y + relative.Y, camera.Z + relative.Z);
+        }
+
         return true;
     }
 
@@ -333,6 +394,99 @@ public sealed partial class DebugWindowManager
             (float)((element.To[1] - element.From[1]) / 32.0),
             (float)((element.To[2] - element.From[2]) / 32.0));
     }
+
+    private static Vec3f[] GetElementLocalBoxCorners(ShapeElement element)
+    {
+        Vec3f center = GetElementLocalCenter(element);
+        float halfX = 0.12f;
+        float halfY = 0.12f;
+        float halfZ = 0.12f;
+
+        if (element.From != null && element.To != null && element.From.Length >= 3 && element.To.Length >= 3)
+        {
+            halfX = Math.Max(0.08f, (float)Math.Abs(element.To[0] - element.From[0]) / 32f);
+            halfY = Math.Max(0.08f, (float)Math.Abs(element.To[1] - element.From[1]) / 32f);
+            halfZ = Math.Max(0.08f, (float)Math.Abs(element.To[2] - element.From[2]) / 32f);
+        }
+
+        const float padding = 0.035f;
+        halfX += padding;
+        halfY += padding;
+        halfZ += padding;
+
+        float minX = center.X - halfX;
+        float minY = center.Y - halfY;
+        float minZ = center.Z - halfZ;
+        float maxX = center.X + halfX;
+        float maxY = center.Y + halfY;
+        float maxZ = center.Z + halfZ;
+
+        return
+        [
+            new Vec3f(minX, minY, minZ),
+            new Vec3f(maxX, minY, minZ),
+            new Vec3f(maxX, maxY, minZ),
+            new Vec3f(minX, maxY, minZ),
+            new Vec3f(minX, minY, maxZ),
+            new Vec3f(maxX, minY, maxZ),
+            new Vec3f(maxX, maxY, maxZ),
+            new Vec3f(minX, maxY, maxZ)
+        ];
+    }
+
+    private static bool TryIntersectRayBox(Vec3d origin, Vec3d direction, Vec3d[] corners, out double distance)
+    {
+        distance = double.PositiveInfinity;
+        if (corners.Length < 8) return false;
+
+        ReadOnlySpan<(int A, int B, int C)> triangles =
+        [
+            (0, 1, 2), (0, 2, 3),
+            (4, 6, 5), (4, 7, 6),
+            (0, 4, 5), (0, 5, 1),
+            (1, 5, 6), (1, 6, 2),
+            (2, 6, 7), (2, 7, 3),
+            (3, 7, 4), (3, 4, 0)
+        ];
+
+        bool hit = false;
+        foreach ((int a, int b, int c) in triangles)
+        {
+            if (!TryIntersectRayTriangle(origin, direction, corners[a], corners[b], corners[c], out double triangleDistance)) continue;
+            if (triangleDistance >= distance) continue;
+
+            distance = triangleDistance;
+            hit = true;
+        }
+
+        return hit;
+    }
+
+    private static bool TryIntersectRayTriangle(Vec3d origin, Vec3d direction, Vec3d a, Vec3d b, Vec3d c, out double distance)
+    {
+        distance = 0;
+        const double epsilon = 0.0000001;
+        Vec3d edge1 = Sub(b, a);
+        Vec3d edge2 = Sub(c, a);
+        Vec3d h = direction.Cross(edge2);
+        double det = Dot(edge1, h);
+        if (det > -epsilon && det < epsilon) return false;
+
+        double invDet = 1.0 / det;
+        Vec3d s = Sub(origin, a);
+        double u = invDet * Dot(s, h);
+        if (u < 0 || u > 1) return false;
+
+        Vec3d q = s.Cross(edge1);
+        double v = invDet * Dot(direction, q);
+        if (v < 0 || u + v > 1) return false;
+
+        distance = invDet * Dot(edge2, q);
+        return distance >= 0;
+    }
+
+    private static double Dot(Vec3d left, Vec3d right) => left.X * right.X + left.Y * right.Y + left.Z * right.Z;
+    private static Vec3d Sub(Vec3d left, Vec3d right) => new(left.X - right.X, left.Y - right.Y, left.Z - right.Z);
 
     private static void BuildPlayerModelMatrix(Matrixf matrix, EntityPlayer playerEntity)
     {
