@@ -518,6 +518,7 @@ public sealed partial class DebugWindowManager
     private int _timelineRetimingIndex = -1;
     private TimelineRetimingKind _timelineSelectedKind = TimelineRetimingKind.Player;
     private TimelineEventTrack _timelineSelectedEventTrack = TimelineEventTrack.Sound;
+    private float _timelineNudgeMs = 50;
     private static readonly string[] TimelineTrackNames = new[] { "Player", "Item", "Sound", "Particle", "Callback" };
     private static readonly MethodInfo? ProcessPlayerKeyFramesMethod = typeof(Animation).GetMethod("ProcessPlayerKeyFrames", BindingFlags.NonPublic | BindingFlags.Instance, null, Type.EmptyTypes, null);
     internal TransformGizmoMode GizmoMode { get; private set; } = TransformGizmoMode.Move;
@@ -1428,9 +1429,60 @@ public sealed partial class DebugWindowManager
             SelectTimelineTrack(trackIndex);
         }
 
+        bool canRetiming = CanRetimingTimelineSelection(animation);
+        if (!canRetiming) ImGui.BeginDisabled();
+        float selectedTimeMs = canRetiming ? (float)GetSelectedTimelineMarkerTimeMs(animation) : 0;
+        ImGui.SetNextItemWidth(150);
+        if (ImGui.InputFloat("Selected time ms##timeline-actions", ref selectedTimeMs, 1, Math.Max(1, _timelineNudgeMs), "%.0f"))
+        {
+            BeginTimelineActionEdit(animationCode, animation, $"Retiming {selection}");
+            RetimingTimelineSelection(animation, selectedTimeMs);
+        }
+        if (ImGui.IsItemDeactivatedAfterEdit())
+        {
+            CommitPendingAnimationEdit(animationCode);
+        }
+        if (!canRetiming) ImGui.EndDisabled();
+
+        ImGui.SameLine();
+        ImGui.SetNextItemWidth(90);
+        if (ImGui.InputFloat("Nudge ms##timeline-actions", ref _timelineNudgeMs, 1, 50, "%.0f"))
+        {
+            _timelineNudgeMs = Math.Max(1, _timelineNudgeMs);
+        }
+
         bool canInsert = CanInsertTimelineSelection(animation);
         bool canDuplicate = CanDuplicateTimelineSelection(animation);
         bool canDelete = CanDeleteTimelineSelection(animation);
+
+        if (!canRetiming) ImGui.BeginDisabled();
+        if (ImGui.Button("- nudge##timeline-actions"))
+        {
+            _animationHistory.BeginEdit(animationCode, animation, $"Nudge {selection}");
+            RetimingTimelineSelection(animation, GetSelectedTimelineMarkerTimeMs(animation) - Math.Max(1, _timelineNudgeMs));
+            _animationHistory.CommitEdit(animationCode, animation);
+        }
+        if (!canRetiming) ImGui.EndDisabled();
+
+        ImGui.SameLine();
+        if (!canRetiming) ImGui.BeginDisabled();
+        if (ImGui.Button("+ nudge##timeline-actions"))
+        {
+            _animationHistory.BeginEdit(animationCode, animation, $"Nudge {selection}");
+            RetimingTimelineSelection(animation, GetSelectedTimelineMarkerTimeMs(animation) + Math.Max(1, _timelineNudgeMs));
+            _animationHistory.CommitEdit(animationCode, animation);
+        }
+        if (!canRetiming) ImGui.EndDisabled();
+
+        ImGui.SameLine();
+        if (!canRetiming) ImGui.BeginDisabled();
+        if (ImGui.Button("Move to playhead##timeline-actions"))
+        {
+            _animationHistory.BeginEdit(animationCode, animation, $"Move {selection} to playhead");
+            RetimingTimelineSelection(animation, GetEditorFrameTimeMs(animation));
+            _animationHistory.CommitEdit(animationCode, animation);
+        }
+        if (!canRetiming) ImGui.EndDisabled();
 
         if (!canInsert) ImGui.BeginDisabled();
         if (ImGui.Button("Insert marker at time##timeline-actions"))
@@ -1460,6 +1512,13 @@ public sealed partial class DebugWindowManager
             _animationHistory.CommitEdit(animationCode, animation);
         }
         if (!canDelete) ImGui.EndDisabled();
+    }
+
+    private void BeginTimelineActionEdit(string animationCode, Animation animation, string label)
+    {
+        if (_animationHistory.HasPendingEdit(animationCode)) return;
+
+        _animationHistory.BeginEdit(animationCode, animation, label);
     }
 
     private string GetTimelineSelectionLabel(Animation animation)
@@ -1533,6 +1592,17 @@ public sealed partial class DebugWindowManager
         };
     }
 
+    private bool CanRetimingTimelineSelection(Animation animation)
+    {
+        return _timelineSelectedKind switch
+        {
+            TimelineRetimingKind.Player => animation.PlayerKeyFrames.Count > 0,
+            TimelineRetimingKind.Item => animation.ItemKeyFrames.Count > 0 && (animation.ItemAnimationEnd - animation.ItemAnimationStart).TotalMilliseconds > 0.0001,
+            TimelineRetimingKind.Event => GetTimelineEventFrameCount(animation, _timelineSelectedEventTrack) > 0 && GetEditorPlayerDurationMs(animation) > 0.0001,
+            _ => false
+        };
+    }
+
     private bool CanDuplicateTimelineSelection(Animation animation)
     {
         return _timelineSelectedKind switch
@@ -1553,6 +1623,33 @@ public sealed partial class DebugWindowManager
             TimelineRetimingKind.Event => GetTimelineEventFrameCount(animation, _timelineSelectedEventTrack) > 0,
             _ => false
         };
+    }
+
+    private double GetSelectedTimelineMarkerTimeMs(Animation animation)
+    {
+        return _timelineSelectedKind switch
+        {
+            TimelineRetimingKind.Player when animation.PlayerKeyFrames.Count > 0 => animation.PlayerKeyFrames[Math.Clamp(animation._playerFrameIndex, 0, animation.PlayerKeyFrames.Count - 1)].Time.TotalMilliseconds,
+            TimelineRetimingKind.Item when animation.ItemKeyFrames.Count > 0 => GetTimelineItemKeyframeTimeMs(animation, Math.Clamp(animation._itemFrameIndex, 0, animation.ItemKeyFrames.Count - 1)),
+            TimelineRetimingKind.Event when GetTimelineEventFrameCount(animation, _timelineSelectedEventTrack) > 0 => GetTimelineEventFrameTimeMs(animation, _timelineSelectedEventTrack, GetSelectedTimelineEventIndex(animation, _timelineSelectedEventTrack)),
+            _ => GetEditorFrameTimeMs(animation)
+        };
+    }
+
+    private void RetimingTimelineSelection(Animation animation, double requestedTimeMs)
+    {
+        switch (_timelineSelectedKind)
+        {
+            case TimelineRetimingKind.Player:
+                RetimingTimelinePlayerKeyframe(animation, Math.Clamp(animation._playerFrameIndex, 0, Math.Max(0, animation.PlayerKeyFrames.Count - 1)), requestedTimeMs);
+                break;
+            case TimelineRetimingKind.Item:
+                RetimingTimelineItemKeyframe(animation, Math.Clamp(animation._itemFrameIndex, 0, Math.Max(0, animation.ItemKeyFrames.Count - 1)), requestedTimeMs);
+                break;
+            case TimelineRetimingKind.Event:
+                RetimingTimelineEventFrame(animation, _timelineSelectedEventTrack, GetSelectedTimelineEventIndex(animation, _timelineSelectedEventTrack), requestedTimeMs);
+                break;
+        }
     }
 
     private void InsertTimelineSelection(Animation animation)
