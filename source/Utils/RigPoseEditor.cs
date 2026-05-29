@@ -104,7 +104,10 @@ public sealed partial class DebugWindowManager
             ImGui.TextWrapped($"{selectedPart} is not present on this keyframe.");
             if (ImGui.Button("Create selected part frame##rig"))
             {
+                _animationHistory.BeginEdit(animationCode, animation, $"Create {selectedPart} frame");
                 SetRigElement(animation, selectedPart, AnimationElement.Zero);
+                _animationHistory.CommitEdit(animationCode, animation);
+                _animationHistoryExplicitEditThisFrame = true;
                 element = AnimationElement.Zero;
                 exists = true;
             }
@@ -130,8 +133,8 @@ public sealed partial class DebugWindowManager
             transform => ApplyRigTransform(animation, selectedPart, transform),
             worldCenter: worldCenter,
             allowScale: false,
-            dragStarted: () => BeginRigGizmoDrag(animation, selectedPart),
-            dragEnded: EndRigGizmoDrag);
+            dragStarted: () => BeginRigGizmoDrag(animationCode, animation, selectedPart),
+            dragEnded: () => EndRigGizmoDrag(animationCode, animation));
 
         ImGui.TextDisabled($"Editing {animationCode} / keyframe {animation._playerFrameIndex} / {selectedPart}.");
         return true;
@@ -165,23 +168,40 @@ public sealed partial class DebugWindowManager
         SetRigElement(animation, selectedPart, element);
     }
 
-    private void BeginRigGizmoDrag(Animation animation, EnumAnimatedElement selectedPart)
+    private void BeginRigGizmoDrag(string animationCode, Animation animation, EnumAnimatedElement selectedPart)
     {
         int index = animation._playerFrameIndex;
         if (index < 0 || index >= animation.PlayerKeyFrames.Count)
         {
-            EndRigGizmoDrag();
+            ClearRigGizmoDrag();
             return;
         }
 
+        if (!string.IsNullOrEmpty(animationCode))
+        {
+            _animationHistory.BeginEdit(animationCode, animation, $"Rig gizmo {selectedPart}");
+            _animationHistoryExternalDragActive = true;
+        }
         _rigIkDragActive = true;
         _rigIkDragKeyframeIndex = index;
         _rigIkDragPart = selectedPart;
         _rigIkDragStartFrame = animation.PlayerKeyFrames[index].Frame;
     }
 
-    private void EndRigGizmoDrag()
+    private void EndRigGizmoDrag(string animationCode, Animation animation)
     {
+        _animationHistoryExternalDragActive = false;
+        if (!string.IsNullOrEmpty(animationCode))
+        {
+            _animationHistory.CommitEdit(animationCode, animation);
+            _animationHistoryExplicitEditThisFrame = true;
+        }
+        ClearRigGizmoDrag();
+    }
+
+    private void ClearRigGizmoDrag()
+    {
+        _animationHistoryExternalDragActive = false;
         _rigIkDragActive = false;
         _rigIkDragKeyframeIndex = -1;
         _rigIkDragPart = EnumAnimatedElement.Unknown;
@@ -195,7 +215,7 @@ public sealed partial class DebugWindowManager
         int index = animation._playerFrameIndex;
         if (!_rigIkDragActive || _rigIkDragKeyframeIndex != index || _rigIkDragPart != selectedPart)
         {
-            BeginRigGizmoDrag(animation, selectedPart);
+            BeginRigGizmoDrag("", animation, selectedPart);
         }
 
         if (!_rigIkDragActive || index < 0 || index >= animation.PlayerKeyFrames.Count) return false;

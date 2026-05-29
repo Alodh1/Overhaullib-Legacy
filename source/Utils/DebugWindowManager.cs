@@ -360,6 +360,7 @@ public sealed partial class DebugWindowManager
     private static Dictionary<string, Dictionary<string, (Action<LineSegmentCollider> setter, System.Func<LineSegmentCollider> getter)>> _colliders = new();
     internal static LineSegmentCollider? _currentCollider = null;
 #if DEBUG
+    private readonly AnimationEditorHistory _animationHistory = new();
     private TransformGizmoRenderer? _transformGizmoRenderer;
     private DetachedEditorCamera? _detachedEditorCamera;
     private ModelTransform? _activeGizmoTransform;
@@ -369,6 +370,8 @@ public sealed partial class DebugWindowManager
     private Action<ModelTransform>? _activeGizmoApply;
     private Action? _activeGizmoDragStarted;
     private Action? _activeGizmoDragEnded;
+    private bool _animationHistoryExternalDragActive;
+    private bool _animationHistoryExplicitEditThisFrame;
     internal TransformGizmoMode GizmoMode { get; private set; } = TransformGizmoMode.Move;
     internal bool GizmoLocalSpace { get; private set; } = true;
     internal bool IncludeGizmoInIncrement { get; private set; } = true;
@@ -545,7 +548,11 @@ public sealed partial class DebugWindowManager
 
         if (ImGui.Button("Load from buffer"))
         {
-            AnimationsManager._instance.Animations[codes[_selectedAnimationIndex]] = _animationBuffer.ToAnimation();
+            string animationCode = codes[_selectedAnimationIndex];
+            Animation currentAnimation = AnimationsManager._instance.Animations[animationCode];
+            _animationHistory.BeginEdit(animationCode, currentAnimation, "Load from buffer");
+            AnimationsManager._instance.Animations[animationCode] = _animationBuffer.ToAnimation();
+            _animationHistory.CommitEdit(animationCode, AnimationsManager._instance.Animations[animationCode]);
         }
 
         if (ImGui.Button("Save buffer to file"))
@@ -613,11 +620,13 @@ public sealed partial class DebugWindowManager
         if (_selectedAnimationIndex < AnimationsManager._instance.Animations.Count)
         {
             ImGui.SeparatorText("Animation");
+            string selectedAnimationCode = codes[_selectedAnimationIndex];
+            DrawAnimationHistoryControls(selectedAnimationCode);
 
             if (ImGui.Button("Play") && AnimationsManager._instance.Animations.Count > 0)
             {
                 AnimationRequest request = new(
-                    AnimationsManager._instance.Animations[codes[_selectedAnimationIndex]],
+                    AnimationsManager._instance.Animations[selectedAnimationCode],
                     _animationSpeed,
                     1,
                     "main",
@@ -632,12 +641,12 @@ public sealed partial class DebugWindowManager
 
             if (ImGui.Button("Export to clipboard") && AnimationsManager._instance.Animations.Count > 0)
             {
-                ImGui.SetClipboardText(AnimationsManager._instance.Animations[codes[_selectedAnimationIndex]].ToString());
+                ImGui.SetClipboardText(AnimationsManager._instance.Animations[selectedAnimationCode].ToString());
             }
             ImGui.SameLine();
             if (ImGui.Button("Save to source##animation") && AnimationsManager._instance.Animations.Count > 0)
             {
-                _transformSaveStatus = TrySaveAnimationToSource(codes[_selectedAnimationIndex], AnimationsManager._instance.Animations[codes[_selectedAnimationIndex]]);
+                _transformSaveStatus = TrySaveAnimationToSource(selectedAnimationCode, AnimationsManager._instance.Animations[selectedAnimationCode]);
             }
             if (!string.IsNullOrEmpty(_transformSaveStatus))
             {
@@ -647,9 +656,14 @@ public sealed partial class DebugWindowManager
 
             ImGui.SetNextItemWidth(200);
             ImGui.SliderFloat("Animation speed", ref _animationSpeed, 0.1f, 2);
-            Animation selectedAnimation = AnimationsManager._instance.Animations[codes[_selectedAnimationIndex]];
-            selectedAnimation.Edit(codes[_selectedAnimationIndex]);
-            DrawRigPoseEditor(codes[_selectedAnimationIndex], selectedAnimation);
+            Animation selectedAnimation = AnimationsManager._instance.Animations[selectedAnimationCode];
+            _animationHistoryExplicitEditThisFrame = false;
+            Animation beforeEdit = selectedAnimation.Clone();
+            string beforeEditSerialized = AnimationEditorHistory.Serialize(selectedAnimation);
+            selectedAnimation.Edit(selectedAnimationCode);
+            DrawRigPoseEditor(selectedAnimationCode, selectedAnimation);
+            TrackAnimationEditorChanges(selectedAnimationCode, beforeEdit, beforeEditSerialized, selectedAnimation, "Editor edit");
+            selectedAnimation = AnimationsManager._instance.Animations[selectedAnimationCode];
             if (_showAnimationEditor)
             {
                 SetEditorFrameOverride(selectedAnimation.StillPlayerFrame(selectedAnimation._playerFrameIndex, selectedAnimation._frameProgress));
@@ -659,6 +673,108 @@ public sealed partial class DebugWindowManager
                 SetEditorFrameOverride(null);
             }
         }
+    }
+
+    private void DrawAnimationHistoryControls(string animationCode)
+    {
+        HandleAnimationHistoryShortcuts(animationCode);
+
+        bool canUndo = _animationHistory.UndoCount(animationCode) > 0;
+        bool canRedo = _animationHistory.RedoCount(animationCode) > 0;
+
+        if (!canUndo) ImGui.BeginDisabled();
+        if (ImGui.Button("Undo##animation"))
+        {
+            CommitPendingAnimationEdit(animationCode);
+            if (_animationHistory.Undo(animationCode, AnimationsManager._instance.Animations, out string status))
+            {
+                _transformSaveStatus = status;
+            }
+            else
+            {
+                _transformSaveStatus = status;
+            }
+        }
+        if (!canUndo) ImGui.EndDisabled();
+
+        ImGui.SameLine();
+        if (!canRedo) ImGui.BeginDisabled();
+        if (ImGui.Button("Redo##animation"))
+        {
+            CommitPendingAnimationEdit(animationCode);
+            if (_animationHistory.Redo(animationCode, AnimationsManager._instance.Animations, out string status))
+            {
+                _transformSaveStatus = status;
+            }
+            else
+            {
+                _transformSaveStatus = status;
+            }
+        }
+        if (!canRedo) ImGui.EndDisabled();
+
+        ImGui.SameLine();
+        if (ImGui.Button("Clear history##animation"))
+        {
+            _animationHistory.Clear(animationCode);
+            _transformSaveStatus = "Animation edit history cleared.";
+        }
+
+        ImGui.SameLine();
+        ImGui.TextDisabled($"Undo: {_animationHistory.UndoCount(animationCode)}  Redo: {_animationHistory.RedoCount(animationCode)}");
+    }
+
+    private void HandleAnimationHistoryShortcuts(string animationCode)
+    {
+        ImGuiIOPtr io = ImGui.GetIO();
+        if (io.WantTextInput || !io.KeyCtrl) return;
+
+        if (ImGui.IsKeyPressed(ImGuiKey.Z))
+        {
+            CommitPendingAnimationEdit(animationCode);
+            _animationHistory.Undo(animationCode, AnimationsManager._instance.Animations, out _transformSaveStatus);
+        }
+        else if (ImGui.IsKeyPressed(ImGuiKey.Y))
+        {
+            CommitPendingAnimationEdit(animationCode);
+            _animationHistory.Redo(animationCode, AnimationsManager._instance.Animations, out _transformSaveStatus);
+        }
+    }
+
+    private void TrackAnimationEditorChanges(string animationCode, Animation beforeEdit, string beforeEditSerialized, Animation afterEdit, string label)
+    {
+        string afterEditSerialized = AnimationEditorHistory.Serialize(afterEdit);
+        bool changed = beforeEditSerialized != afterEditSerialized;
+        bool anyItemActive = ImGui.IsAnyItemActive();
+
+        if (_animationHistoryExplicitEditThisFrame) return;
+
+        if (_animationHistory.HasPendingEdit(animationCode))
+        {
+            if (!anyItemActive && !_animationHistoryExternalDragActive)
+            {
+                _animationHistory.CommitEdit(animationCode, afterEdit);
+            }
+            return;
+        }
+
+        if (!changed) return;
+
+        if (anyItemActive)
+        {
+            _animationHistory.BeginEdit(animationCode, beforeEdit, label);
+        }
+        else
+        {
+            _animationHistory.RecordSnapshot(animationCode, beforeEdit, label);
+        }
+    }
+
+    private void CommitPendingAnimationEdit(string animationCode)
+    {
+        if (!AnimationsManager._instance.Animations.TryGetValue(animationCode, out Animation? animation)) return;
+
+        _animationHistory.CommitEdit(animationCode, animation);
     }
 
     private void TransformEditorTab()
