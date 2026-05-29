@@ -91,7 +91,7 @@ internal sealed class DetachedEditorCamera : IRenderer
             ImGui.SetNextItemWidth(140);
             if (ImGui.SliderFloat($"Distance##{id}", ref distance, 0.75f, 12f)) _distance = distance;
 
-            ImGui.TextDisabled("RMB drag orbits the frozen player. Mouse wheel zooms.");
+            ImGui.TextDisabled("RMB orbits. MMB or Shift+RMB pans. Mouse wheel zooms.");
         }
         else
         {
@@ -204,7 +204,16 @@ internal sealed class DetachedEditorCamera : IRenderer
     {
         ImGuiIOPtr io = ImGui.GetIO();
 
-        if (!io.WantCaptureMouse && io.MouseDown[1])
+        bool shift = ImGui.IsKeyDown(ImGuiKey.LeftShift) || ImGui.IsKeyDown(ImGuiKey.RightShift);
+        bool panOrbit = _mode == RigEditorCameraMode.Orbiting && !io.WantCaptureMouse && (io.MouseDown[2] || (shift && io.MouseDown[1]));
+        if (panOrbit)
+        {
+            GetBasis(out _, out Vec3d panRight, out Vec3d panUp);
+            double panSpeed = Math.Clamp(_distance * 0.0018, 0.001, 0.04);
+            _targetOffset.Add(panRight.Mul(-io.MouseDelta.X * panSpeed));
+            _targetOffset.Add(panUp.Mul(io.MouseDelta.Y * panSpeed));
+        }
+        else if (!io.WantCaptureMouse && io.MouseDown[1])
         {
             _yaw -= io.MouseDelta.X * _orbitSensitivity;
             _pitch = Math.Clamp(_pitch - io.MouseDelta.Y * _orbitSensitivity, -1.35, 1.35);

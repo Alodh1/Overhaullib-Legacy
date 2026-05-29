@@ -1,6 +1,7 @@
 #if DEBUG
 using Vintagestory.API.Config;
 using Vintagestory.API.Client;
+using ImGuiNET;
 using Vintagestory.API.MathTools;
 
 namespace CombatOverhaul.Animations.EditorUI;
@@ -16,6 +17,13 @@ internal sealed class DevToolsDialog : GuiDialog
     private ElementBounds? _viewportSceneBounds;
     private double _lastWindowWidth;
     private double _lastWindowHeight;
+    private float _viewportYaw;
+    private float _viewportZoom = 1f;
+    private float _viewportPanX;
+    private float _viewportPanY;
+    private int _lastViewportMouseX;
+    private int _lastViewportMouseY;
+    private bool _lastViewportMouseInScene;
 
     public DevToolsDialog(ICoreClientAPI capi, DebugWindowManager manager, EditorAppState state, EditorInputRouter inputRouter) : base(capi)
     {
@@ -51,6 +59,7 @@ internal sealed class DevToolsDialog : GuiDialog
         }
 
         base.OnRenderGUI(deltaTime);
+        _manager.UpdateProperDevTools(deltaTime);
         RenderAnimationViewport(deltaTime);
     }
 
@@ -266,11 +275,13 @@ internal sealed class DevToolsDialog : GuiDialog
         if (capi.World?.Player?.Entity == null) return;
         if (_viewportSceneBounds.InnerWidth <= 32 || _viewportSceneBounds.InnerHeight <= 32) return;
 
-        float size = (float)Math.Min(_viewportSceneBounds.InnerHeight * 0.82, _viewportSceneBounds.InnerWidth * 0.58);
+        UpdateViewportInput();
+
+        float size = (float)Math.Min(_viewportSceneBounds.InnerHeight * 0.82, _viewportSceneBounds.InnerWidth * 0.58) * _viewportZoom;
         if (size <= 1) return;
 
-        double posX = _viewportSceneBounds.renderX + _viewportSceneBounds.InnerWidth / 2 - size * 0.30;
-        double posY = _viewportSceneBounds.renderY + _viewportSceneBounds.InnerHeight / 2 - size * 0.52;
+        double posX = _viewportSceneBounds.renderX + _viewportSceneBounds.InnerWidth / 2 - size * 0.30 + _viewportPanX;
+        double posY = _viewportSceneBounds.renderY + _viewportSceneBounds.InnerHeight / 2 - size * 0.52 + _viewportPanY;
         double posZ = GuiElement.scaled(250);
 
         capi.Render.GlPushMatrix();
@@ -286,11 +297,44 @@ internal sealed class DevToolsDialog : GuiDialog
         capi.Render.CurrentActiveShader?.Uniform("lightPosition", light.X, light.Y, light.Z);
 
         capi.Render.PushScissor(_viewportSceneBounds, false);
-        capi.Render.RenderEntityToGui(deltaTime, capi.World.Player.Entity, posX, posY, posZ, 0, size, ColorUtil.WhiteArgb);
+        capi.Render.RenderEntityToGui(deltaTime, capi.World.Player.Entity, posX, posY, posZ, _viewportYaw, size, ColorUtil.WhiteArgb);
         capi.Render.PopScissor();
 
         capi.Render.CurrentActiveShader?.Uniform("lightPosition", 0.7071068f, -0.7071068f, 0f);
         capi.Render.GlPopMatrix();
+    }
+
+    private void UpdateViewportInput()
+    {
+        if (_viewportSceneBounds == null) return;
+
+        int mouseX = capi.Input.MouseX;
+        int mouseY = capi.Input.MouseY;
+        bool inScene = _viewportSceneBounds.PointInside(mouseX, mouseY);
+        int deltaX = _lastViewportMouseInScene ? mouseX - _lastViewportMouseX : 0;
+        int deltaY = _lastViewportMouseInScene ? mouseY - _lastViewportMouseY : 0;
+        _lastViewportMouseX = mouseX;
+        _lastViewportMouseY = mouseY;
+        _lastViewportMouseInScene = inScene;
+
+        if (!inScene) return;
+
+        bool shift = capi.Input.KeyboardKeyStateRaw[(int)GlKeys.ShiftLeft] || capi.Input.KeyboardKeyStateRaw[(int)GlKeys.ShiftRight];
+        if (capi.Input.MouseButton.Middle || (shift && capi.Input.MouseButton.Right))
+        {
+            _viewportPanX = Math.Clamp(_viewportPanX + deltaX, (float)-_viewportSceneBounds.InnerWidth, (float)_viewportSceneBounds.InnerWidth);
+            _viewportPanY = Math.Clamp(_viewportPanY + deltaY, (float)-_viewportSceneBounds.InnerHeight, (float)_viewportSceneBounds.InnerHeight);
+        }
+        else if (capi.Input.MouseButton.Right)
+        {
+            _viewportYaw += deltaX * 0.01f;
+        }
+
+        float wheel = ImGui.GetIO().MouseWheel;
+        if (Math.Abs(wheel) > 0.001f)
+        {
+            _viewportZoom = Math.Clamp(_viewportZoom + wheel * 0.06f, 0.55f, 1.85f);
+        }
     }
 
     private bool WindowSizeChanged()

@@ -24,16 +24,27 @@ public sealed class AnimationsManager
     }
     public void Load()
     {
-        List<IAsset> animations = _api.Assets.GetManyInCategory("config", "animations");
+        List<IAsset> configAnimations = _api.Assets.GetManyInCategory("config", "animations");
+#if DEBUG
+        List<IAsset> shapeAssets = _api.Assets.GetManyInCategory("shapes", "");
+#endif
 
         Dictionary<string, Animation> animationsByCode = new();
         AnimationSources.Clear();
-        foreach (Dictionary<string, Animation> assetAnimations in animations.Select(FromAsset))
+        IEnumerable<LoadedAnimation> loadedAnimations = configAnimations.SelectMany(FromAsset);
+#if DEBUG
+        loadedAnimations = loadedAnimations.Concat(shapeAssets.SelectMany(FromShapeAsset));
+#endif
+
+        foreach (LoadedAnimation loadedAnimation in loadedAnimations)
         {
-            foreach ((string code, Animation animation) in assetAnimations)
+            if (!animationsByCode.TryAdd(loadedAnimation.Code, loadedAnimation.Animation))
             {
-                animationsByCode.Add(code, animation);
+                LoggerUtil.Warn(_api, this, $"Duplicate animation code '{loadedAnimation.Code}' from '{loadedAnimation.Source.DisplayPath}' ignored.");
+                continue;
             }
+
+            AnimationSources[loadedAnimation.Code] = loadedAnimation.Source;
         }
 
         Animations = animationsByCode;
@@ -119,9 +130,9 @@ public sealed class AnimationsManager
         return null;
     }
 
-    private Dictionary<string, Animation> FromAsset(IAsset asset)
+    private IEnumerable<LoadedAnimation> FromAsset(IAsset asset)
     {
-        Dictionary<string, Animation> result = new();
+        List<LoadedAnimation> result = new();
 
         string domain = asset.Location.Domain;
 
@@ -149,8 +160,7 @@ public sealed class AnimationsManager
 
                 string animationCode = code.Contains(':') ? code : $"{domain}:{code}";
 
-                result.TryAdd(animationCode, animation);
-                AnimationSources[animationCode] = new(domain, code);
+                result.Add(new(animationCode, animation, new(domain, code)));
             }
             catch (Exception exception)
             {
@@ -160,6 +170,110 @@ public sealed class AnimationsManager
 
         return result;
     }
+
+    private IEnumerable<LoadedAnimation> FromShapeAsset(IAsset asset)
+    {
+        List<LoadedAnimation> result = new();
+
+        Shape shape;
+        try
+        {
+            shape = asset.ToObject<Shape>();
+            shape.ResolveReferences(_api.Logger, asset.Location.ToString());
+        }
+        catch (Exception exception)
+        {
+            LoggerUtil.Warn(_api, this, $"Error on parsing shape animations file '{asset.Location}'.\nException: {exception}");
+            return result;
+        }
+
+        if (shape.Animations == null || shape.Animations.Length == 0)
+        {
+            return result;
+        }
+
+        foreach (Vintagestory.API.Common.Animation vanillaAnimation in shape.Animations)
+        {
+            if (string.IsNullOrWhiteSpace(vanillaAnimation.Code) || vanillaAnimation.KeyFrames == null || vanillaAnimation.KeyFrames.Length == 0)
+            {
+                continue;
+            }
+
+            try
+            {
+                string animationCode = BuildShapeAnimationCode(asset.Location, vanillaAnimation.Code);
+                Animation animation = FromVanillaShapeAnimation(vanillaAnimation);
+                AnimationSource source = new(
+                    asset.Location.Domain,
+                    vanillaAnimation.Code,
+                    AnimationSourceKind.ShapeAnimation,
+                    asset.Location.Path,
+                    vanillaAnimation.Code);
+
+                result.Add(new(animationCode, animation, source));
+            }
+            catch (Exception exception)
+            {
+                LoggerUtil.Warn(_api, this, $"Error on importing shape animation '{vanillaAnimation.Code}' from '{asset.Location}'.\nException: {exception}");
+            }
+        }
+
+        return result;
+    }
+
+    private static Animation FromVanillaShapeAnimation(Vintagestory.API.Common.Animation vanillaAnimation)
+    {
+        List<PLayerKeyFrame> playerFrames = PLayerKeyFrame.FromVanillaAnimation(vanillaAnimation, out bool hasPlayerFrames);
+        if (hasPlayerFrames)
+        {
+            return new(playerFrames);
+        }
+
+        List<ItemKeyFrame> itemFrames = ItemKeyFrame.FromVanillaAnimation(vanillaAnimation);
+        return new(playerFrames, itemFrames);
+    }
+
+    private static string BuildShapeAnimationCode(AssetLocation location, string vanillaAnimationCode)
+    {
+        string shapePath = GetShapePathWithoutPrefixAndExtension(location.Path);
+        return $"{location.Domain}:shape/{shapePath}/{vanillaAnimationCode}";
+    }
+
+    private static string GetShapePathWithoutPrefixAndExtension(string assetPath)
+    {
+        string path = assetPath.Replace('\\', '/');
+        const string prefix = "shapes/";
+        if (path.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+        {
+            path = path[prefix.Length..];
+        }
+
+        const string extension = ".json";
+        if (path.EndsWith(extension, StringComparison.OrdinalIgnoreCase))
+        {
+            path = path[..^extension.Length];
+        }
+
+        return path;
+    }
+
+    private sealed record LoadedAnimation(string Code, Animation Animation, AnimationSource Source);
 }
 
-internal sealed record AnimationSource(string Domain, string SourceKey);
+internal enum AnimationSourceKind
+{
+    ConfigAnimation,
+    ShapeAnimation
+}
+
+internal sealed record AnimationSource(
+    string Domain,
+    string SourceKey,
+    AnimationSourceKind Kind = AnimationSourceKind.ConfigAnimation,
+    string? AssetPath = null,
+    string? ShapeAnimationCode = null)
+{
+    public string DisplayPath => Kind == AnimationSourceKind.ShapeAnimation && AssetPath != null
+        ? $"{Domain}:{AssetPath}#{ShapeAnimationCode}"
+        : $"{Domain}:{SourceKey}";
+}

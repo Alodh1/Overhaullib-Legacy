@@ -240,12 +240,27 @@ public readonly struct ItemKeyFrame
     public static List<ItemKeyFrame> FromVanillaAnimation(string code, Shape shape)
     {
         AnimationKeyFrame[] vanillaKeyFrames = GetVanillaKeyFrames(code, shape);
-        bool missingFirstFrame = vanillaKeyFrames[0].Frame != 0;
-        int keyFramesCount = !missingFirstFrame ? vanillaKeyFrames.Length : vanillaKeyFrames.Length + 1;
+        return FromVanillaAnimation(vanillaKeyFrames);
+    }
+
+    public static List<ItemKeyFrame> FromVanillaAnimation(Vintagestory.API.Common.Animation animation)
+    {
+        return FromVanillaAnimation(animation.KeyFrames);
+    }
+
+    private static List<ItemKeyFrame> FromVanillaAnimation(AnimationKeyFrame[] vanillaKeyFrames)
+    {
+        if (vanillaKeyFrames == null || vanillaKeyFrames.Length == 0)
+        {
+            return new();
+        }
+
+        vanillaKeyFrames = vanillaKeyFrames.OrderBy(keyFrame => keyFrame.Frame).ToArray();
 
         HashSet<string> elements = new();
         foreach (AnimationKeyFrame keyFrame in vanillaKeyFrames)
         {
+            if (keyFrame.Elements == null) continue;
             foreach ((string element, _) in keyFrame.Elements)
             {
                 elements.Add(element);
@@ -259,15 +274,15 @@ public readonly struct ItemKeyFrame
         }
 
         List<ItemKeyFrame> result = new();
-        if (missingFirstFrame)
+        int lastFrame = vanillaKeyFrames[^1].Frame == 0 ? 1 : vanillaKeyFrames[^1].Frame;
+        if (vanillaKeyFrames[0].Frame != 0)
         {
             result.Add(new ItemKeyFrame(new ItemFrame(frames.ToDictionary(entry => entry.Key, entry => entry.Value[0])), 0, EasingFunctionType.Linear));
         }
 
-        for (int index = missingFirstFrame ? 1 : 0; index < keyFramesCount; index++)
+        for (int index = 0; index < vanillaKeyFrames.Length; index++)
         {
-            int frameIndex = missingFirstFrame ? index - 1 : index;
-            float durationFraction = (float)vanillaKeyFrames[frameIndex].Frame / (vanillaKeyFrames[^1].Frame == 0 ? 1 : vanillaKeyFrames[^1].Frame);
+            float durationFraction = (float)vanillaKeyFrames[index].Frame / lastFrame;
 
             result.Add(new ItemKeyFrame(new ItemFrame(frames.ToDictionary(entry => entry.Key, entry => entry.Value[index])), durationFraction, EasingFunctionType.Linear));
         }
@@ -289,9 +304,11 @@ public readonly struct ItemKeyFrame
         return value.KeyFrames;
     }
 
-    private static List<AnimationElement> GetElementFrames(string elementName, AnimationKeyFrame[] vanillaFrames)
+    internal static List<AnimationElement> GetElementFrames(string elementName, AnimationKeyFrame[] vanillaFrames)
     {
-        IEnumerable<AnimationKeyFrameElement> vanillaElementFrames = vanillaFrames.Where(element => element.Elements.ContainsKey(elementName)).Select(element => element.Elements[elementName]);
+        IEnumerable<AnimationKeyFrameElement> vanillaElementFrames = vanillaFrames
+            .Where(element => element.Elements != null && element.Elements.ContainsKey(elementName))
+            .Select(element => element.Elements[elementName]);
 
         AnimationElement firstFrame = AnimationElement.FromVanilla(vanillaElementFrames.First());
         AnimationElement lastFrame = AnimationElement.FromVanilla(vanillaElementFrames.Last());
@@ -317,7 +334,7 @@ public readonly struct ItemKeyFrame
                 continue;
             }
 
-            if (vanillaFrames[index].Elements.ContainsKey(elementName))
+            if (vanillaFrames[index].Elements != null && vanillaFrames[index].Elements.ContainsKey(elementName))
             {
                 AnimationElement frame = AnimationElement.FromVanilla(vanillaFrames[index].Elements[elementName]);
                 result.Add(frame);
@@ -332,7 +349,7 @@ public readonly struct ItemKeyFrame
 
                 for (int nextIndex = index + 1; nextIndex < vanillaFrames.Length; nextIndex++)
                 {
-                    if (vanillaFrames[nextIndex].Elements.ContainsKey(elementName))
+                    if (vanillaFrames[nextIndex].Elements != null && vanillaFrames[nextIndex].Elements.ContainsKey(elementName))
                     {
                         nextFrameFrame = vanillaFrames[nextIndex].Frame;
                         nextFrameElement = AnimationElement.FromVanilla(vanillaFrames[nextIndex].Elements[elementName]);
@@ -481,6 +498,25 @@ public readonly struct PLayerKeyFrame
 
     public static readonly PLayerKeyFrame Zero = new(PlayerFrame.Zero, TimeSpan.Zero, EasingFunctionType.Linear);
 
+    private static readonly string[] PlayerElementNames =
+    [
+        "DetachedAnchor",
+        "UpperTorso",
+        "LowerTorso",
+        "Neck",
+        "Head",
+        "UpperFootR",
+        "UpperFootL",
+        "LowerFootR",
+        "LowerFootL",
+        "ItemAnchor",
+        "LowerArmR",
+        "UpperArmR",
+        "ItemAnchorL",
+        "LowerArmL",
+        "UpperArmL"
+    ];
+
     public PlayerFrame Interpolate(PlayerFrame frame, float frameProgress)
     {
         float interpolatedProgress = GetInterpolatedProgress(frameProgress);
@@ -490,6 +526,124 @@ public readonly struct PLayerKeyFrame
     }
 
     public bool Reached(TimeSpan currentDuration) => currentDuration >= Time;
+
+    public static List<PLayerKeyFrame> FromVanillaAnimation(Vintagestory.API.Common.Animation animation, out bool hasPlayerFrames)
+    {
+        hasPlayerFrames = false;
+        if (animation.KeyFrames == null || animation.KeyFrames.Length == 0)
+        {
+            return [Zero];
+        }
+
+        AnimationKeyFrame[] vanillaKeyFrames = animation.KeyFrames.OrderBy(keyFrame => keyFrame.Frame).ToArray();
+        HashSet<string> playerElements = new(StringComparer.OrdinalIgnoreCase);
+        foreach (AnimationKeyFrame keyFrame in vanillaKeyFrames)
+        {
+            if (keyFrame.Elements == null) continue;
+
+            foreach (string elementName in keyFrame.Elements.Keys)
+            {
+                string? canonicalName = PlayerElementNames.FirstOrDefault(name => string.Equals(name, elementName, StringComparison.OrdinalIgnoreCase));
+                if (canonicalName != null)
+                {
+                    playerElements.Add(canonicalName);
+                }
+            }
+        }
+
+        TimeSpan duration = FromVanillaFrameNumber(vanillaKeyFrames[^1].Frame);
+        if (playerElements.Count == 0)
+        {
+            return CreateDurationAnchorFrames(duration);
+        }
+
+        hasPlayerFrames = true;
+        Dictionary<string, List<AnimationElement>> frames = playerElements.ToDictionary(
+            element => element,
+            element => ItemKeyFrame.GetElementFrames(element, vanillaKeyFrames));
+
+        List<PLayerKeyFrame> result = new();
+        if (vanillaKeyFrames[0].Frame != 0)
+        {
+            result.Add(new(BuildPlayerFrame(frames, 0), TimeSpan.Zero, EasingFunctionType.Linear));
+        }
+
+        for (int index = 0; index < vanillaKeyFrames.Length; index++)
+        {
+            result.Add(new(BuildPlayerFrame(frames, index), FromVanillaFrameNumber(vanillaKeyFrames[index].Frame), EasingFunctionType.Linear));
+        }
+
+        return result;
+    }
+
+    private static List<PLayerKeyFrame> CreateDurationAnchorFrames(TimeSpan duration)
+    {
+        if (duration <= TimeSpan.Zero)
+        {
+            return [Zero];
+        }
+
+        return
+        [
+            Zero,
+            new(PlayerFrame.Zero, duration, EasingFunctionType.Linear)
+        ];
+    }
+
+    private static TimeSpan FromVanillaFrameNumber(int frame)
+    {
+        return TimeSpan.FromMilliseconds(Math.Max(0, frame) * 1000.0 / 30.0);
+    }
+
+    private static PlayerFrame BuildPlayerFrame(Dictionary<string, List<AnimationElement>> frames, int index)
+    {
+        bool hasRightHand = frames.ContainsKey("ItemAnchor") || frames.ContainsKey("LowerArmR") || frames.ContainsKey("UpperArmR");
+        RightHandFrame? rightHand = hasRightHand
+            ? new(
+                GetFrameElement(frames, "ItemAnchor", index) ?? AnimationElement.Zero,
+                GetFrameElement(frames, "LowerArmR", index) ?? AnimationElement.Zero,
+                GetFrameElement(frames, "UpperArmR", index) ?? AnimationElement.Zero)
+            : null;
+
+        bool hasLeftHand = frames.ContainsKey("ItemAnchorL") || frames.ContainsKey("LowerArmL") || frames.ContainsKey("UpperArmL");
+        LeftHandFrame? leftHand = hasLeftHand
+            ? new(
+                GetFrameElement(frames, "ItemAnchorL", index) ?? AnimationElement.Zero,
+                GetFrameElement(frames, "LowerArmL", index) ?? AnimationElement.Zero,
+                GetFrameElement(frames, "UpperArmL", index) ?? AnimationElement.Zero)
+            : null;
+
+        bool hasOtherParts = frames.ContainsKey("Neck") || frames.ContainsKey("Head") ||
+            frames.ContainsKey("UpperFootR") || frames.ContainsKey("UpperFootL") ||
+            frames.ContainsKey("LowerFootR") || frames.ContainsKey("LowerFootL");
+        OtherPartsFrame? otherParts = hasOtherParts
+            ? new(
+                GetFrameElement(frames, "Neck", index) ?? AnimationElement.Zero,
+                GetFrameElement(frames, "Head", index) ?? AnimationElement.Zero,
+                GetFrameElement(frames, "UpperFootR", index) ?? AnimationElement.Zero,
+                GetFrameElement(frames, "UpperFootL", index) ?? AnimationElement.Zero,
+                GetFrameElement(frames, "LowerFootR", index) ?? AnimationElement.Zero,
+                GetFrameElement(frames, "LowerFootL", index) ?? AnimationElement.Zero)
+            : null;
+
+        return new(
+            rightHand,
+            leftHand,
+            otherParts,
+            GetFrameElement(frames, "UpperTorso", index),
+            GetFrameElement(frames, "DetachedAnchor", index),
+            lowerTorso: GetFrameElement(frames, "LowerTorso", index));
+    }
+
+    private static AnimationElement? GetFrameElement(Dictionary<string, List<AnimationElement>> frames, string elementName, int index)
+    {
+        if (!frames.TryGetValue(elementName, out List<AnimationElement>? values) || index < 0 || index >= values.Count)
+        {
+            return null;
+        }
+
+        return values[index];
+    }
 
     private float GetInterpolatedProgress(float frameProgress)
     {

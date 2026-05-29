@@ -18,6 +18,8 @@ internal sealed class ImGuiAnimationViewportRenderer : IRenderer
     private float _height;
     private float _yaw;
     private float _zoom = 1f;
+    private float _panX;
+    private float _panY;
     private long _updatedAtMs;
 
     public ImGuiAnimationViewportRenderer(ICoreClientAPI api)
@@ -34,7 +36,7 @@ internal sealed class ImGuiAnimationViewportRenderer : IRenderer
         _visible = visible;
     }
 
-    public void SetViewport(float x, float y, float width, float height, float yaw, float zoom)
+    public void SetViewport(float x, float y, float width, float height, float yaw, float zoom, float panX, float panY)
     {
         _visible = true;
         _x = x;
@@ -43,6 +45,8 @@ internal sealed class ImGuiAnimationViewportRenderer : IRenderer
         _height = height;
         _yaw = yaw;
         _zoom = Math.Clamp(zoom, 0.55f, 1.85f);
+        _panX = panX;
+        _panY = panY;
         _updatedAtMs = _api.World.ElapsedMilliseconds;
     }
 
@@ -61,8 +65,8 @@ internal sealed class ImGuiAnimationViewportRenderer : IRenderer
         float size = (float)Math.Min(bounds.InnerHeight * 0.84, bounds.InnerWidth * 0.58) * _zoom;
         if (size <= 1) return;
 
-        double posX = bounds.renderX + bounds.InnerWidth / 2 - size * 0.30;
-        double posY = bounds.renderY + bounds.InnerHeight / 2 - size * 0.52;
+        double posX = bounds.renderX + bounds.InnerWidth / 2 - size * 0.30 + _panX;
+        double posY = bounds.renderY + bounds.InnerHeight / 2 - size * 0.52 + _panY;
         double posZ = GuiElement.scaled(250);
 
         _api.Render.PushScissor(bounds, false);

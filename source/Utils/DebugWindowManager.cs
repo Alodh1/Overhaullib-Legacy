@@ -32,14 +32,18 @@ public sealed partial class DebugWindowManager
         _api = api;
         _particleEffectsManager = particleEffectsManager;
 #if DEBUG
+        bool standaloneDevToolsLoaded = api.ModLoader.Mods.Any(mod => mod.Info.ModID == "overhauldevtools");
         _editorInputRouter = new EditorInputRouter();
         _devToolsDialog = new DevToolsDialog(api, this, _editorAppState, _editorInputRouter);
         api.ModLoader.GetModSystem<ImGuiModSystem>().Draw += DrawEditor;
         _transformGizmoRenderer = new TransformGizmoRenderer(api, this);
         _imguiAnimationViewportRenderer = new ImGuiAnimationViewportRenderer(api);
         _detachedEditorCamera = new DetachedEditorCamera(api);
-        api.Input.RegisterHotKey("combatOverhaul_editor", "Show dev tools", GlKeys.L, ctrlPressed: true);
-        api.Input.SetHotKeyHandler("combatOverhaul_editor", _ => ToggleDevTools());
+        if (!standaloneDevToolsLoaded)
+        {
+            api.Input.RegisterHotKey("combatOverhaul_editor", "Show dev tools", GlKeys.L, ctrlPressed: true);
+            api.Input.SetHotKeyHandler("combatOverhaul_editor", _ => ToggleDevTools());
+        }
 #endif
         _instance = this;
 
@@ -321,6 +325,11 @@ public sealed partial class DebugWindowManager
             return SourceSaveResult.Fail($"Source not tracked for {animationCode}.");
         }
 
+        if (source.Kind == AnimationSourceKind.ShapeAnimation)
+        {
+            return SourceSaveResult.Fail("This animation was imported from a shape file. Export it as CO JSON before saving it back to source.");
+        }
+
         string? sourceRoot = GetSourceRoot();
         if (sourceRoot == null || !Directory.Exists(sourceRoot))
         {
@@ -436,6 +445,17 @@ public sealed partial class DebugWindowManager
         return Directory.Exists(sourceRoot) ? sourceRoot : null;
     }
 
+    private static string GetAnimationSourceText(string animationCode)
+    {
+        if (!AnimationsManager._instance.AnimationSources.TryGetValue(animationCode, out AnimationSource? source))
+        {
+            return "Source: not tracked";
+        }
+
+        string kind = source.Kind == AnimationSourceKind.ShapeAnimation ? "shape" : "CO config";
+        return $"Source: {kind} / {source.DisplayPath}";
+    }
+
     private static ModelTransform CreateDefaultTransform()
     {
         ModelTransform transform = new()
@@ -505,6 +525,8 @@ public sealed partial class DebugWindowManager
     private DetachedEditorCamera? _detachedEditorCamera;
     private float _imguiViewportYaw;
     private float _imguiViewportZoom = 1f;
+    private float _imguiViewportPanX;
+    private float _imguiViewportPanY;
     private ModelTransform? _activeGizmoTransform;
     private TransformGizmoContext _activeGizmoContext = TransformGizmoContext.Free;
     private BlockPos? _activeGizmoBlockPos;
@@ -597,6 +619,27 @@ public sealed partial class DebugWindowManager
         return true;
     }
 
+    public bool OpenExternalDevTools()
+    {
+        if (CurrentEditorUiMode == EditorUiMode.ProperUi)
+        {
+            OpenProperDevTools();
+            return true;
+        }
+
+        _showAnimationEditor = true;
+        return true;
+    }
+
+    public bool ToggleExternalDevTools() => ToggleDevTools();
+
+    public string GetExternalDevToolsStatus()
+    {
+        string mode = CurrentEditorUiMode == EditorUiMode.ProperUi ? "proper UI" : "ImGui fallback";
+        string state = _showAnimationEditor ? "open" : "closed";
+        return $"CO devtools bridge available ({mode}, {state}).";
+    }
+
     private void OpenProperDevTools()
     {
         CurrentEditorUiMode = EditorUiMode.ProperUi;
@@ -642,7 +685,7 @@ public sealed partial class DebugWindowManager
                 return CallbackGUIStatus.Closed;
             }
 
-            UpdateProperDevTools(deltaSeconds);
+            _detachedEditorCamera?.Update(deltaSeconds, _showAnimationEditor);
             return _devToolsDialog?.IsOpened() == true ? CallbackGUIStatus.GrabMouse : CallbackGUIStatus.Closed;
         }
 
@@ -1032,6 +1075,7 @@ public sealed partial class DebugWindowManager
 
         ImGui.BeginChild("##animation-right-panel", new NVector2(rightWidth, topHeight), true);
         ImGui.SeparatorText("Tools");
+        ImGui.TextWrapped(GetAnimationSourceText(selectedAnimationCode));
         DrawAnimationHistoryControls(selectedAnimationCode);
         if (ImGui.Button("Export to clipboard") && AnimationsManager._instance.Animations.Count > 0)
         {
@@ -1278,7 +1322,15 @@ public sealed partial class DebugWindowManager
         if (hovered)
         {
             NVector2 delta = ImGui.GetIO().MouseDelta;
-            if (ImGui.IsMouseDragging(ImGuiMouseButton.Right))
+            bool pan = ImGui.IsMouseDragging(ImGuiMouseButton.Middle) ||
+                (ImGui.IsMouseDragging(ImGuiMouseButton.Right) &&
+                    (ImGui.IsKeyDown(ImGuiKey.LeftShift) || ImGui.IsKeyDown(ImGuiKey.RightShift)));
+            if (pan)
+            {
+                _imguiViewportPanX = Math.Clamp(_imguiViewportPanX + delta.X, -size.X, size.X);
+                _imguiViewportPanY = Math.Clamp(_imguiViewportPanY + delta.Y, -size.Y, size.Y);
+            }
+            else if (ImGui.IsMouseDragging(ImGuiMouseButton.Right))
             {
                 _imguiViewportYaw += delta.X * 0.01f;
             }
@@ -1297,7 +1349,7 @@ public sealed partial class DebugWindowManager
         drawList.AddRectFilled(min, max, background, 4f);
         drawList.AddRect(min, max, border, 4f);
         drawList.AddText(new NVector2(min.X + 12f, min.Y + 10f), text, $"Preview: {animationCode}");
-        drawList.AddText(new NVector2(min.X + 12f, min.Y + 30f), text, "RMB drag rotates. Mouse wheel zooms.");
+        drawList.AddText(new NVector2(min.X + 12f, min.Y + 30f), text, "RMB rotates. MMB or Shift+RMB pans. Mouse wheel zooms.");
 
         _imguiAnimationViewportRenderer?.SetViewport(
             min.X,
@@ -1305,7 +1357,9 @@ public sealed partial class DebugWindowManager
             Math.Max(1f, max.X - min.X),
             Math.Max(1f, max.Y - min.Y),
             _imguiViewportYaw,
-            _imguiViewportZoom);
+            _imguiViewportZoom,
+            _imguiViewportPanX,
+            _imguiViewportPanY);
     }
 
     private void DrawAnimationValidationPanel(string animationCode, Animation animation)

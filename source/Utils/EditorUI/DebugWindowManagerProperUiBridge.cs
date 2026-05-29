@@ -112,7 +112,7 @@ public sealed partial class DebugWindowManager
             else warnings++;
         }
 
-        return $"Animation: {selected}\nPlayer keyframes: {animation.PlayerKeyFrames.Count}\nItem keyframes: {animation.ItemKeyFrames.Count}\nSounds: {animation.SoundFrames.Count}\nParticles: {animation.ParticlesFrames.Count}\nCallbacks: {animation.CallbackFrames.Count}\n\nCurrent keyframe: {animation._playerFrameIndex}\nFrame progress: {animation._frameProgress:0.000}\nTime: {currentMs:0} / {totalMs:0} ms\nSpeed: {_animationSpeed:0.00}x\n\nValidation: {errors} errors, {warnings} warnings\nUndo: {_animationHistory.UndoCount(selected)}  Redo: {_animationHistory.RedoCount(selected)}";
+        return $"Animation: {selected}\n{GetAnimationSourceText(selected)}\nPlayer keyframes: {animation.PlayerKeyFrames.Count}\nItem keyframes: {animation.ItemKeyFrames.Count}\nSounds: {animation.SoundFrames.Count}\nParticles: {animation.ParticlesFrames.Count}\nCallbacks: {animation.CallbackFrames.Count}\n\nCurrent keyframe: {animation._playerFrameIndex}\nFrame progress: {animation._frameProgress:0.000}\nTime: {currentMs:0} / {totalMs:0} ms\nSpeed: {_animationSpeed:0.00}x\n\nValidation: {errors} errors, {warnings} warnings\nUndo: {_animationHistory.UndoCount(selected)}  Redo: {_animationHistory.RedoCount(selected)}";
     }
 
     internal string GetProperViewportText(EditorAppState state)
