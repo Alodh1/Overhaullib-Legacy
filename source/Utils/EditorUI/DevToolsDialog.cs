@@ -53,7 +53,8 @@ internal sealed class DevToolsDialog : GuiDialog
             .WithChild(rootBounds);
 
         SingleComposer = capi.Gui.CreateCompo(ComposerKey, dialogBounds);
-        SingleComposer.AddShadedDialogBG(ElementStdBounds.DialogBackground().WithFixedPadding(GuiStyle.ElementToDialogPadding), true);
+        ElementBounds backgroundBounds = rootBounds.FlatCopy().FixedGrow(GuiStyle.ElementToDialogPadding);
+        SingleComposer.AddShadedDialogBG(backgroundBounds, true);
         SingleComposer.AddDialogTitleBar("Dev tools", () => TryClose());
 
         ComposeToolbar();
