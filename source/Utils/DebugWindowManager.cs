@@ -504,6 +504,12 @@ public sealed partial class DebugWindowManager
     private SourceSaveRequest? _pendingSourceSaveRequest;
     private Action<string>? _pendingSourceSaveStatus;
     private bool _openSourceSavePopup;
+    private string _editorPlaybackAnimationCode = "";
+    private bool _editorPlaybackPlaying;
+    private bool _editorPlaybackPaused = true;
+    private int _editorPlaybackLoopStartKeyframe;
+    private int _editorPlaybackLoopEndKeyframe;
+    private double _editorPlaybackTimeMs;
     internal TransformGizmoMode GizmoMode { get; private set; } = TransformGizmoMode.Move;
     internal TransformGizmoSpace GizmoSpace { get; private set; } = TransformGizmoSpace.Local;
     internal bool IncludeGizmoInIncrement { get; private set; } = true;
@@ -559,7 +565,7 @@ public sealed partial class DebugWindowManager
             ImGui.BeginTabBar($"##main_tab_bar");
             if (ImGui.BeginTabItem($"Animations"))
             {
-                AnimationsTab();
+                AnimationsTab(deltaSeconds);
                 ImGui.EndTabItem();
             }
             if (ImGui.BeginTabItem($"Transforms"))
@@ -795,7 +801,7 @@ public sealed partial class DebugWindowManager
         ImGui.Text($"FOV: {ClientSettings.FieldOfView * fovMultiplier}");
     }
 
-    private void AnimationsTab()
+    private void AnimationsTab(float deltaSeconds)
     {
         string[] codes = AnimationsManager._instance.Animations.Keys.ToArray();
 
@@ -880,23 +886,10 @@ public sealed partial class DebugWindowManager
         {
             ImGui.SeparatorText("Animation");
             string selectedAnimationCode = codes[_selectedAnimationIndex];
+            Animation selectedAnimation = AnimationsManager._instance.Animations[selectedAnimationCode];
             DrawAnimationHistoryControls(selectedAnimationCode);
 
-            if (ImGui.Button("Play") && AnimationsManager._instance.Animations.Count > 0)
-            {
-                AnimationRequest request = new(
-                    AnimationsManager._instance.Animations[selectedAnimationCode],
-                    _animationSpeed,
-                    1,
-                    "main",
-                    TimeSpan.FromSeconds(0.6),
-                    TimeSpan.FromSeconds(0.6),
-                    true
-                    );
-
-                _behavior?.Play(request);
-            }
-            ImGui.SameLine();
+            DrawAnimationPlaybackControls(selectedAnimationCode, selectedAnimation, deltaSeconds);
 
             if (ImGui.Button("Export to clipboard") && AnimationsManager._instance.Animations.Count > 0)
             {
@@ -915,7 +908,7 @@ public sealed partial class DebugWindowManager
 
             ImGui.SetNextItemWidth(200);
             ImGui.SliderFloat("Animation speed", ref _animationSpeed, 0.1f, 2);
-            Animation selectedAnimation = AnimationsManager._instance.Animations[selectedAnimationCode];
+            selectedAnimation = AnimationsManager._instance.Animations[selectedAnimationCode];
             _animationHistoryExplicitEditThisFrame = false;
             Animation beforeEdit = selectedAnimation.Clone();
             string beforeEditSerialized = AnimationEditorHistory.Serialize(selectedAnimation);
@@ -932,6 +925,208 @@ public sealed partial class DebugWindowManager
                 SetEditorFrameOverride(null);
             }
         }
+    }
+
+    private void DrawAnimationPlaybackControls(string animationCode, Animation animation, float deltaSeconds)
+    {
+        if (animation.PlayerKeyFrames.Count == 0) return;
+
+        EnsureEditorPlaybackState(animationCode, animation);
+
+        if (ImGui.Button("Play##editor-playback"))
+        {
+            StartEditorPlayback(animationCode, animation);
+        }
+
+        ImGui.SameLine();
+        if (!_editorPlaybackPlaying) ImGui.BeginDisabled();
+        if (ImGui.Button((_editorPlaybackPaused ? "Resume" : "Pause") + "##editor-playback"))
+        {
+            _editorPlaybackPaused = !_editorPlaybackPaused;
+        }
+        if (!_editorPlaybackPlaying) ImGui.EndDisabled();
+
+        ImGui.SameLine();
+        if (ImGui.Button("Step keyframe <##editor-playback"))
+        {
+            StepEditorKeyframe(animation, -1);
+        }
+
+        ImGui.SameLine();
+        if (ImGui.Button("Step keyframe >##editor-playback"))
+        {
+            StepEditorKeyframe(animation, 1);
+        }
+
+        ImGui.SameLine();
+        if (ImGui.Button("Step frame <##editor-playback"))
+        {
+            StepEditorFrame(animation, -1);
+        }
+
+        ImGui.SameLine();
+        if (ImGui.Button("Step frame >##editor-playback"))
+        {
+            StepEditorFrame(animation, 1);
+        }
+
+        int maxKeyframe = animation.PlayerKeyFrames.Count - 1;
+        ImGui.SetNextItemWidth(180);
+        if (ImGui.SliderInt("Loop start keyframe##editor-playback", ref _editorPlaybackLoopStartKeyframe, 0, maxKeyframe))
+        {
+            ClampEditorPlaybackRange(animation);
+        }
+
+        ImGui.SameLine();
+        ImGui.SetNextItemWidth(180);
+        if (ImGui.SliderInt("Loop end keyframe##editor-playback", ref _editorPlaybackLoopEndKeyframe, 0, maxKeyframe))
+        {
+            ClampEditorPlaybackRange(animation);
+        }
+
+        if (_editorPlaybackPlaying && !_editorPlaybackPaused && _editorPlaybackAnimationCode == animationCode)
+        {
+            AdvanceEditorPlayback(animation, deltaSeconds);
+        }
+    }
+
+    private void EnsureEditorPlaybackState(string animationCode, Animation animation)
+    {
+        if (_editorPlaybackAnimationCode != animationCode)
+        {
+            _editorPlaybackAnimationCode = animationCode;
+            _editorPlaybackLoopStartKeyframe = 0;
+            _editorPlaybackLoopEndKeyframe = Math.Max(0, animation.PlayerKeyFrames.Count - 1);
+            _editorPlaybackPlaying = false;
+            _editorPlaybackPaused = true;
+            _editorPlaybackTimeMs = GetEditorFrameTimeMs(animation);
+            return;
+        }
+
+        ClampEditorPlaybackRange(animation);
+        _editorPlaybackTimeMs = Math.Clamp(_editorPlaybackTimeMs, GetEditorLoopStartMs(animation), GetEditorLoopEndMs(animation));
+    }
+
+    private void StartEditorPlayback(string animationCode, Animation animation)
+    {
+        _editorPlaybackAnimationCode = animationCode;
+        ClampEditorPlaybackRange(animation);
+
+        double startMs = GetEditorLoopStartMs(animation);
+        double endMs = GetEditorLoopEndMs(animation);
+        _editorPlaybackTimeMs = GetEditorFrameTimeMs(animation);
+        if (_editorPlaybackTimeMs < startMs || _editorPlaybackTimeMs >= endMs)
+        {
+            _editorPlaybackTimeMs = startMs;
+            ApplyEditorPlaybackTime(animation, _editorPlaybackTimeMs);
+        }
+
+        _editorPlaybackPlaying = true;
+        _editorPlaybackPaused = false;
+    }
+
+    private void StepEditorKeyframe(Animation animation, int direction)
+    {
+        if (animation.PlayerKeyFrames.Count == 0) return;
+
+        _editorPlaybackPlaying = false;
+        _editorPlaybackPaused = true;
+        animation._playerFrameIndex = Math.Clamp(animation._playerFrameIndex + direction, 0, animation.PlayerKeyFrames.Count - 1);
+        animation._frameProgress = 0;
+        _editorPlaybackTimeMs = GetEditorFrameTimeMs(animation);
+    }
+
+    private void StepEditorFrame(Animation animation, int direction)
+    {
+        if (animation.PlayerKeyFrames.Count == 0) return;
+
+        _editorPlaybackPlaying = false;
+        _editorPlaybackPaused = true;
+        double startMs = GetEditorLoopStartMs(animation);
+        double endMs = GetEditorLoopEndMs(animation);
+        _editorPlaybackTimeMs = Math.Clamp(GetEditorFrameTimeMs(animation) + direction * 50.0, startMs, endMs);
+        ApplyEditorPlaybackTime(animation, _editorPlaybackTimeMs);
+    }
+
+    private void AdvanceEditorPlayback(Animation animation, float deltaSeconds)
+    {
+        double startMs = GetEditorLoopStartMs(animation);
+        double endMs = GetEditorLoopEndMs(animation);
+        if (endMs <= startMs)
+        {
+            _editorPlaybackTimeMs = startMs;
+            ApplyEditorPlaybackTime(animation, _editorPlaybackTimeMs);
+            return;
+        }
+
+        _editorPlaybackTimeMs += Math.Max(0, deltaSeconds) * 1000.0 * Math.Max(0.001f, _animationSpeed);
+        if (_editorPlaybackTimeMs > endMs)
+        {
+            double duration = endMs - startMs;
+            _editorPlaybackTimeMs = startMs + ((_editorPlaybackTimeMs - startMs) % duration);
+        }
+
+        ApplyEditorPlaybackTime(animation, _editorPlaybackTimeMs);
+    }
+
+    private void ClampEditorPlaybackRange(Animation animation)
+    {
+        int maxKeyframe = Math.Max(0, animation.PlayerKeyFrames.Count - 1);
+        _editorPlaybackLoopStartKeyframe = Math.Clamp(_editorPlaybackLoopStartKeyframe, 0, maxKeyframe);
+        _editorPlaybackLoopEndKeyframe = Math.Clamp(_editorPlaybackLoopEndKeyframe, 0, maxKeyframe);
+        if (_editorPlaybackLoopStartKeyframe > _editorPlaybackLoopEndKeyframe)
+        {
+            _editorPlaybackLoopEndKeyframe = _editorPlaybackLoopStartKeyframe;
+        }
+    }
+
+    private double GetEditorLoopStartMs(Animation animation)
+    {
+        if (animation.PlayerKeyFrames.Count == 0) return 0;
+        return animation.PlayerKeyFrames[Math.Clamp(_editorPlaybackLoopStartKeyframe, 0, animation.PlayerKeyFrames.Count - 1)].Time.TotalMilliseconds;
+    }
+
+    private double GetEditorLoopEndMs(Animation animation)
+    {
+        if (animation.PlayerKeyFrames.Count == 0) return 0;
+        return animation.PlayerKeyFrames[Math.Clamp(_editorPlaybackLoopEndKeyframe, 0, animation.PlayerKeyFrames.Count - 1)].Time.TotalMilliseconds;
+    }
+
+    private static double GetEditorFrameTimeMs(Animation animation)
+    {
+        if (animation.PlayerKeyFrames.Count == 0) return 0;
+
+        int index = Math.Clamp(animation._playerFrameIndex, 0, animation.PlayerKeyFrames.Count - 1);
+        double endMs = animation.PlayerKeyFrames[index].Time.TotalMilliseconds;
+        double startMs = index == 0 ? 0 : animation.PlayerKeyFrames[index - 1].Time.TotalMilliseconds;
+        double segmentMs = Math.Max(0, endMs - startMs);
+        return startMs + segmentMs * Math.Clamp(animation._frameProgress, 0, 1);
+    }
+
+    private static void ApplyEditorPlaybackTime(Animation animation, double timeMs)
+    {
+        if (animation.PlayerKeyFrames.Count == 0) return;
+
+        int lastIndex = animation.PlayerKeyFrames.Count - 1;
+        if (timeMs >= animation.PlayerKeyFrames[lastIndex].Time.TotalMilliseconds)
+        {
+            animation._playerFrameIndex = lastIndex;
+            animation._frameProgress = 1;
+            return;
+        }
+
+        int targetIndex = 0;
+        while (targetIndex < lastIndex && animation.PlayerKeyFrames[targetIndex].Time.TotalMilliseconds < timeMs)
+        {
+            targetIndex++;
+        }
+
+        double endMs = animation.PlayerKeyFrames[targetIndex].Time.TotalMilliseconds;
+        double startMs = targetIndex == 0 ? 0 : animation.PlayerKeyFrames[targetIndex - 1].Time.TotalMilliseconds;
+        double durationMs = endMs - startMs;
+
+        animation._playerFrameIndex = targetIndex;
+        animation._frameProgress = durationMs <= 0.0001 ? 1 : (float)Math.Clamp((timeMs - startMs) / durationMs, 0, 1);
     }
 
     private void DrawAnimationHistoryControls(string animationCode)
