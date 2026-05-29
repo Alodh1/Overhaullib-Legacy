@@ -1,5 +1,7 @@
 #if DEBUG
+using Vintagestory.API.Config;
 using Vintagestory.API.Client;
+using Vintagestory.API.MathTools;
 
 namespace CombatOverhaul.Animations.EditorUI;
 
@@ -9,6 +11,11 @@ internal sealed class DevToolsDialog : GuiDialog
     private readonly DebugWindowManager _manager;
     private readonly EditorAppState _state;
     private readonly EditorInputRouter _inputRouter;
+    private readonly Matrixf _viewportLightMatrix = new();
+    private readonly Vec4f _viewportLightPosition = new(1f, -1f, 0f, 0f);
+    private ElementBounds? _viewportSceneBounds;
+    private double _lastWindowWidth;
+    private double _lastWindowHeight;
 
     public DevToolsDialog(ICoreClientAPI capi, DebugWindowManager manager, EditorAppState state, EditorInputRouter inputRouter) : base(capi)
     {
@@ -36,6 +43,17 @@ internal sealed class DevToolsDialog : GuiDialog
         _manager.NotifyProperDevToolsClosed();
     }
 
+    public override void OnRenderGUI(float deltaTime)
+    {
+        if (WindowSizeChanged())
+        {
+            ComposeDialog();
+        }
+
+        base.OnRenderGUI(deltaTime);
+        RenderAnimationViewport(deltaTime);
+    }
+
     internal void RecomposeIfOpen()
     {
         if (IsOpened())
@@ -47,14 +65,19 @@ internal sealed class DevToolsDialog : GuiDialog
     private void ComposeDialog()
     {
         ClearComposers();
+        _viewportSceneBounds = null;
 
-        ElementBounds rootBounds = ElementBounds.Fixed(0, 0, EditorTheme.WindowWidth, EditorTheme.WindowHeight);
-        ElementBounds dialogBounds = ElementStdBounds.AutosizedMainDialog
-            .WithAlignment(EnumDialogArea.CenterMiddle)
+        double windowWidth = WindowWidth;
+        double windowHeight = WindowHeight;
+        _lastWindowWidth = windowWidth;
+        _lastWindowHeight = windowHeight;
+
+        ElementBounds rootBounds = ElementBounds.Fixed(0, 0, windowWidth, windowHeight);
+        ElementBounds dialogBounds = ElementBounds.Fixed(EnumDialogArea.LeftTop, 0, 0, windowWidth, windowHeight)
             .WithChild(rootBounds);
 
         SingleComposer = capi.Gui.CreateCompo(ComposerKey, dialogBounds);
-        ElementBounds backgroundBounds = rootBounds.FlatCopy().FixedGrow(GuiStyle.ElementToDialogPadding);
+        ElementBounds backgroundBounds = rootBounds.FlatCopy();
         SingleComposer.AddShadedDialogBG(backgroundBounds, true);
         SingleComposer.AddDialogTitleBar("Dev tools", () => TryClose());
 
@@ -71,6 +94,7 @@ internal sealed class DevToolsDialog : GuiDialog
         double y = 34;
         double buttonWidth = 118;
         double buttonHeight = 28;
+        double windowWidth = WindowWidth;
 
         AddTabButton("Animations", DevToolsTab.Animations, x, y, buttonWidth, buttonHeight); x += buttonWidth + EditorTheme.Gap;
         AddTabButton("Transforms", DevToolsTab.Transforms, x, y, buttonWidth, buttonHeight); x += buttonWidth + EditorTheme.Gap;
@@ -79,26 +103,31 @@ internal sealed class DevToolsDialog : GuiDialog
         AddTabButton("Debug", DevToolsTab.Debug, x, y, buttonWidth, buttonHeight); x += buttonWidth + EditorTheme.Gap;
         AddTabButton("Generic", DevToolsTab.GenericDisplay, x, y, buttonWidth, buttonHeight);
 
-        ElementBounds modeTextBounds = ElementBounds.Fixed(EditorTheme.WindowWidth - 342, y + 5, 150, 24);
+        ElementBounds modeTextBounds = ElementBounds.Fixed(windowWidth - 342, y + 5, 150, 24);
         SingleComposer.AddDynamicText("UI mode: Proper UI", EditorTheme.BodyFont, modeTextBounds, "editor-ui-mode-label");
-        ElementBounds fallbackButtonBounds = ElementBounds.Fixed(EditorTheme.WindowWidth - 184, y, 158, buttonHeight);
+        ElementBounds fallbackButtonBounds = ElementBounds.Fixed(windowWidth - 184, y, 158, buttonHeight);
         SingleComposer.AddButton("Use ImGui", SwitchToImGui, fallbackButtonBounds, EditorTheme.ButtonFont, EnumButtonStyle.Normal, "switch-to-imgui");
     }
 
     private void ComposePanels()
     {
         double top = 34 + EditorTheme.ToolbarHeight + EditorTheme.Gap;
-        double bottomTop = EditorTheme.WindowHeight - EditorTheme.FooterHeight - EditorTheme.BottomPanelHeight - EditorTheme.Padding;
+        double windowWidth = WindowWidth;
+        double windowHeight = WindowHeight;
+        double bottomPanelHeight = Math.Min(EditorTheme.BottomPanelHeight, Math.Max(120, windowHeight * 0.22));
+        double bottomTop = windowHeight - EditorTheme.FooterHeight - bottomPanelHeight - EditorTheme.Padding;
         double mainHeight = bottomTop - top - EditorTheme.Gap;
         double left = EditorTheme.Padding;
-        double centerLeft = left + EditorTheme.LeftPanelWidth + EditorTheme.Gap;
-        double rightLeft = EditorTheme.WindowWidth - EditorTheme.Padding - EditorTheme.RightPanelWidth;
+        double leftPanelWidth = Math.Min(EditorTheme.LeftPanelWidth, Math.Max(210, windowWidth * 0.18));
+        double rightPanelWidth = Math.Min(EditorTheme.RightPanelWidth, Math.Max(240, windowWidth * 0.20));
+        double centerLeft = left + leftPanelWidth + EditorTheme.Gap;
+        double rightLeft = windowWidth - EditorTheme.Padding - rightPanelWidth;
         double centerWidth = rightLeft - centerLeft - EditorTheme.Gap;
 
-        ElementBounds browser = ElementBounds.Fixed(left, top, EditorTheme.LeftPanelWidth, mainHeight);
+        ElementBounds browser = ElementBounds.Fixed(left, top, leftPanelWidth, mainHeight);
         ElementBounds viewport = ElementBounds.Fixed(centerLeft, top, centerWidth, mainHeight);
-        ElementBounds properties = ElementBounds.Fixed(rightLeft, top, EditorTheme.RightPanelWidth, mainHeight);
-        ElementBounds timeline = ElementBounds.Fixed(left, bottomTop, EditorTheme.WindowWidth - EditorTheme.Padding * 2, EditorTheme.BottomPanelHeight);
+        ElementBounds properties = ElementBounds.Fixed(rightLeft, top, rightPanelWidth, mainHeight);
+        ElementBounds timeline = ElementBounds.Fixed(left, bottomTop, windowWidth - EditorTheme.Padding * 2, bottomPanelHeight);
 
         if (_state.SelectedTab == DevToolsTab.Animations)
         {
@@ -140,10 +169,13 @@ internal sealed class DevToolsDialog : GuiDialog
     private void ComposeViewportPanel(ElementBounds bounds)
     {
         AddPanelFrame(bounds, "Viewport");
-        SingleComposer.AddDynamicText(_manager.GetProperViewportText(_state), EditorTheme.BodyFont, TextBounds(bounds, 38, 88), "viewport-summary");
+        double controlsHeight = 150;
+        double sceneHeight = Math.Max(120, bounds.fixedHeight - controlsHeight - 54);
+        _viewportSceneBounds = ElementBounds.Fixed(bounds.fixedX + 10, bounds.fixedY + 38, bounds.fixedWidth - 20, sceneHeight);
+        SingleComposer.AddInset(_viewportSceneBounds, 1);
 
         double x = bounds.fixedX + 10;
-        double y = bounds.fixedY + 138;
+        double y = _viewportSceneBounds.fixedY + _viewportSceneBounds.fixedHeight + 10;
         double width = 78;
         double height = 24;
         SingleComposer.AddButton("Play", () => Run(state => _manager.ProperPlay(state)), ElementBounds.Fixed(x, y, width, height), EditorTheme.ButtonFont, EnumButtonStyle.Normal, "playback-play"); x += width + 6;
@@ -222,11 +254,53 @@ internal sealed class DevToolsDialog : GuiDialog
 
     private void ComposeFooter()
     {
-        double y = EditorTheme.WindowHeight - EditorTheme.FooterHeight;
-        ElementBounds footerBounds = ElementBounds.Fixed(EditorTheme.Padding, y, EditorTheme.WindowWidth - EditorTheme.Padding * 2, EditorTheme.FooterHeight - 4);
+        double y = WindowHeight - EditorTheme.FooterHeight;
+        ElementBounds footerBounds = ElementBounds.Fixed(EditorTheme.Padding, y, WindowWidth - EditorTheme.Padding * 2, EditorTheme.FooterHeight - 4);
         SingleComposer.AddInset(footerBounds, 1);
         SingleComposer.AddDynamicText(_state.StatusText, EditorTheme.MutedFont, footerBounds.FlatCopy().FixedGrow(-8, -2), "status-footer");
     }
+
+    private void RenderAnimationViewport(float deltaTime)
+    {
+        if (_state.SelectedTab != DevToolsTab.Animations || _viewportSceneBounds == null) return;
+        if (capi.World?.Player?.Entity == null) return;
+        if (_viewportSceneBounds.InnerWidth <= 32 || _viewportSceneBounds.InnerHeight <= 32) return;
+
+        float size = (float)Math.Min(_viewportSceneBounds.InnerHeight * 0.82, _viewportSceneBounds.InnerWidth * 0.58);
+        if (size <= 1) return;
+
+        double posX = _viewportSceneBounds.renderX + _viewportSceneBounds.InnerWidth / 2 - size * 0.30;
+        double posY = _viewportSceneBounds.renderY + _viewportSceneBounds.InnerHeight / 2 - size * 0.52;
+        double posZ = GuiElement.scaled(250);
+
+        capi.Render.GlPushMatrix();
+        if (focused)
+        {
+            capi.Render.GlTranslate(0f, 0f, 150f);
+        }
+
+        capi.Render.GlRotate(-12f, 1f, 0f, 0f);
+        _viewportLightMatrix.Identity();
+        _viewportLightMatrix.RotateXDeg(-12f);
+        Vec4f light = _viewportLightMatrix.TransformVector(_viewportLightPosition);
+        capi.Render.CurrentActiveShader?.Uniform("lightPosition", light.X, light.Y, light.Z);
+
+        capi.Render.PushScissor(_viewportSceneBounds, false);
+        capi.Render.RenderEntityToGui(deltaTime, capi.World.Player.Entity, posX, posY, posZ, 0, size, ColorUtil.WhiteArgb);
+        capi.Render.PopScissor();
+
+        capi.Render.CurrentActiveShader?.Uniform("lightPosition", 0.7071068f, -0.7071068f, 0f);
+        capi.Render.GlPopMatrix();
+    }
+
+    private bool WindowSizeChanged()
+    {
+        return Math.Abs(WindowWidth - _lastWindowWidth) > 0.5 || Math.Abs(WindowHeight - _lastWindowHeight) > 0.5;
+    }
+
+    private double WindowWidth => Math.Max(960, capi.Render.FrameWidth / RuntimeEnv.GUIScale);
+
+    private double WindowHeight => Math.Max(540, capi.Render.FrameHeight / RuntimeEnv.GUIScale);
 
     private void AddTabButton(string label, DevToolsTab tab, double x, double y, double width, double height)
     {
