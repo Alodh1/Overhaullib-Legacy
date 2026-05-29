@@ -513,8 +513,9 @@ public sealed partial class DebugWindowManager
     private int _editorPlaybackLoopEndKeyframe;
     private double _editorPlaybackTimeMs;
     private string _timelineRetimingAnimationCode = "";
-    private int _timelineRetimingPlayerKeyframeIndex = -1;
-    private bool _timelineRetimingPlayerKeyframeActive;
+    private TimelineRetimingKind _timelineRetimingKind = TimelineRetimingKind.None;
+    private TimelineEventTrack _timelineRetimingEventTrack = TimelineEventTrack.Sound;
+    private int _timelineRetimingIndex = -1;
     private static readonly MethodInfo? ProcessPlayerKeyFramesMethod = typeof(Animation).GetMethod("ProcessPlayerKeyFrames", BindingFlags.NonPublic | BindingFlags.Instance, null, Type.EmptyTypes, null);
     internal TransformGizmoMode GizmoMode { get; private set; } = TransformGizmoMode.Move;
     internal TransformGizmoSpace GizmoSpace { get; private set; } = TransformGizmoSpace.Local;
@@ -939,9 +940,10 @@ public sealed partial class DebugWindowManager
         if (animation.PlayerKeyFrames.Count == 0) return;
 
         ImGui.SeparatorText("Timeline");
-        ImGui.TextDisabled("Click timeline to scrub. Click markers to select frames; drag player markers to retime.");
+        ImGui.TextDisabled("Click timeline to scrub. Click markers to select frames; drag markers to retime.");
 
         double durationMs = GetEditorAnimationDurationMs(animation);
+        double playerDurationMs = GetEditorPlayerDurationMs(animation);
         float scrubMs = (float)Math.Clamp(GetEditorFrameTimeMs(animation), 0, durationMs);
         ImGui.SetNextItemWidth(320);
         if (ImGui.SliderFloat($"Time ms##editor-timeline-{animationCode}", ref scrubMs, 0, (float)durationMs, "%.0f"))
@@ -978,9 +980,9 @@ public sealed partial class DebugWindowManager
 
         TimelineMarker[] playerMarkers = BuildPlayerTimelineMarkers(animation);
         TimelineMarker[] itemMarkers = BuildFractionTimelineMarkers(animation.ItemKeyFrames.Count, index => animation.ItemAnimationStart.TotalMilliseconds + (animation.ItemAnimationEnd - animation.ItemAnimationStart).TotalMilliseconds * animation.ItemKeyFrames[index].DurationFraction, "I", TimelineItemColor(), animation._itemFrameIndex);
-        TimelineMarker[] soundMarkers = BuildFractionTimelineMarkers(animation.SoundFrames.Count, index => durationMs * animation.SoundFrames[index].DurationFraction, "S", TimelineSoundColor(), animation._soundsFrameIndex);
-        TimelineMarker[] particleMarkers = BuildFractionTimelineMarkers(animation.ParticlesFrames.Count, index => durationMs * animation.ParticlesFrames[index].DurationFraction, "P", TimelineParticleColor(), animation._particlesFrameIndex);
-        TimelineMarker[] callbackMarkers = BuildFractionTimelineMarkers(animation.CallbackFrames.Count, index => durationMs * animation.CallbackFrames[index].DurationFraction, "C", TimelineCallbackColor(), animation._callbackFrameIndex);
+        TimelineMarker[] soundMarkers = BuildFractionTimelineMarkers(animation.SoundFrames.Count, index => playerDurationMs * animation.SoundFrames[index].DurationFraction, "S", TimelineSoundColor(), animation._soundsFrameIndex);
+        TimelineMarker[] particleMarkers = BuildFractionTimelineMarkers(animation.ParticlesFrames.Count, index => playerDurationMs * animation.ParticlesFrames[index].DurationFraction, "P", TimelineParticleColor(), animation._particlesFrameIndex);
+        TimelineMarker[] callbackMarkers = BuildFractionTimelineMarkers(animation.CallbackFrames.Count, index => playerDurationMs * animation.CallbackFrames[index].DurationFraction, "C", TimelineCallbackColor(), animation._callbackFrameIndex);
 
         DrawTimelineTrack(drawList, "Player", 0, playerMarkers, canvasMin.X + 8, trackStart, trackEnd, RowY(0), text, line, durationMs);
         DrawTimelineTrack(drawList, "Item", 1, itemMarkers, canvasMin.X + 8, trackStart, trackEnd, RowY(1), text, line, durationMs);
@@ -1004,23 +1006,27 @@ public sealed partial class DebugWindowManager
             if (TryFindTimelineMarker(playerMarkers, mouse, trackStart, trackWidth, RowY(0), durationMs, out int markerIndex))
             {
                 SelectEditorTimelinePlayerKeyframe(animation, markerIndex);
-                BeginTimelinePlayerRetiming(animationCode, animation, markerIndex);
+                BeginTimelineRetiming(animationCode, animation, TimelineRetimingKind.Player, markerIndex);
             }
             else if (TryFindTimelineMarker(itemMarkers, mouse, trackStart, trackWidth, RowY(1), durationMs, out markerIndex))
             {
                 SelectEditorTimelineItemFrame(animation, markerIndex, itemMarkers[markerIndex].TimeMs);
+                BeginTimelineRetiming(animationCode, animation, TimelineRetimingKind.Item, markerIndex);
             }
             else if (TryFindTimelineMarker(soundMarkers, mouse, trackStart, trackWidth, RowY(2), durationMs, out markerIndex))
             {
                 SelectEditorTimelineEventFrame(animation, TimelineEventTrack.Sound, markerIndex, soundMarkers[markerIndex].TimeMs);
+                BeginTimelineRetiming(animationCode, animation, TimelineRetimingKind.Event, markerIndex, TimelineEventTrack.Sound);
             }
             else if (TryFindTimelineMarker(particleMarkers, mouse, trackStart, trackWidth, RowY(3), durationMs, out markerIndex))
             {
                 SelectEditorTimelineEventFrame(animation, TimelineEventTrack.Particle, markerIndex, particleMarkers[markerIndex].TimeMs);
+                BeginTimelineRetiming(animationCode, animation, TimelineRetimingKind.Event, markerIndex, TimelineEventTrack.Particle);
             }
             else if (TryFindTimelineMarker(callbackMarkers, mouse, trackStart, trackWidth, RowY(4), durationMs, out markerIndex))
             {
                 SelectEditorTimelineEventFrame(animation, TimelineEventTrack.Callback, markerIndex, callbackMarkers[markerIndex].TimeMs);
+                BeginTimelineRetiming(animationCode, animation, TimelineRetimingKind.Event, markerIndex, TimelineEventTrack.Callback);
             }
             else
             {
@@ -1028,16 +1034,16 @@ public sealed partial class DebugWindowManager
             }
         }
 
-        if (_timelineRetimingPlayerKeyframeActive && _timelineRetimingAnimationCode == animationCode)
+        if (_timelineRetimingKind != TimelineRetimingKind.None && _timelineRetimingAnimationCode == animationCode)
         {
             NVector2 mouse = ImGui.GetIO().MousePos;
             if (ImGui.IsMouseDown(ImGuiMouseButton.Left))
             {
-                RetimingTimelinePlayerKeyframe(animation, _timelineRetimingPlayerKeyframeIndex, XToTime(mouse.X));
+                RetimingTimelineMarker(animation, XToTime(mouse.X));
             }
             else
             {
-                EndTimelinePlayerRetiming(animationCode, animation);
+                EndTimelineRetiming(animationCode, animation);
             }
         }
     }
@@ -1311,24 +1317,53 @@ public sealed partial class DebugWindowManager
         return markerIndex >= 0;
     }
 
-    private void BeginTimelinePlayerRetiming(string animationCode, Animation animation, int keyframeIndex)
+    private void BeginTimelineRetiming(string animationCode, Animation animation, TimelineRetimingKind kind, int index, TimelineEventTrack eventTrack = TimelineEventTrack.Sound)
     {
-        if (_timelineRetimingPlayerKeyframeActive && _timelineRetimingAnimationCode == animationCode && _timelineRetimingPlayerKeyframeIndex == keyframeIndex) return;
+        if (_timelineRetimingKind == kind && _timelineRetimingAnimationCode == animationCode && _timelineRetimingIndex == index && _timelineRetimingEventTrack == eventTrack) return;
 
         _timelineRetimingAnimationCode = animationCode;
-        _timelineRetimingPlayerKeyframeIndex = keyframeIndex;
-        _timelineRetimingPlayerKeyframeActive = true;
-        _animationHistory.BeginEdit(animationCode, animation, $"Retiming player keyframe {keyframeIndex}");
+        _timelineRetimingKind = kind;
+        _timelineRetimingEventTrack = eventTrack;
+        _timelineRetimingIndex = index;
+        _animationHistory.BeginEdit(animationCode, animation, GetTimelineRetimingLabel(kind, eventTrack, index));
     }
 
-    private void EndTimelinePlayerRetiming(string animationCode, Animation animation)
+    private void EndTimelineRetiming(string animationCode, Animation animation)
     {
-        if (!_timelineRetimingPlayerKeyframeActive || _timelineRetimingAnimationCode != animationCode) return;
+        if (_timelineRetimingKind == TimelineRetimingKind.None || _timelineRetimingAnimationCode != animationCode) return;
 
         _animationHistory.CommitEdit(animationCode, animation);
         _timelineRetimingAnimationCode = "";
-        _timelineRetimingPlayerKeyframeIndex = -1;
-        _timelineRetimingPlayerKeyframeActive = false;
+        _timelineRetimingKind = TimelineRetimingKind.None;
+        _timelineRetimingEventTrack = TimelineEventTrack.Sound;
+        _timelineRetimingIndex = -1;
+    }
+
+    private static string GetTimelineRetimingLabel(TimelineRetimingKind kind, TimelineEventTrack eventTrack, int index)
+    {
+        return kind switch
+        {
+            TimelineRetimingKind.Player => $"Retiming player keyframe {index}",
+            TimelineRetimingKind.Item => $"Retiming item keyframe {index}",
+            TimelineRetimingKind.Event => $"Retiming {eventTrack.ToString().ToLowerInvariant()} marker {index}",
+            _ => "Retiming timeline marker"
+        };
+    }
+
+    private void RetimingTimelineMarker(Animation animation, double requestedTimeMs)
+    {
+        switch (_timelineRetimingKind)
+        {
+            case TimelineRetimingKind.Player:
+                RetimingTimelinePlayerKeyframe(animation, _timelineRetimingIndex, requestedTimeMs);
+                break;
+            case TimelineRetimingKind.Item:
+                RetimingTimelineItemKeyframe(animation, _timelineRetimingIndex, requestedTimeMs);
+                break;
+            case TimelineRetimingKind.Event:
+                RetimingTimelineEventFrame(animation, _timelineRetimingEventTrack, _timelineRetimingIndex, requestedTimeMs);
+                break;
+        }
     }
 
     private void RetimingTimelinePlayerKeyframe(Animation animation, int keyframeIndex, double requestedTimeMs)
@@ -1350,6 +1385,43 @@ public sealed partial class DebugWindowManager
         _editorPlaybackPlaying = false;
         _editorPlaybackPaused = true;
         _editorPlaybackTimeMs = GetEditorFrameTimeMs(animation);
+    }
+
+    private void RetimingTimelineItemKeyframe(Animation animation, int keyframeIndex, double requestedTimeMs)
+    {
+        if (keyframeIndex < 0 || keyframeIndex >= animation.ItemKeyFrames.Count) return;
+
+        double startMs = animation.ItemAnimationStart.TotalMilliseconds;
+        double endMs = animation.ItemAnimationEnd.TotalMilliseconds;
+        double spanMs = endMs - startMs;
+        if (spanMs <= 0.0001) return;
+
+        double minMs = keyframeIndex == 0 ? startMs : GetTimelineItemKeyframeTimeMs(animation, keyframeIndex - 1) + 1;
+        double maxMs = keyframeIndex == animation.ItemKeyFrames.Count - 1 ? endMs : GetTimelineItemKeyframeTimeMs(animation, keyframeIndex + 1) - 1;
+        double timeMs = Math.Clamp(requestedTimeMs, minMs, Math.Max(minMs, maxMs));
+        float fraction = (float)Math.Clamp((timeMs - startMs) / spanMs, 0, 1);
+
+        ItemKeyFrame frame = animation.ItemKeyFrames[keyframeIndex];
+        animation.ItemKeyFrames[keyframeIndex] = new ItemKeyFrame(frame.Frame, fraction, frame.EasingFunction);
+        animation._itemFrameIndex = keyframeIndex;
+        ScrubEditorTimeline(animation, timeMs);
+    }
+
+    private void RetimingTimelineEventFrame(Animation animation, TimelineEventTrack track, int frameIndex, double requestedTimeMs)
+    {
+        int count = GetTimelineEventFrameCount(animation, track);
+        if (frameIndex < 0 || frameIndex >= count) return;
+
+        double playerDurationMs = GetEditorPlayerDurationMs(animation);
+        if (playerDurationMs <= 0.0001) return;
+
+        double minMs = frameIndex == 0 ? 0 : GetTimelineEventFrameTimeMs(animation, track, frameIndex - 1) + 1;
+        double maxMs = frameIndex == count - 1 ? playerDurationMs : GetTimelineEventFrameTimeMs(animation, track, frameIndex + 1) - 1;
+        double timeMs = Math.Clamp(requestedTimeMs, minMs, Math.Max(minMs, maxMs));
+        float fraction = (float)Math.Clamp(timeMs / playerDurationMs, 0, 1);
+
+        SetTimelineEventFrameFraction(animation, track, frameIndex, fraction);
+        SelectEditorTimelineEventFrame(animation, track, frameIndex, timeMs);
     }
 
     private static void ProcessPlayerKeyFramesForEditor(Animation animation)
@@ -1405,7 +1477,7 @@ public sealed partial class DebugWindowManager
 
     private static double GetEditorAnimationDurationMs(Animation animation)
     {
-        double baseDurationMs = animation.PlayerKeyFrames.Count == 0 ? 0 : animation.PlayerKeyFrames[^1].Time.TotalMilliseconds;
+        double baseDurationMs = GetEditorPlayerDurationMs(animation);
         double durationMs = baseDurationMs;
         durationMs = Math.Max(durationMs, animation.ItemAnimationEnd.TotalMilliseconds);
 
@@ -1414,6 +1486,61 @@ public sealed partial class DebugWindowManager
         foreach (CallbackFrame frame in animation.CallbackFrames) durationMs = Math.Max(durationMs, baseDurationMs * frame.DurationFraction);
 
         return Math.Max(1, durationMs);
+    }
+
+    private static double GetEditorPlayerDurationMs(Animation animation)
+    {
+        return animation.PlayerKeyFrames.Count == 0 ? 0 : animation.PlayerKeyFrames[^1].Time.TotalMilliseconds;
+    }
+
+    private static double GetTimelineItemKeyframeTimeMs(Animation animation, int index)
+    {
+        return animation.ItemAnimationStart.TotalMilliseconds + (animation.ItemAnimationEnd - animation.ItemAnimationStart).TotalMilliseconds * animation.ItemKeyFrames[index].DurationFraction;
+    }
+
+    private static int GetTimelineEventFrameCount(Animation animation, TimelineEventTrack track)
+    {
+        return track switch
+        {
+            TimelineEventTrack.Sound => animation.SoundFrames.Count,
+            TimelineEventTrack.Particle => animation.ParticlesFrames.Count,
+            TimelineEventTrack.Callback => animation.CallbackFrames.Count,
+            _ => 0
+        };
+    }
+
+    private static double GetTimelineEventFrameTimeMs(Animation animation, TimelineEventTrack track, int index)
+    {
+        double durationMs = GetEditorPlayerDurationMs(animation);
+        return track switch
+        {
+            TimelineEventTrack.Sound => durationMs * animation.SoundFrames[index].DurationFraction,
+            TimelineEventTrack.Particle => durationMs * animation.ParticlesFrames[index].DurationFraction,
+            TimelineEventTrack.Callback => durationMs * animation.CallbackFrames[index].DurationFraction,
+            _ => 0
+        };
+    }
+
+    private static void SetTimelineEventFrameFraction(Animation animation, TimelineEventTrack track, int index, float fraction)
+    {
+        switch (track)
+        {
+            case TimelineEventTrack.Sound:
+                SoundFrame sound = animation.SoundFrames[index];
+                animation.SoundFrames[index] = new SoundFrame(sound.Code, fraction, sound.RandomizePitch, sound.Range, sound.Volume, sound.Synchronize);
+                animation._soundsFrameIndex = index;
+                break;
+            case TimelineEventTrack.Particle:
+                ParticlesFrame particle = animation.ParticlesFrames[index];
+                animation.ParticlesFrames[index] = new ParticlesFrame(particle.Code, fraction, particle.Position, particle.Velocity, particle.Intensity);
+                animation._particlesFrameIndex = index;
+                break;
+            case TimelineEventTrack.Callback:
+                CallbackFrame callback = animation.CallbackFrames[index];
+                animation.CallbackFrames[index] = new CallbackFrame(callback.Code, fraction);
+                animation._callbackFrameIndex = index;
+                break;
+        }
     }
 
     private static uint TimelinePlayerColor() => ImGui.ColorConvertFloat4ToU32(new NVector4(0.30f, 0.72f, 1.0f, 1f));
@@ -1428,6 +1555,14 @@ public sealed partial class DebugWindowManager
         Sound,
         Particle,
         Callback
+    }
+
+    private enum TimelineRetimingKind
+    {
+        None,
+        Player,
+        Item,
+        Event
     }
 
     private readonly struct TimelineMarker
