@@ -2,6 +2,7 @@
 using ImGuiNET;
 using Vintagestory.API.Client;
 using Vintagestory.API.Common;
+using Vintagestory.API.Common.Entities;
 using Vintagestory.API.MathTools;
 using Vintagestory.Client.NoObf;
 
@@ -40,6 +41,7 @@ internal sealed class DetachedEditorCamera : IRenderer
 
         EnsureInitialized();
         UpdateControls(deltaSeconds);
+        SuppressPlayerMovementControls();
     }
 
     public void DrawControls(string id)
@@ -63,7 +65,7 @@ internal sealed class DetachedEditorCamera : IRenderer
         ImGui.SetNextItemWidth(140);
         ImGui.SliderFloat($"Move speed##{id}", ref _moveSpeed, 0.25f, 12f);
 
-        ImGui.TextDisabled("RMB drag orbits. Mouse wheel zooms. WASD pans, Q/E moves down/up. Shift speeds up.");
+        ImGui.TextDisabled("RMB drag orbits. Mouse wheel zooms. WASD pans the camera, Q/E moves down/up. Shift speeds up.");
     }
 
     public void SetEnabled(bool enabled)
@@ -95,6 +97,7 @@ internal sealed class DetachedEditorCamera : IRenderer
     public void OnRenderFrame(float deltaTime, EnumRenderStage stage)
     {
         if (stage != EnumRenderStage.Before || !Enabled) return;
+        SuppressPlayerMovementControls();
         OverrideCamera();
     }
 
@@ -149,22 +152,51 @@ internal sealed class DetachedEditorCamera : IRenderer
         GetCameraPoints(out Vec3d cameraPos, out Vec3d targetPos);
         double[] view = Mat4d.Create();
         Mat4d.LookAt(view, cameraPos.ToDoubleArray(), targetPos.ToDoubleArray(), new double[] { 0, 1, 0 });
+        Vec3d relativeTarget = targetPos.SubCopy(cameraPos);
+        double[] originView = Mat4d.Create();
+        Mat4d.LookAt(originView, new double[] { 0, 0, 0 }, relativeTarget.ToDoubleArray(), new double[] { 0, 1, 0 });
 
         PlayerCamera camera = client.MainCamera;
         camera.CameraEyePos.Set(cameraPos);
         camera.CamSourcePosition.Set(cameraPos);
-        camera.OriginPosition.Set(0, 0, 0);
+        camera.OriginPosition.Set(cameraPos);
         camera.Yaw = _yaw;
         camera.Pitch = _pitch;
         camera.CameraMatrix = view;
-        camera.CameraMatrixOrigin = (double[])view.Clone();
+        camera.CameraMatrixOrigin = originView;
 
         if (camera.CameraMatrixOriginf == null || camera.CameraMatrixOriginf.Length != 16)
         {
             camera.CameraMatrixOriginf = Mat4f.Create();
         }
 
-        for (int i = 0; i < 16; i++) camera.CameraMatrixOriginf[i] = (float)view[i];
+        for (int i = 0; i < 16; i++) camera.CameraMatrixOriginf[i] = (float)originView[i];
+    }
+
+    private void SuppressPlayerMovementControls()
+    {
+        EntityPlayer? player = _api.World?.Player?.Entity;
+        if (player == null) return;
+
+        ClearMovement(player.Controls);
+        ClearMovement(player.ServerControls);
+    }
+
+    private static void ClearMovement(EntityControls? controls)
+    {
+        if (controls == null) return;
+
+        controls.Forward = false;
+        controls.Backward = false;
+        controls.Left = false;
+        controls.Right = false;
+        controls.Jump = false;
+        controls.Sneak = false;
+        controls.Sprint = false;
+        controls.Up = false;
+        controls.Down = false;
+        controls.WalkVector.Set(0, 0, 0);
+        controls.FlyVector.Set(0, 0, 0);
     }
 
     private void GetCameraPoints(out Vec3d cameraPos, out Vec3d targetPos)

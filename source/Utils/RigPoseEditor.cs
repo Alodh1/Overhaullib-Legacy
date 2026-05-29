@@ -357,9 +357,10 @@ public sealed partial class DebugWindowManager
 
     private void OnDebugEditorClosed()
     {
-        _behavior?.FrameOverride = null;
+        SetEditorFrameOverride(null);
         _detachedEditorCamera?.SetEnabled(false);
         _rigPoseEditorEnabled = false;
+        DebugPoseFreezeActive = false;
         DebugRigPoseOverrideActive = false;
     }
 }

@@ -46,6 +46,16 @@ public sealed class ThirdPersonAnimationsBehavior : EntityBehavior, IDisposable
     {
         if (!_player.IsRendered || _player.RightHandItemSlot == null || _player.LeftHandItemSlot == null) return;
 
+#if DEBUG
+        if (DebugWindowManager.DebugPoseFreezeActive && _mainPlayer)
+        {
+            StopIdleTimer(mainHand: true);
+            StopIdleTimer(mainHand: false);
+            _composer.StopAll();
+            _lastFrame = FrameOverride ?? PlayerItemFrame.Zero;
+            return;
+        }
+#endif
 
 
         int mainHandItemId = _player.RightHandItemSlot.Itemstack?.Item?.Id ?? 0;
@@ -185,11 +195,21 @@ public sealed class ThirdPersonAnimationsBehavior : EntityBehavior, IDisposable
     {
         _frameApplied = true;
 
-        if (!targetEntity.IsRendered || DebugWindowManager.PlayAnimationsInThirdPerson || IsFirstPerson(targetEntity)) return;
+#if DEBUG
+        bool debugFreeze = DebugWindowManager.DebugPoseFreezeActive && _mainPlayer;
+#else
+        const bool debugFreeze = false;
+#endif
+
+        if (!debugFreeze && (!targetEntity.IsRendered || DebugWindowManager.PlayAnimationsInThirdPerson || IsFirstPerson(targetEntity))) return;
 
         if (FrameOverride != null)
         {
-            ApplyFrame(FrameOverride.Value, pose, animator);
+            ApplyFrame(FrameOverride.Value, pose, animator, debugFreeze);
+        }
+        else if (debugFreeze)
+        {
+            ApplyFrame(PlayerItemFrame.Zero, pose, animator, clearPose: true);
         }
         else
         {
@@ -245,7 +265,7 @@ public sealed class ThirdPersonAnimationsBehavior : EntityBehavior, IDisposable
 
 
     }
-    private void ApplyFrame(PlayerItemFrame frame, ElementPose pose, AnimatorBase animator)
+    private void ApplyFrame(PlayerItemFrame frame, ElementPose pose, AnimatorBase animator, bool clearPose = false)
     {
         EnumAnimatedElement element = EnumAnimatedElement.Unknown;
 
@@ -258,6 +278,11 @@ public sealed class ThirdPersonAnimationsBehavior : EntityBehavior, IDisposable
         else
         {
             return;
+        }
+
+        if (clearPose)
+        {
+            pose.Clear();
         }
 
         if (element == EnumAnimatedElement.Unknown)
@@ -276,7 +301,7 @@ public sealed class ThirdPersonAnimationsBehavior : EntityBehavior, IDisposable
             _animatable.SwitchArms = true;
         }
 
-        if (element == EnumAnimatedElement.LowerTorso) return;
+        if (element == EnumAnimatedElement.LowerTorso && !clearPose) return;
 
         if (extendedPoseValue != null)
         {

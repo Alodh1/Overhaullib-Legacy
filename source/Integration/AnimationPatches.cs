@@ -344,7 +344,7 @@ internal static class AnimationPatches
                     or EnumAnimatedElement.LowerFootL;
 
 #if DEBUG
-                bool allowDebugLegPose = DebugWindowManager.DebugRigPoseOverrideActive;
+                bool allowDebugLegPose = DebugWindowManager.DebugRigPoseOverrideActive || DebugWindowManager.DebugPoseFreezeActive;
 #else
                 const bool allowDebugLegPose = false;
 #endif

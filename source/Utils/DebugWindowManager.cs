@@ -336,7 +336,6 @@ public sealed partial class DebugWindowManager
     private bool _showAnimationEditor = false;
     private int _selectedAnimationIndex = 0;
     private int _selectedAnimationIndexFiltered = 0;
-    private bool _overwriteFrame = false;
     private FirstPersonAnimationsBehavior? _behavior;
     private readonly ICoreClientAPI _api;
     private string _itemAnimation = "";
@@ -372,6 +371,7 @@ public sealed partial class DebugWindowManager
     internal bool GizmoLocalSpace { get; private set; } = true;
     internal bool IncludeGizmoInIncrement { get; private set; } = true;
     internal float TransformGizmoIncrement { get; private set; } = 0.1f;
+    internal static bool DebugPoseFreezeActive { get; private set; }
 #endif
     private static readonly string[] DirectTransformAttributeCodes = new[]
     {
@@ -645,24 +645,16 @@ public sealed partial class DebugWindowManager
 
             ImGui.SetNextItemWidth(200);
             ImGui.SliderFloat("Animation speed", ref _animationSpeed, 0.1f, 2);
-            ImGui.Checkbox("Overwrite current frame", ref _overwriteFrame);
             Animation selectedAnimation = AnimationsManager._instance.Animations[codes[_selectedAnimationIndex]];
             selectedAnimation.Edit(codes[_selectedAnimationIndex]);
-            bool rigPoseOverridesFrame = DrawRigPoseEditor(codes[_selectedAnimationIndex], selectedAnimation);
-            if (_overwriteFrame || rigPoseOverridesFrame)
+            DrawRigPoseEditor(codes[_selectedAnimationIndex], selectedAnimation);
+            if (_showAnimationEditor)
             {
-                if (rigPoseOverridesFrame || selectedAnimation._playerFrameEdited)
-                {
-                    if (_behavior != null) _behavior.FrameOverride = selectedAnimation.StillPlayerFrame(selectedAnimation._playerFrameIndex, selectedAnimation._frameProgress);
-                }
-                else
-                {
-                    if (_behavior != null) _behavior.FrameOverride = selectedAnimation.StillItemFrame(selectedAnimation._itemFrameIndex, selectedAnimation._frameProgress);
-                }
+                SetEditorFrameOverride(selectedAnimation.StillPlayerFrame(selectedAnimation._playerFrameIndex, selectedAnimation._frameProgress));
             }
             else
             {
-                if (_behavior != null) _behavior.FrameOverride = null;
+                SetEditorFrameOverride(null);
             }
         }
     }
@@ -1043,13 +1035,23 @@ public sealed partial class DebugWindowManager
             TransformGizmoIncrement = Math.Max(0.001f, increment);
         }
 
-        ImGui.TextDisabled("Drag colored axes in-world. Tongs and forge transform attributes are supported by selecting those transform entries.");
+        ImGui.TextDisabled("Drag colored axes in-world.");
 
         _activeGizmoTransform = transform;
         _activeGizmoContext = context;
         _activeGizmoApply = apply;
         _activeGizmoBlockPos = blockPos;
         _activeGizmoWorldCenter = worldCenter;
+    }
+
+    private void SetEditorFrameOverride(PlayerItemFrame? frame)
+    {
+        _behavior ??= _api.World.Player.Entity.GetBehavior<FirstPersonAnimationsBehavior>();
+        ThirdPersonAnimationsBehavior? thirdPersonBehavior = _api.World.Player.Entity.GetBehavior<ThirdPersonAnimationsBehavior>();
+
+        DebugPoseFreezeActive = frame != null;
+        if (_behavior != null) _behavior.FrameOverride = frame;
+        if (thirdPersonBehavior != null) thirdPersonBehavior.FrameOverride = frame;
     }
 
     private static TransformGizmoContext GetGizmoContextForTransformCode(string transformCode)

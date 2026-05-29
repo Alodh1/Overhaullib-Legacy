@@ -49,6 +49,18 @@ public sealed class FirstPersonAnimationsBehavior : EntityBehavior, IDisposable
         TryActivateMainPlayer();
         if (!_mainPlayer || _player.RightHandItemSlot == null || _player.LeftHandItemSlot == null) return;
 
+#if DEBUG
+        if (DebugWindowManager.DebugPoseFreezeActive)
+        {
+            _MainHandIdleAnimationsController.Pause();
+            _OffHandIdleAnimationsController.Pause();
+            _playRequests.Clear();
+            _composer.StopAll();
+            _lastFrame = FrameOverride ?? PlayerItemFrame.Zero;
+            return;
+        }
+#endif
+
         int mainHandItemId = _player.RightHandItemSlot.Itemstack?.Item?.Id ?? 0;
         int offhandItemId = _player.LeftHandItemSlot.Itemstack?.Item?.Id ?? 0;
 
@@ -91,9 +103,15 @@ public sealed class FirstPersonAnimationsBehavior : EntityBehavior, IDisposable
     {
         _frameApplied = true;
 
+#if DEBUG
+        bool debugFreeze = DebugWindowManager.DebugPoseFreezeActive && entity.EntityId == _ownerEntityId;
+#else
+        const bool debugFreeze = false;
+#endif
+
         //if (IsImmersiveFirstPerson(entity)) return;
-        if (!DebugWindowManager.PlayAnimationsInThirdPerson && !IsFirstPerson(entity)) return;
-        if (!_composer.AnyActiveAnimations() && FrameOverride == null)
+        if (!DebugWindowManager.PlayAnimationsInThirdPerson && !IsFirstPerson(entity) && !debugFreeze) return;
+        if (!_composer.AnyActiveAnimations() && FrameOverride == null && !debugFreeze)
         {
             if (_resetFov)
             {
@@ -107,7 +125,11 @@ public sealed class FirstPersonAnimationsBehavior : EntityBehavior, IDisposable
 
         if (FrameOverride != null)
         {
-            ApplyFrame(FrameOverride.Value, pose, animator);
+            ApplyFrame(FrameOverride.Value, pose, animator, debugFreeze);
+        }
+        else if (debugFreeze)
+        {
+            ApplyFrame(PlayerItemFrame.Zero, pose, animator, clearPose: true);
         }
         else
         {
@@ -408,7 +430,7 @@ public sealed class FirstPersonAnimationsBehavior : EntityBehavior, IDisposable
         _playRequests.Add((request, mainHand, false, CurrentItemId(mainHand)));
     }
 
-    private void ApplyFrame(PlayerItemFrame frame, ElementPose pose, AnimatorBase animator)
+    private void ApplyFrame(PlayerItemFrame frame, ElementPose pose, AnimatorBase animator, bool clearPose = false)
     {
         EnumAnimatedElement element;
 
@@ -426,18 +448,23 @@ public sealed class FirstPersonAnimationsBehavior : EntityBehavior, IDisposable
             }
         }
 
+        if (clearPose && element != EnumAnimatedElement.Unknown)
+        {
+            pose.Clear();
+        }
+
         if (element == EnumAnimatedElement.Unknown)
         {
             frame.Apply(pose, element, _eyePosition, _eyeHeight);
             return;
         }
 
-        if (element == EnumAnimatedElement.LowerTorso && IsImmersiveFirstPerson(_player))
+        if (element == EnumAnimatedElement.LowerTorso && IsImmersiveFirstPerson(_player) && !clearPose)
         {
             return;
         }
 
-        if (IsImmersiveFirstPerson(_player))
+        if (IsImmersiveFirstPerson(_player) && !clearPose)
         {
             PlayerRenderingPatches.SetOffset(0);
         }
