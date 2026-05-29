@@ -518,6 +518,7 @@ public sealed partial class DebugWindowManager
     private int _timelineRetimingIndex = -1;
     private TimelineRetimingKind _timelineSelectedKind = TimelineRetimingKind.Player;
     private TimelineEventTrack _timelineSelectedEventTrack = TimelineEventTrack.Sound;
+    private static readonly string[] TimelineTrackNames = new[] { "Player", "Item", "Sound", "Particle", "Callback" };
     private static readonly MethodInfo? ProcessPlayerKeyFramesMethod = typeof(Animation).GetMethod("ProcessPlayerKeyFrames", BindingFlags.NonPublic | BindingFlags.Instance, null, Type.EmptyTypes, null);
     internal TransformGizmoMode GizmoMode { get; private set; } = TransformGizmoMode.Move;
     internal TransformGizmoSpace GizmoSpace { get; private set; } = TransformGizmoSpace.Local;
@@ -986,11 +987,11 @@ public sealed partial class DebugWindowManager
         TimelineMarker[] particleMarkers = BuildFractionTimelineMarkers(animation.ParticlesFrames.Count, index => playerDurationMs * animation.ParticlesFrames[index].DurationFraction, "P", TimelineParticleColor(), animation._particlesFrameIndex);
         TimelineMarker[] callbackMarkers = BuildFractionTimelineMarkers(animation.CallbackFrames.Count, index => playerDurationMs * animation.CallbackFrames[index].DurationFraction, "C", TimelineCallbackColor(), animation._callbackFrameIndex);
 
-        DrawTimelineTrack(drawList, "Player", 0, playerMarkers, canvasMin.X + 8, trackStart, trackEnd, RowY(0), text, line, durationMs);
-        DrawTimelineTrack(drawList, "Item", 1, itemMarkers, canvasMin.X + 8, trackStart, trackEnd, RowY(1), text, line, durationMs);
-        DrawTimelineTrack(drawList, "Sound", 2, soundMarkers, canvasMin.X + 8, trackStart, trackEnd, RowY(2), text, line, durationMs);
-        DrawTimelineTrack(drawList, "Particle", 3, particleMarkers, canvasMin.X + 8, trackStart, trackEnd, RowY(3), text, line, durationMs);
-        DrawTimelineTrack(drawList, "Callback", 4, callbackMarkers, canvasMin.X + 8, trackStart, trackEnd, RowY(4), text, line, durationMs);
+        DrawTimelineTrack(drawList, "Player", 0, playerMarkers, canvasMin.X + 8, trackStart, trackEnd, RowY(0), text, line, durationMs, IsTimelineTrackSelected(TimelineRetimingKind.Player));
+        DrawTimelineTrack(drawList, "Item", 1, itemMarkers, canvasMin.X + 8, trackStart, trackEnd, RowY(1), text, line, durationMs, IsTimelineTrackSelected(TimelineRetimingKind.Item));
+        DrawTimelineTrack(drawList, "Sound", 2, soundMarkers, canvasMin.X + 8, trackStart, trackEnd, RowY(2), text, line, durationMs, IsTimelineTrackSelected(TimelineRetimingKind.Event, TimelineEventTrack.Sound));
+        DrawTimelineTrack(drawList, "Particle", 3, particleMarkers, canvasMin.X + 8, trackStart, trackEnd, RowY(3), text, line, durationMs, IsTimelineTrackSelected(TimelineRetimingKind.Event, TimelineEventTrack.Particle));
+        DrawTimelineTrack(drawList, "Callback", 4, callbackMarkers, canvasMin.X + 8, trackStart, trackEnd, RowY(4), text, line, durationMs, IsTimelineTrackSelected(TimelineRetimingKind.Event, TimelineEventTrack.Callback));
 
         float scrubX = TimeToX(GetEditorFrameTimeMs(animation));
         drawList.AddLine(new NVector2(scrubX, canvasMin.Y + 6), new NVector2(scrubX, canvasMax.Y - 6), scrub, 2);
@@ -1032,6 +1033,10 @@ public sealed partial class DebugWindowManager
             }
             else
             {
+                if (TryGetTimelineRow(mouse, RowY(0), rowHeight, trackCount, out int row))
+                {
+                    SelectTimelineTrack(row);
+                }
                 ScrubEditorTimeline(animation, XToTime(mouse.X));
             }
         }
@@ -1325,6 +1330,21 @@ public sealed partial class DebugWindowManager
         return markerIndex >= 0;
     }
 
+    private static bool TryGetTimelineRow(NVector2 mouse, float firstRowY, float rowHeight, int trackCount, out int row)
+    {
+        row = -1;
+        const float rowHitHalfHeight = 10;
+        for (int index = 0; index < trackCount; index++)
+        {
+            if (Math.Abs(mouse.Y - (firstRowY + index * rowHeight)) > rowHitHalfHeight) continue;
+
+            row = index;
+            return true;
+        }
+
+        return false;
+    }
+
     private void BeginTimelineRetiming(string animationCode, Animation animation, TimelineRetimingKind kind, int index, TimelineEventTrack eventTrack = TimelineEventTrack.Sound)
     {
         if (_timelineRetimingKind == kind && _timelineRetimingAnimationCode == animationCode && _timelineRetimingIndex == index && _timelineRetimingEventTrack == eventTrack) return;
@@ -1401,6 +1421,13 @@ public sealed partial class DebugWindowManager
         string selection = GetTimelineSelectionLabel(animation);
         ImGui.TextDisabled(selection);
 
+        int trackIndex = GetTimelineTrackIndex();
+        ImGui.SetNextItemWidth(150);
+        if (ImGui.Combo("Target track##timeline-actions", ref trackIndex, TimelineTrackNames, TimelineTrackNames.Length))
+        {
+            SelectTimelineTrack(trackIndex);
+        }
+
         bool canInsert = CanInsertTimelineSelection(animation);
         bool canDuplicate = CanDuplicateTimelineSelection(animation);
         bool canDelete = CanDeleteTimelineSelection(animation);
@@ -1439,11 +1466,60 @@ public sealed partial class DebugWindowManager
     {
         return _timelineSelectedKind switch
         {
-            TimelineRetimingKind.Player => $"Selected player keyframe {Math.Clamp(animation._playerFrameIndex, 0, Math.Max(0, animation.PlayerKeyFrames.Count - 1))}",
-            TimelineRetimingKind.Item => $"Selected item keyframe {Math.Clamp(animation._itemFrameIndex, 0, Math.Max(0, animation.ItemKeyFrames.Count - 1))}",
-            TimelineRetimingKind.Event => $"Selected {_timelineSelectedEventTrack.ToString().ToLowerInvariant()} marker {GetSelectedTimelineEventIndex(animation, _timelineSelectedEventTrack)}",
+            TimelineRetimingKind.Player => animation.PlayerKeyFrames.Count == 0
+                ? "Selected player track (no marker)"
+                : $"Selected player keyframe {Math.Clamp(animation._playerFrameIndex, 0, Math.Max(0, animation.PlayerKeyFrames.Count - 1))}",
+            TimelineRetimingKind.Item => animation.ItemKeyFrames.Count == 0
+                ? "Selected item track (no marker)"
+                : $"Selected item keyframe {Math.Clamp(animation._itemFrameIndex, 0, Math.Max(0, animation.ItemKeyFrames.Count - 1))}",
+            TimelineRetimingKind.Event => GetTimelineEventFrameCount(animation, _timelineSelectedEventTrack) == 0
+                ? $"Selected {_timelineSelectedEventTrack.ToString().ToLowerInvariant()} track (no marker)"
+                : $"Selected {_timelineSelectedEventTrack.ToString().ToLowerInvariant()} marker {GetSelectedTimelineEventIndex(animation, _timelineSelectedEventTrack)}",
             _ => "No timeline marker selected"
         };
+    }
+
+    private int GetTimelineTrackIndex()
+    {
+        return _timelineSelectedKind switch
+        {
+            TimelineRetimingKind.Player => 0,
+            TimelineRetimingKind.Item => 1,
+            TimelineRetimingKind.Event when _timelineSelectedEventTrack == TimelineEventTrack.Sound => 2,
+            TimelineRetimingKind.Event when _timelineSelectedEventTrack == TimelineEventTrack.Particle => 3,
+            TimelineRetimingKind.Event when _timelineSelectedEventTrack == TimelineEventTrack.Callback => 4,
+            _ => 0
+        };
+    }
+
+    private void SelectTimelineTrack(int trackIndex)
+    {
+        switch (trackIndex)
+        {
+            case 0:
+                _timelineSelectedKind = TimelineRetimingKind.Player;
+                break;
+            case 1:
+                _timelineSelectedKind = TimelineRetimingKind.Item;
+                break;
+            case 2:
+                _timelineSelectedKind = TimelineRetimingKind.Event;
+                _timelineSelectedEventTrack = TimelineEventTrack.Sound;
+                break;
+            case 3:
+                _timelineSelectedKind = TimelineRetimingKind.Event;
+                _timelineSelectedEventTrack = TimelineEventTrack.Particle;
+                break;
+            case 4:
+                _timelineSelectedKind = TimelineRetimingKind.Event;
+                _timelineSelectedEventTrack = TimelineEventTrack.Callback;
+                break;
+        }
+    }
+
+    private bool IsTimelineTrackSelected(TimelineRetimingKind kind, TimelineEventTrack eventTrack = TimelineEventTrack.Sound)
+    {
+        return _timelineSelectedKind == kind && (kind != TimelineRetimingKind.Event || _timelineSelectedEventTrack == eventTrack);
     }
 
     private bool CanInsertTimelineSelection(Animation animation)
@@ -1800,10 +1876,16 @@ public sealed partial class DebugWindowManager
         return markers;
     }
 
-    private static void DrawTimelineTrack(ImDrawListPtr drawList, string label, int row, TimelineMarker[] markers, float labelX, float trackStart, float trackEnd, float rowY, uint textColor, uint lineColor, double durationMs)
+    private static void DrawTimelineTrack(ImDrawListPtr drawList, string label, int row, TimelineMarker[] markers, float labelX, float trackStart, float trackEnd, float rowY, uint textColor, uint lineColor, double durationMs, bool selectedTrack)
     {
         drawList.AddText(new NVector2(labelX, rowY - 8), textColor, label);
-        drawList.AddLine(new NVector2(trackStart, rowY), new NVector2(trackEnd, rowY), lineColor, 1);
+        if (selectedTrack)
+        {
+            uint selectedFill = ImGui.ColorConvertFloat4ToU32(new NVector4(0.23f, 0.36f, 0.22f, 0.30f));
+            drawList.AddRectFilled(new NVector2(trackStart, rowY - 9), new NVector2(trackEnd, rowY + 9), selectedFill, 3);
+        }
+
+        drawList.AddLine(new NVector2(trackStart, rowY), new NVector2(trackEnd, rowY), selectedTrack ? TimelineSelectedColor() : lineColor, selectedTrack ? 2 : 1);
 
         float trackWidth = Math.Max(1, trackEnd - trackStart);
         foreach (TimelineMarker marker in markers)
