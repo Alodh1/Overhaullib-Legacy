@@ -370,6 +370,7 @@ public sealed partial class DebugWindowManager
     private Action<ModelTransform>? _activeGizmoApply;
     private Action? _activeGizmoDragStarted;
     private Action? _activeGizmoDragEnded;
+    private TransformGizmoAxes? _activeGizmoWorldAxes;
     private bool _animationHistoryExternalDragActive;
     private bool _animationHistoryExplicitEditThisFrame;
     internal TransformGizmoMode GizmoMode { get; private set; } = TransformGizmoMode.Move;
@@ -1064,10 +1065,16 @@ public sealed partial class DebugWindowManager
 
     internal bool TryGetActiveTransformGizmo(out ModelTransform transform, out TransformGizmoContext context, out BlockPos? blockPos, out Vec3d? worldCenter)
     {
+        return TryGetActiveTransformGizmo(out transform, out context, out blockPos, out worldCenter, out _);
+    }
+
+    internal bool TryGetActiveTransformGizmo(out ModelTransform transform, out TransformGizmoContext context, out BlockPos? blockPos, out Vec3d? worldCenter, out TransformGizmoAxes? worldAxes)
+    {
         transform = _activeGizmoTransform!;
         context = _activeGizmoContext;
         blockPos = _activeGizmoBlockPos;
         worldCenter = _activeGizmoWorldCenter;
+        worldAxes = _activeGizmoWorldAxes;
         return _activeGizmoTransform != null;
     }
 
@@ -1124,10 +1131,11 @@ public sealed partial class DebugWindowManager
         _activeGizmoDragEnded = null;
         _activeGizmoBlockPos = null;
         _activeGizmoWorldCenter = null;
+        _activeGizmoWorldAxes = null;
         _activeGizmoContext = TransformGizmoContext.Free;
     }
 
-    private void DrawTransformGizmoControls(string id, ModelTransform transform, TransformGizmoContext context, Action<ModelTransform>? apply, BlockPos? blockPos = null, Vec3d? worldCenter = null, bool allowMove = true, bool allowScale = true, bool allowRotate = true, Action? dragStarted = null, Action? dragEnded = null)
+    private void DrawTransformGizmoControls(string id, ModelTransform transform, TransformGizmoContext context, Action<ModelTransform>? apply, BlockPos? blockPos = null, Vec3d? worldCenter = null, TransformGizmoAxes? worldAxes = null, bool allowMove = true, bool allowScale = true, bool allowRotate = true, Action? dragStarted = null, Action? dragEnded = null)
     {
         ImGui.SeparatorText("Gizmo");
 
@@ -1174,6 +1182,7 @@ public sealed partial class DebugWindowManager
         _activeGizmoDragEnded = dragEnded;
         _activeGizmoBlockPos = blockPos;
         _activeGizmoWorldCenter = worldCenter;
+        _activeGizmoWorldAxes = worldAxes;
     }
 
     private void SetEditorFrameOverride(PlayerItemFrame? frame)

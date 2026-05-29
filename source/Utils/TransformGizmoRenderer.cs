@@ -32,6 +32,20 @@ internal enum TransformGizmoAxis
     Z
 }
 
+internal readonly struct TransformGizmoAxes
+{
+    public TransformGizmoAxes(Vec3d x, Vec3d y, Vec3d z)
+    {
+        X = x;
+        Y = y;
+        Z = z;
+    }
+
+    public readonly Vec3d X;
+    public readonly Vec3d Y;
+    public readonly Vec3d Z;
+}
+
 internal sealed class TransformGizmoRenderer : IRenderer
 {
     private const double AxisLength = 0.72;
@@ -601,7 +615,7 @@ internal sealed class TransformGizmoRenderer : IRenderer
     private bool TryBuildState(out GizmoState state)
     {
         state = default;
-        if (!_debugManager.TryGetActiveTransformGizmo(out ModelTransform transform, out TransformGizmoContext context, out BlockPos? blockPos, out Vec3d? worldCenter)) return false;
+        if (!_debugManager.TryGetActiveTransformGizmo(out ModelTransform transform, out TransformGizmoContext context, out BlockPos? blockPos, out Vec3d? worldCenter, out TransformGizmoAxes? worldAxes)) return false;
 
         GetCameraBasis(out Vec3d forward, out Vec3d right, out Vec3d up);
         Vec3d center;
@@ -614,7 +628,7 @@ internal sealed class TransformGizmoRenderer : IRenderer
             center = GetFallbackCenter(transform, context, blockPos, forward, right, up);
         }
 
-        TranslationBasis basis = BuildTranslationBasis(transform, context, blockPos, center);
+        TranslationBasis basis = BuildTranslationBasis(transform, context, blockPos, center, worldAxes);
         if (!TryGetRotationSetup(transform, context, out Matrix3 rotationParentBasis, out FastVec3f attachmentRotation))
         {
             rotationParentBasis = Matrix3.Identity;
@@ -622,7 +636,17 @@ internal sealed class TransformGizmoRenderer : IRenderer
         }
 
         Matrix3 actualRotation = Matrix3.FromEulerDegrees(transform.Rotation.X + attachmentRotation.X, transform.Rotation.Y + attachmentRotation.Y, transform.Rotation.Z + attachmentRotation.Z);
-        Matrix3 worldRotation = rotationParentBasis.Mul(actualRotation).Orthonormalized();
+        Matrix3 worldRotation;
+        if (worldAxes.HasValue)
+        {
+            worldRotation = Matrix3.FromAxes(worldAxes.Value.X, worldAxes.Value.Y, worldAxes.Value.Z).Orthonormalized();
+            rotationParentBasis = worldRotation.Mul(actualRotation.Inverted()).Orthonormalized();
+        }
+        else
+        {
+            worldRotation = rotationParentBasis.Mul(actualRotation).Orthonormalized();
+        }
+
         Vec3d axisX = new(1, 0, 0);
         Vec3d axisY = new(0, 1, 0);
         Vec3d axisZ = new(0, 0, 1);
@@ -651,8 +675,16 @@ internal sealed class TransformGizmoRenderer : IRenderer
         return true;
     }
 
-    private TranslationBasis BuildTranslationBasis(ModelTransform transform, TransformGizmoContext context, BlockPos? blockPos, Vec3d center)
+    private TranslationBasis BuildTranslationBasis(ModelTransform transform, TransformGizmoContext context, BlockPos? blockPos, Vec3d center, TransformGizmoAxes? worldAxes)
     {
+        if (worldAxes.HasValue)
+        {
+            return new TranslationBasis(
+                SafeNormalize(worldAxes.Value.X, new Vec3d(1, 0, 0)),
+                SafeNormalize(worldAxes.Value.Y, new Vec3d(0, 1, 0)),
+                SafeNormalize(worldAxes.Value.Z, new Vec3d(0, 0, 1)));
+        }
+
         if (context == TransformGizmoContext.RigPart)
         {
             return new TranslationBasis(new Vec3d(1, 0, 0), new Vec3d(0, 1, 0), new Vec3d(0, 0, 1));
@@ -895,6 +927,14 @@ internal sealed class TransformGizmoRenderer : IRenderer
         {
             float[] v = matrix.Values;
             return new Matrix3(v[0], v[4], v[8], v[1], v[5], v[9], v[2], v[6], v[10]);
+        }
+
+        public static Matrix3 FromAxes(Vec3d x, Vec3d y, Vec3d z)
+        {
+            x = SafeNormalize(x, new Vec3d(1, 0, 0));
+            y = SafeNormalize(y, new Vec3d(0, 1, 0));
+            z = SafeNormalize(z, new Vec3d(0, 0, 1));
+            return new Matrix3(x.X, y.X, z.X, x.Y, y.Y, z.Y, x.Z, y.Z, z.Z);
         }
 
         public static Matrix3 FromEulerDegrees(double xDegrees, double yDegrees, double zDegrees)

@@ -132,12 +132,14 @@ public sealed partial class DebugWindowManager
 
         _rigGizmoTransform = RigElementToTransform(element);
         TryGetRigPartWorldCenter(selectedPart, out Vec3d? worldCenter);
+        TransformGizmoAxes? worldAxes = TryGetRigPartWorldAxes(selectedPart, out TransformGizmoAxes axes) ? axes : null;
         DrawTransformGizmoControls(
             "rig-pose",
             _rigGizmoTransform,
             TransformGizmoContext.RigPart,
             transform => ApplyRigTransform(animation, selectedPart, transform),
             worldCenter: worldCenter,
+            worldAxes: worldAxes,
             allowScale: false,
             dragStarted: () => BeginRigGizmoDrag(animationCode, animation, selectedPart),
             dragEnded: () => EndRigGizmoDrag(animationCode, animation));
@@ -586,6 +588,27 @@ public sealed partial class DebugWindowManager
         return TryGetRigPartWorldOrigin(selectedPart, out center);
     }
 
+    private bool TryGetRigPartWorldAxes(EnumAnimatedElement selectedPart, out TransformGizmoAxes axes)
+    {
+        axes = default;
+        if (!TryGetRigPartPose(selectedPart, out EntityPlayer playerEntity, out ElementPose? pose)) return false;
+        if (pose?.ForElement == null) return false;
+
+        Matrixf matrix = new();
+        BuildPlayerModelMatrix(matrix, playerEntity);
+        matrix.Mul(pose.AnimModelMatrix);
+
+        Vec3d origin = TransformLocalPoint(matrix, 0, 0, 0);
+        Vec3d x = Sub(TransformLocalPoint(matrix, 1, 0, 0), origin);
+        Vec3d y = Sub(TransformLocalPoint(matrix, 0, 1, 0), origin);
+        Vec3d z = Sub(TransformLocalPoint(matrix, 0, 0, 1), origin);
+
+        if (x.LengthSq() < 0.000001 || y.LengthSq() < 0.000001 || z.LengthSq() < 0.000001) return false;
+
+        axes = new TransformGizmoAxes(x.Normalize(), y.Normalize(), z.Normalize());
+        return true;
+    }
+
     private bool TryGetRigPartWorldOrigin(EnumAnimatedElement selectedPart, out Vec3d? origin)
     {
         origin = null;
@@ -601,6 +624,12 @@ public sealed partial class DebugWindowManager
         Vec3d camera = playerEntity.CameraPos;
         origin = new Vec3d(camera.X + relative.X, camera.Y + relative.Y, camera.Z + relative.Z);
         return true;
+    }
+
+    private static Vec3d TransformLocalPoint(Matrixf matrix, double x, double y, double z)
+    {
+        Vec4f relative = matrix.TransformVector(new Vec4f((float)x, (float)y, (float)z, 1f));
+        return new Vec3d(relative.X, relative.Y, relative.Z);
     }
 
     internal bool TryGetRigPartHighlightCorners(out Vec3d[] corners)
