@@ -36,6 +36,7 @@ public sealed partial class DebugWindowManager
         _devToolsDialog = new DevToolsDialog(api, this, _editorAppState, _editorInputRouter);
         api.ModLoader.GetModSystem<ImGuiModSystem>().Draw += DrawEditor;
         _transformGizmoRenderer = new TransformGizmoRenderer(api, this);
+        _imguiAnimationViewportRenderer = new ImGuiAnimationViewportRenderer(api);
         _detachedEditorCamera = new DetachedEditorCamera(api);
         api.Input.RegisterHotKey("combatOverhaul_editor", "Show dev tools", GlKeys.L, ctrlPressed: true);
         api.Input.SetHotKeyHandler("combatOverhaul_editor", _ => ToggleDevTools());
@@ -497,10 +498,13 @@ public sealed partial class DebugWindowManager
     private readonly EditorAppState _editorAppState = new();
     private EditorInputRouter? _editorInputRouter;
     private DevToolsDialog? _devToolsDialog;
-    internal EditorUiMode CurrentEditorUiMode { get; private set; } = EditorUiMode.ProperUi;
+    internal EditorUiMode CurrentEditorUiMode { get; private set; } = EditorUiMode.ImGui;
     private readonly AnimationEditorHistory _animationHistory = new();
     private TransformGizmoRenderer? _transformGizmoRenderer;
+    private ImGuiAnimationViewportRenderer? _imguiAnimationViewportRenderer;
     private DetachedEditorCamera? _detachedEditorCamera;
+    private float _imguiViewportYaw;
+    private float _imguiViewportZoom = 1f;
     private ModelTransform? _activeGizmoTransform;
     private TransformGizmoContext _activeGizmoContext = TransformGizmoContext.Free;
     private BlockPos? _activeGizmoBlockPos;
@@ -624,6 +628,7 @@ public sealed partial class DebugWindowManager
     {
         _currentCollider = null;
         ClearActiveTransformGizmo();
+        _imguiAnimationViewportRenderer?.SetVisible(false);
         if (CurrentEditorUiMode == EditorUiMode.ProperUi)
         {
             if (_showAnimationEditor && _devToolsDialog?.IsOpened() != true)
@@ -647,7 +652,21 @@ public sealed partial class DebugWindowManager
             return CallbackGUIStatus.Closed;
         }
 
-        if (ImGui.Begin("Dev tools", ref _showAnimationEditor))
+        NVector2 displaySize = ImGui.GetIO().DisplaySize;
+        if (displaySize.X <= 0 || displaySize.Y <= 0)
+        {
+            displaySize = new NVector2(_api.Render.FrameWidth, _api.Render.FrameHeight);
+        }
+
+        ImGui.SetNextWindowPos(NVector2.Zero, ImGuiCond.Always);
+        ImGui.SetNextWindowSize(displaySize, ImGuiCond.Always);
+        ImGui.SetNextWindowBgAlpha(0.96f);
+        ImGuiWindowFlags windowFlags = ImGuiWindowFlags.NoMove |
+            ImGuiWindowFlags.NoResize |
+            ImGuiWindowFlags.NoCollapse |
+            ImGuiWindowFlags.NoSavedSettings;
+
+        if (ImGui.Begin("Dev tools", ref _showAnimationEditor, windowFlags))
         {
             if (ImGui.Button("Switch to proper UI##editor-ui-mode"))
             {
@@ -986,6 +1005,7 @@ public sealed partial class DebugWindowManager
             DrawAnimationHistoryControls(selectedAnimationCode);
 
             DrawAnimationPlaybackControls(selectedAnimationCode, selectedAnimation, deltaSeconds);
+            DrawImGuiAnimationViewport(selectedAnimationCode);
             DrawAnimationTimeline(selectedAnimationCode, selectedAnimation);
             DrawAnimationValidationPanel(selectedAnimationCode, selectedAnimation);
 
@@ -1205,6 +1225,54 @@ public sealed partial class DebugWindowManager
         {
             AdvanceEditorPlayback(animation, deltaSeconds);
         }
+    }
+
+    private void DrawImGuiAnimationViewport(string animationCode)
+    {
+        ImGui.SeparatorText("Viewport");
+
+        NVector2 available = ImGui.GetContentRegionAvail();
+        float width = Math.Max(420f, available.X);
+        float targetHeight = ImGui.GetIO().DisplaySize.Y * 0.42f;
+        float height = Math.Clamp(targetHeight, 280f, Math.Max(280f, available.Y * 0.58f));
+        NVector2 size = new(width, height);
+
+        ImGui.InvisibleButton($"##animation-viewport-{animationCode}", size);
+        NVector2 min = ImGui.GetItemRectMin();
+        NVector2 max = ImGui.GetItemRectMax();
+        bool hovered = ImGui.IsItemHovered();
+
+        if (hovered)
+        {
+            NVector2 delta = ImGui.GetIO().MouseDelta;
+            if (ImGui.IsMouseDragging(ImGuiMouseButton.Right))
+            {
+                _imguiViewportYaw += delta.X * 0.01f;
+            }
+
+            float wheel = ImGui.GetIO().MouseWheel;
+            if (Math.Abs(wheel) > 0.001f)
+            {
+                _imguiViewportZoom = Math.Clamp(_imguiViewportZoom + wheel * 0.06f, 0.55f, 1.85f);
+            }
+        }
+
+        ImDrawListPtr drawList = ImGui.GetWindowDrawList();
+        uint background = ImGui.ColorConvertFloat4ToU32(new NVector4(0.055f, 0.052f, 0.045f, 1f));
+        uint border = ImGui.ColorConvertFloat4ToU32(new NVector4(0.55f, 0.49f, 0.38f, 1f));
+        uint text = ImGui.ColorConvertFloat4ToU32(new NVector4(0.86f, 0.82f, 0.72f, 1f));
+        drawList.AddRectFilled(min, max, background, 4f);
+        drawList.AddRect(min, max, border, 4f);
+        drawList.AddText(new NVector2(min.X + 12f, min.Y + 10f), text, $"Preview: {animationCode}");
+        drawList.AddText(new NVector2(min.X + 12f, min.Y + 30f), text, "RMB drag rotates. Mouse wheel zooms.");
+
+        _imguiAnimationViewportRenderer?.SetViewport(
+            min.X,
+            min.Y,
+            Math.Max(1f, max.X - min.X),
+            Math.Max(1f, max.Y - min.Y),
+            _imguiViewportYaw,
+            _imguiViewportZoom);
     }
 
     private void DrawAnimationValidationPanel(string animationCode, Animation animation)
