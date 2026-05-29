@@ -26,6 +26,7 @@ public sealed class DebugWindowManager
     {
 #if DEBUG
         api.ModLoader.GetModSystem<ImGuiModSystem>().Draw += DrawEditor;
+        _transformGizmoRenderer = new TransformGizmoRenderer(api, this);
 #endif
         api.Input.RegisterHotKey("combatOverhaul_editor", "Show animation editor", GlKeys.L, ctrlPressed: true);
         api.Input.SetHotKeyHandler("combatOverhaul_editor", keys => _showAnimationEditor = !_showAnimationEditor);
@@ -358,6 +359,17 @@ public sealed class DebugWindowManager
     private readonly Dictionary<string, EditableTransform> _transforms = new();
     private static Dictionary<string, Dictionary<string, (Action<LineSegmentCollider> setter, System.Func<LineSegmentCollider> getter)>> _colliders = new();
     internal static LineSegmentCollider? _currentCollider = null;
+#if DEBUG
+    private TransformGizmoRenderer? _transformGizmoRenderer;
+    private ModelTransform? _activeGizmoTransform;
+    private TransformGizmoContext _activeGizmoContext = TransformGizmoContext.Free;
+    private BlockPos? _activeGizmoBlockPos;
+    private Action<ModelTransform>? _activeGizmoApply;
+    internal TransformGizmoMode GizmoMode { get; private set; } = TransformGizmoMode.Move;
+    internal bool GizmoLocalSpace { get; private set; } = true;
+    internal bool IncludeGizmoInIncrement { get; private set; } = true;
+    internal float TransformGizmoIncrement { get; private set; } = 0.1f;
+#endif
     private static readonly string[] DirectTransformAttributeCodes = new[]
     {
         "groundStorageTransform",
@@ -395,6 +407,7 @@ public sealed class DebugWindowManager
     private CallbackGUIStatus DrawEditor(float deltaSeconds)
     {
         _currentCollider = null;
+        ClearActiveTransformGizmo();
         if (!_showAnimationEditor) return CallbackGUIStatus.Closed;
 
         if (ImGui.Begin("Combat Overhaul - Animations editor and debug tools", ref _showAnimationEditor))
@@ -683,6 +696,8 @@ public sealed class DebugWindowManager
             ImGui.TextWrapped(_transformSaveStatus);
         }
 
+        DrawTransformGizmoControls("transform", transform, GetGizmoContextForTransformCode(currentTransform), editableTransform.Apply);
+
         float speed = ImGui.GetIO().KeysDown[(int)ImGuiKey.LeftShift] ? 0.1f : 1;
 
         float scale = transform.ScaleXYZ.X;
@@ -748,6 +763,7 @@ public sealed class DebugWindowManager
 
     private ModelTransform? _currentTransform;
     private GenericDisplayProto? _currentBlock;
+    private BlockPos? _currentDisplayBlockPos;
     private Action<ModelTransform>? _currentDisplayApply;
     private System.Func<ModelTransform, string>? _currentDisplaySaveToSource;
     private Action? _currentDisplayRedraw;
@@ -804,6 +820,8 @@ public sealed class DebugWindowManager
             ImGui.TextWrapped(_displaySaveStatus);
         }
 
+        DrawTransformGizmoControls("GenericDisplayTab", transform, TransformGizmoContext.Display, _currentDisplayApply, _currentDisplayBlockPos);
+
         float speed = ImGui.GetIO().KeysDown[(int)ImGuiKey.LeftShift] ? 0.1f : 1;
 
         float scale = transform.ScaleXYZ.X;
@@ -856,6 +874,7 @@ public sealed class DebugWindowManager
         transform.EnsureDefaultValues();
 
         _currentTransform = transform;
+        _currentDisplayBlockPos = selection.Position.Copy();
         _currentDisplayContext = $"{selection.Block.Code} -> {collectible.Code} / {transformCode}";
         _currentDisplayApply = value =>
         {
@@ -886,6 +905,7 @@ public sealed class DebugWindowManager
     {
         _currentTransform = null;
         _currentBlock = null;
+        _currentDisplayBlockPos = null;
         _currentDisplayApply = null;
         _currentDisplaySaveToSource = null;
         _currentDisplayRedraw = null;
@@ -914,6 +934,107 @@ public sealed class DebugWindowManager
         if (path.Contains("groundstorage", StringComparison.OrdinalIgnoreCase)) return "groundStorageTransform";
 
         return null;
+    }
+
+    internal bool TryGetActiveTransformGizmo(out ModelTransform transform, out TransformGizmoContext context, out BlockPos? blockPos)
+    {
+        transform = _activeGizmoTransform!;
+        context = _activeGizmoContext;
+        blockPos = _activeGizmoBlockPos;
+        return _activeGizmoTransform != null;
+    }
+
+    internal void SetGizmoTranslation(float x, float y, float z)
+    {
+        if (_activeGizmoTransform == null) return;
+
+        _activeGizmoTransform.Translation.X = x;
+        _activeGizmoTransform.Translation.Y = y;
+        _activeGizmoTransform.Translation.Z = z;
+        _activeGizmoApply?.Invoke(_activeGizmoTransform);
+    }
+
+    internal void SetGizmoRotation(float x, float y, float z)
+    {
+        if (_activeGizmoTransform == null) return;
+
+        _activeGizmoTransform.Rotation.X = x;
+        _activeGizmoTransform.Rotation.Y = y;
+        _activeGizmoTransform.Rotation.Z = z;
+        _activeGizmoApply?.Invoke(_activeGizmoTransform);
+    }
+
+    internal void SetGizmoScale(float x, float y, float z)
+    {
+        if (_activeGizmoTransform == null) return;
+
+        _activeGizmoTransform.ScaleXYZ.X = x;
+        _activeGizmoTransform.ScaleXYZ.Y = y;
+        _activeGizmoTransform.ScaleXYZ.Z = z;
+        _activeGizmoApply?.Invoke(_activeGizmoTransform);
+    }
+
+    internal bool PointInsideDebugUi()
+    {
+        return ImGui.GetIO().WantCaptureMouse;
+    }
+
+    private void ClearActiveTransformGizmo()
+    {
+        _activeGizmoTransform = null;
+        _activeGizmoApply = null;
+        _activeGizmoBlockPos = null;
+        _activeGizmoContext = TransformGizmoContext.Free;
+    }
+
+    private void DrawTransformGizmoControls(string id, ModelTransform transform, TransformGizmoContext context, Action<ModelTransform>? apply, BlockPos? blockPos = null)
+    {
+        ImGui.SeparatorText("Gizmo");
+
+        if (ImGui.RadioButton($"Move##gizmo-mode-{id}", GizmoMode == TransformGizmoMode.Move)) GizmoMode = TransformGizmoMode.Move;
+        ImGui.SameLine();
+        if (ImGui.RadioButton($"Scale##gizmo-mode-{id}", GizmoMode == TransformGizmoMode.Scale)) GizmoMode = TransformGizmoMode.Scale;
+        ImGui.SameLine();
+        if (ImGui.RadioButton($"Rotate##gizmo-mode-{id}", GizmoMode == TransformGizmoMode.Rotate)) GizmoMode = TransformGizmoMode.Rotate;
+        ImGui.SameLine();
+        if (ImGui.RadioButton($"Off##gizmo-mode-{id}", GizmoMode == TransformGizmoMode.None)) GizmoMode = TransformGizmoMode.None;
+
+        bool localSpace = GizmoLocalSpace;
+        if (ImGui.Checkbox($"Local axes##gizmo-local-{id}", ref localSpace)) GizmoLocalSpace = localSpace;
+        ImGui.SameLine();
+        bool snap = IncludeGizmoInIncrement;
+        if (ImGui.Checkbox($"Snap drag##gizmo-snap-{id}", ref snap)) IncludeGizmoInIncrement = snap;
+
+        float increment = TransformGizmoIncrement;
+        ImGui.SetNextItemWidth(120);
+        if (ImGui.DragFloat($"Increment##gizmo-increment-{id}", ref increment, 0.01f, 0.001f, 10f))
+        {
+            TransformGizmoIncrement = Math.Max(0.001f, increment);
+        }
+
+        ImGui.TextDisabled("Drag colored axes in-world. Tongs and forge transform attributes are supported by selecting those transform entries.");
+
+        _activeGizmoTransform = transform;
+        _activeGizmoContext = context;
+        _activeGizmoApply = apply;
+        _activeGizmoBlockPos = blockPos;
+    }
+
+    private static TransformGizmoContext GetGizmoContextForTransformCode(string transformCode)
+    {
+        if (transformCode.Contains("tpOffHandTransform", StringComparison.OrdinalIgnoreCase)) return TransformGizmoContext.OffHand;
+        if (transformCode.Contains("tpHandTransform", StringComparison.OrdinalIgnoreCase)) return TransformGizmoContext.MainHand;
+        if (transformCode.Contains("onTongTransform", StringComparison.OrdinalIgnoreCase) ||
+            transformCode.Contains("onMetalTongTransform", StringComparison.OrdinalIgnoreCase)) return TransformGizmoContext.MainHand;
+        if (transformCode.Contains("groundTransform", StringComparison.OrdinalIgnoreCase) ||
+            transformCode.Contains("groundStorageTransform", StringComparison.OrdinalIgnoreCase)) return TransformGizmoContext.Ground;
+        if (transformCode.Contains("inForgeTransform", StringComparison.OrdinalIgnoreCase) ||
+            transformCode.Contains("DisplayTransform", StringComparison.OrdinalIgnoreCase) ||
+            transformCode.Contains("shelfTransform", StringComparison.OrdinalIgnoreCase) ||
+            transformCode.Contains("toolrackTransform", StringComparison.OrdinalIgnoreCase) ||
+            transformCode.Contains("rackTransform", StringComparison.OrdinalIgnoreCase)) return TransformGizmoContext.Display;
+
+        return TransformGizmoContext.Free;
     }
 
     private void CreateAnimationGui()
