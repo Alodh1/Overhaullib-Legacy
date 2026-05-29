@@ -339,11 +339,13 @@ public struct BallisticSolver : IBallisticSolver
         float randomYaw = random.nextFloat() * dispersionDeg.X * GameMath.DEG2RAD;
         float randomPitch = random.nextFloat() * dispersionDeg.Y * GameMath.DEG2RAD;
 
-        Vector3 verticalAxis = new(0, 0, 1);
-        bool directionIsVertical = (verticalAxis - direction).Length < 1E9 || (verticalAxis + direction).Length < 1E9;
-        if (directionIsVertical) verticalAxis = new(0, 1, 0);
-
         Vector3d forwardAxis = Vector3d.Normalize(direction);
+        Vector3d verticalAxis = new(0, 0, 1);
+        if (Math.Abs(Vector3d.Dot(forwardAxis, verticalAxis)) > 0.999999d)
+        {
+            verticalAxis = new(0, 1, 0);
+        }
+
         Vector3d yawAxis = Vector3d.Normalize(Vector3d.Cross(forwardAxis, verticalAxis));
         Vector3d pitchAxis = Vector3d.Normalize(Vector3d.Cross(yawAxis, forwardAxis));
 

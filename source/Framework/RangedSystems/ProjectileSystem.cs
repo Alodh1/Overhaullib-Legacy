@@ -1,6 +1,7 @@
 using CombatOverhaul.Colliders;
 using CombatOverhaul.DamageSystems;
 using CombatOverhaul.Integration;
+using CombatOverhaul.Utils;
 using OpenTK.Mathematics;
 using ProtoBuf;
 using Vintagestory.API.Client;
@@ -178,6 +179,9 @@ public sealed class ProjectileSystemClient
     private readonly IClientNetworkChannel _clientChannel;
     private readonly EntityPartitioning _entityPartitioning;
     private readonly CombatOverhaulSystem _combatOverhaulSystem;
+    private readonly Dictionary<string, int> _firearmsCollisionMissCounts = new();
+    private long _nextFirearmsCollisionDiagnosticsAtMs;
+    private const int FirearmsCollisionDiagnosticsIntervalMs = 10000;
 
     //private Stopwatch _stopwatch = new();
 
@@ -232,6 +236,35 @@ public sealed class ProjectileSystemClient
         _stopwatch.Reset();*/
     }
 
+    private void RecordFirearmsCollisionMiss(string reason)
+    {
+        _firearmsCollisionMissCounts.TryGetValue(reason, out int count);
+        _firearmsCollisionMissCounts[reason] = count + 1;
+
+        FlushFirearmsCollisionMissDiagnostics();
+    }
+
+    private void FlushFirearmsCollisionMissDiagnostics()
+    {
+        long now = _api.World.ElapsedMilliseconds;
+        if (_nextFirearmsCollisionDiagnosticsAtMs == 0)
+        {
+            _nextFirearmsCollisionDiagnosticsAtMs = now + FirearmsCollisionDiagnosticsIntervalMs;
+            return;
+        }
+
+        if (now < _nextFirearmsCollisionDiagnosticsAtMs || _firearmsCollisionMissCounts.Count == 0)
+        {
+            return;
+        }
+
+        string counts = string.Join(", ", _firearmsCollisionMissCounts.OrderBy(entry => entry.Key).Select(entry => $"{entry.Key}={entry.Value}"));
+        LoggerUtil.Verbose(_api, typeof(ProjectileSystemClient), $"Firearms projectile CO collider miss counts: {counts}");
+
+        _firearmsCollisionMissCounts.Clear();
+        _nextFirearmsCollisionDiagnosticsAtMs = now + FirearmsCollisionDiagnosticsIntervalMs;
+    }
+
     private static bool CanProjectileHit(Entity entity)
     {
         if (!entity.Alive) return false;
@@ -247,8 +280,13 @@ public sealed class ProjectileSystemClient
 
         if (packet.IgnoreEntities.Contains(target.EntityId)) return false;
 
-        if (!CheckCollision(target, out string collider, out Vector3d point, currentPosition, previousPosition, packet.Radius, packet.PenetrationDistance, packet.PenetrationStrength, out float penetrationStrengthLoss, packet.CheckAABBOnly, packet.RequireColliderWhenAvailable, out _, out _))
+        if (!CheckCollision(target, out string collider, out Vector3d point, currentPosition, previousPosition, packet.Radius, packet.PenetrationDistance, packet.PenetrationStrength, out float penetrationStrengthLoss, packet.CheckAABBOnly, packet.RequireColliderWhenAvailable, out string collisionMode, out string missReason))
         {
+            if (packet.RequireColliderWhenAvailable && collisionMode == "CO" && missReason.Length > 0)
+            {
+                RecordFirearmsCollisionMiss(missReason);
+            }
+
             return false;
         }
 
@@ -623,8 +661,12 @@ public sealed class ProjectileSystemServer
     private readonly IServerNetworkChannel _serverChannel;
     private readonly Dictionary<Guid, ProjectileServer> _projectiles = new();
     private readonly Dictionary<Guid, LateProjectileCollision> _lateProjectiles = new();
+    private readonly Dictionary<string, int> _firearmsCollisionRejectionCounts = new();
     private const float _nearestPlayerSearchRange = 300;
-    private const int LateCollisionGraceMs = 750;
+    private const int LateCollisionGraceMs = 1500;
+    private const int MaxLateProjectileCacheSize = 4096;
+    private const int FirearmsCollisionDiagnosticsIntervalMs = 10000;
+    private long _nextFirearmsCollisionDiagnosticsAtMs;
 
     private void TryCollideServerAabb(ProjectileEntity projectile)
     {
@@ -852,6 +894,7 @@ public sealed class ProjectileSystemServer
 
         if (_projectiles.TryGetValue(id, out ProjectileServer? projectileServer) && IsFirearmsProjectile(projectileServer._entity))
         {
+            TrimLateProjectileCacheForInsert();
             _lateProjectiles[id] = new(projectileServer, projectileServer.PacketVersion, _api.World.ElapsedMilliseconds + LateCollisionGraceMs);
         }
 
@@ -863,8 +906,9 @@ public sealed class ProjectileSystemServer
 
         if (_projectiles.TryGetValue(packet.Id, out ProjectileServer? projectileServer))
         {
-            if (!IsValidCollisionPacket(player, projectileServer, packet, projectileServer.PacketVersion))
+            if (!IsValidCollisionPacket(player, projectileServer, packet, projectileServer.PacketVersion, out string rejectionReason))
             {
+                RecordFirearmsCollisionRejection(projectileServer, rejectionReason);
                 return;
             }
 
@@ -885,12 +929,14 @@ public sealed class ProjectileSystemServer
 
         if (_api.World.ElapsedMilliseconds > lateCollision.ExpiresAtMs)
         {
+            RecordFirearmsCollisionRejection(lateCollision.Projectile, "expired-late-hit");
             _lateProjectiles.Remove(packet.Id);
             return;
         }
 
-        if (!IsValidCollisionPacket(player, lateCollision.Projectile, packet, lateCollision.PacketVersion))
+        if (!IsValidCollisionPacket(player, lateCollision.Projectile, packet, lateCollision.PacketVersion, out string lateRejectionReason))
         {
+            RecordFirearmsCollisionRejection(lateCollision.Projectile, lateRejectionReason);
             return;
         }
 
@@ -912,26 +958,85 @@ public sealed class ProjectileSystemServer
         }
     }
 
-    private bool IsValidCollisionPacket(IServerPlayer player, ProjectileServer projectileServer, ProjectileCollisionPacket packet, int expectedPacketVersion)
+    private void TrimLateProjectileCacheForInsert()
     {
+        int overflow = _lateProjectiles.Count - MaxLateProjectileCacheSize + 1;
+        if (overflow <= 0)
+        {
+            return;
+        }
+
+        foreach (Guid id in _lateProjectiles.OrderBy(entry => entry.Value.ExpiresAtMs).Take(overflow).Select(entry => entry.Key).ToArray())
+        {
+            _lateProjectiles.Remove(id);
+        }
+    }
+
+    private void RecordFirearmsCollisionRejection(ProjectileServer projectileServer, string reason)
+    {
+        if (!IsFirearmsProjectile(projectileServer._entity))
+        {
+            return;
+        }
+
+        _firearmsCollisionRejectionCounts.TryGetValue(reason, out int count);
+        _firearmsCollisionRejectionCounts[reason] = count + 1;
+
+        FlushFirearmsCollisionRejectionDiagnostics();
+    }
+
+    private void FlushFirearmsCollisionRejectionDiagnostics()
+    {
+        long now = _api.World.ElapsedMilliseconds;
+        if (_nextFirearmsCollisionDiagnosticsAtMs == 0)
+        {
+            _nextFirearmsCollisionDiagnosticsAtMs = now + FirearmsCollisionDiagnosticsIntervalMs;
+            return;
+        }
+
+        if (now < _nextFirearmsCollisionDiagnosticsAtMs || _firearmsCollisionRejectionCounts.Count == 0)
+        {
+            return;
+        }
+
+        string counts = string.Join(", ", _firearmsCollisionRejectionCounts.OrderBy(entry => entry.Key).Select(entry => $"{entry.Key}={entry.Value}"));
+        LoggerUtil.Verbose(_api, typeof(ProjectileSystemServer), $"Firearms projectile collision rejection counts: {counts}");
+
+        _firearmsCollisionRejectionCounts.Clear();
+        _nextFirearmsCollisionDiagnosticsAtMs = now + FirearmsCollisionDiagnosticsIntervalMs;
+    }
+
+    private bool IsValidCollisionPacket(IServerPlayer player, ProjectileServer projectileServer, ProjectileCollisionPacket packet, int expectedPacketVersion, out string rejectionReason)
+    {
+        rejectionReason = "";
+
         if (packet.PacketVersion != expectedPacketVersion)
         {
+            rejectionReason = "wrong-packet-version";
             return false;
         }
 
         if (!IsPacketSenderOwner(player, projectileServer))
         {
+            rejectionReason = "wrong-owner";
             return false;
         }
 
         Entity? target = _api.World.GetEntityById(packet.ReceiverEntity);
         if (target == null || !CanProjectileHit(target))
         {
+            rejectionReason = "invalid-target";
             return false;
         }
 
-        return target.EntityId != projectileServer._entity.EntityId &&
-            target.EntityId != projectileServer._entity.ShooterId;
+        if (target.EntityId == projectileServer._entity.EntityId ||
+            target.EntityId == projectileServer._entity.ShooterId)
+        {
+            rejectionReason = "self-or-shooter";
+            return false;
+        }
+
+        return true;
     }
 
     private static bool IsPacketSenderOwner(IServerPlayer player, ProjectileServer projectileServer)
