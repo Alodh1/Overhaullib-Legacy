@@ -5,6 +5,8 @@ using CombatOverhaul.MeleeSystems;
 using CombatOverhaul.Utils;
 using ImGuiNET;
 using Newtonsoft.Json.Linq;
+using NVector2 = System.Numerics.Vector2;
+using NVector4 = System.Numerics.Vector4;
 using System.Reflection;
 using Vintagestory.API.Client;
 using Vintagestory.API.Common;
@@ -890,6 +892,7 @@ public sealed partial class DebugWindowManager
             DrawAnimationHistoryControls(selectedAnimationCode);
 
             DrawAnimationPlaybackControls(selectedAnimationCode, selectedAnimation, deltaSeconds);
+            DrawAnimationTimeline(selectedAnimationCode, selectedAnimation);
 
             if (ImGui.Button("Export to clipboard") && AnimationsManager._instance.Animations.Count > 0)
             {
@@ -923,6 +926,74 @@ public sealed partial class DebugWindowManager
             else
             {
                 SetEditorFrameOverride(null);
+            }
+        }
+    }
+
+    private void DrawAnimationTimeline(string animationCode, Animation animation)
+    {
+        if (animation.PlayerKeyFrames.Count == 0) return;
+
+        ImGui.SeparatorText("Timeline");
+        ImGui.TextDisabled("Click timeline to scrub. Click a player marker to select that keyframe.");
+
+        double durationMs = GetEditorAnimationDurationMs(animation);
+        float scrubMs = (float)Math.Clamp(GetEditorFrameTimeMs(animation), 0, durationMs);
+        ImGui.SetNextItemWidth(320);
+        if (ImGui.SliderFloat($"Time ms##editor-timeline-{animationCode}", ref scrubMs, 0, (float)durationMs, "%.0f"))
+        {
+            ScrubEditorTimeline(animation, scrubMs);
+        }
+
+        const float labelWidth = 76;
+        const float rowHeight = 24;
+        const int trackCount = 5;
+        float width = Math.Max(420, ImGui.GetContentRegionAvail().X);
+        float height = rowHeight * trackCount + 18;
+
+        ImGui.InvisibleButton($"##editor-timeline-canvas-{animationCode}", new NVector2(width, height));
+        NVector2 canvasMin = ImGui.GetItemRectMin();
+        NVector2 canvasMax = ImGui.GetItemRectMax();
+        ImDrawListPtr drawList = ImGui.GetWindowDrawList();
+
+        uint background = ImGui.ColorConvertFloat4ToU32(new NVector4(0.07f, 0.065f, 0.055f, 0.78f));
+        uint border = ImGui.ColorConvertFloat4ToU32(new NVector4(0.55f, 0.50f, 0.42f, 1f));
+        uint text = ImGui.ColorConvertFloat4ToU32(new NVector4(0.86f, 0.82f, 0.72f, 1f));
+        uint line = ImGui.ColorConvertFloat4ToU32(new NVector4(0.36f, 0.34f, 0.30f, 1f));
+        uint scrub = ImGui.ColorConvertFloat4ToU32(new NVector4(1.0f, 0.82f, 0.28f, 1f));
+
+        drawList.AddRectFilled(canvasMin, canvasMax, background, 4);
+        drawList.AddRect(canvasMin, canvasMax, border, 4);
+
+        float trackStart = canvasMin.X + labelWidth;
+        float trackEnd = canvasMax.X - 8;
+        float trackWidth = Math.Max(1, trackEnd - trackStart);
+        float TimeToX(double timeMs) => trackStart + (float)(Math.Clamp(timeMs, 0, durationMs) / durationMs * trackWidth);
+        double XToTime(float x) => Math.Clamp((x - trackStart) / trackWidth, 0, 1) * durationMs;
+        float RowY(int row) => canvasMin.Y + 16 + row * rowHeight;
+
+        DrawTimelineTrack(drawList, "Player", 0, BuildPlayerTimelineMarkers(animation), canvasMin.X + 8, trackStart, trackEnd, RowY(0), text, line, durationMs);
+        DrawTimelineTrack(drawList, "Item", 1, BuildFractionTimelineMarkers(animation.ItemKeyFrames.Count, index => animation.ItemAnimationStart.TotalMilliseconds + (animation.ItemAnimationEnd - animation.ItemAnimationStart).TotalMilliseconds * animation.ItemKeyFrames[index].DurationFraction, "I", TimelineItemColor()), canvasMin.X + 8, trackStart, trackEnd, RowY(1), text, line, durationMs);
+        DrawTimelineTrack(drawList, "Sound", 2, BuildFractionTimelineMarkers(animation.SoundFrames.Count, index => durationMs * animation.SoundFrames[index].DurationFraction, "S", TimelineSoundColor()), canvasMin.X + 8, trackStart, trackEnd, RowY(2), text, line, durationMs);
+        DrawTimelineTrack(drawList, "Particle", 3, BuildFractionTimelineMarkers(animation.ParticlesFrames.Count, index => durationMs * animation.ParticlesFrames[index].DurationFraction, "P", TimelineParticleColor()), canvasMin.X + 8, trackStart, trackEnd, RowY(3), text, line, durationMs);
+        DrawTimelineTrack(drawList, "Callback", 4, BuildFractionTimelineMarkers(animation.CallbackFrames.Count, index => durationMs * animation.CallbackFrames[index].DurationFraction, "C", TimelineCallbackColor()), canvasMin.X + 8, trackStart, trackEnd, RowY(4), text, line, durationMs);
+
+        float scrubX = TimeToX(GetEditorFrameTimeMs(animation));
+        drawList.AddLine(new NVector2(scrubX, canvasMin.Y + 6), new NVector2(scrubX, canvasMax.Y - 6), scrub, 2);
+
+        if (ImGui.IsItemHovered())
+        {
+            NVector2 mouse = ImGui.GetIO().MousePos;
+            double hoverMs = XToTime(mouse.X);
+            ImGui.SetTooltip($"{hoverMs:0} ms");
+        }
+
+        if (ImGui.IsItemClicked(ImGuiMouseButton.Left))
+        {
+            NVector2 mouse = ImGui.GetIO().MousePos;
+            if (!TrySelectTimelinePlayerMarker(animation, mouse, trackStart, trackWidth, RowY(0), durationMs))
+            {
+                ScrubEditorTimeline(animation, XToTime(mouse.X));
             }
         }
     }
@@ -1127,6 +1198,129 @@ public sealed partial class DebugWindowManager
 
         animation._playerFrameIndex = targetIndex;
         animation._frameProgress = durationMs <= 0.0001 ? 1 : (float)Math.Clamp((timeMs - startMs) / durationMs, 0, 1);
+    }
+
+    private void ScrubEditorTimeline(Animation animation, double timeMs)
+    {
+        _editorPlaybackPlaying = false;
+        _editorPlaybackPaused = true;
+        ApplyEditorPlaybackTime(animation, timeMs);
+        _editorPlaybackTimeMs = GetEditorFrameTimeMs(animation);
+    }
+
+    private void SelectEditorTimelinePlayerKeyframe(Animation animation, int index)
+    {
+        if (animation.PlayerKeyFrames.Count == 0) return;
+
+        _editorPlaybackPlaying = false;
+        _editorPlaybackPaused = true;
+        animation._playerFrameIndex = Math.Clamp(index, 0, animation.PlayerKeyFrames.Count - 1);
+        animation._frameProgress = 0;
+        _editorPlaybackTimeMs = GetEditorFrameTimeMs(animation);
+    }
+
+    private bool TrySelectTimelinePlayerMarker(Animation animation, NVector2 mouse, float trackStart, float trackWidth, float rowY, double durationMs)
+    {
+        const float hitRadius = 8;
+        if (Math.Abs(mouse.Y - rowY) > hitRadius + 2) return false;
+
+        int selected = -1;
+        float bestDistance = float.MaxValue;
+        for (int index = 0; index < animation.PlayerKeyFrames.Count; index++)
+        {
+            float x = trackStart + (float)(Math.Clamp(animation.PlayerKeyFrames[index].Time.TotalMilliseconds, 0, durationMs) / durationMs * trackWidth);
+            float distance = Math.Abs(mouse.X - x);
+            if (distance >= bestDistance || distance > hitRadius) continue;
+
+            bestDistance = distance;
+            selected = index;
+        }
+
+        if (selected < 0) return false;
+
+        SelectEditorTimelinePlayerKeyframe(animation, selected);
+        return true;
+    }
+
+    private TimelineMarker[] BuildPlayerTimelineMarkers(Animation animation)
+    {
+        TimelineMarker[] markers = new TimelineMarker[animation.PlayerKeyFrames.Count];
+        for (int index = 0; index < animation.PlayerKeyFrames.Count; index++)
+        {
+            bool selected = index == animation._playerFrameIndex;
+            markers[index] = new TimelineMarker(
+                animation.PlayerKeyFrames[index].Time.TotalMilliseconds,
+                index.ToString(),
+                selected ? TimelineSelectedColor() : TimelinePlayerColor(),
+                selected);
+        }
+
+        return markers;
+    }
+
+    private static TimelineMarker[] BuildFractionTimelineMarkers(int count, System.Func<int, double> timeProvider, string prefix, uint color)
+    {
+        TimelineMarker[] markers = new TimelineMarker[count];
+        for (int index = 0; index < count; index++)
+        {
+            markers[index] = new TimelineMarker(timeProvider(index), $"{prefix}{index}", color, false);
+        }
+
+        return markers;
+    }
+
+    private static void DrawTimelineTrack(ImDrawListPtr drawList, string label, int row, TimelineMarker[] markers, float labelX, float trackStart, float trackEnd, float rowY, uint textColor, uint lineColor, double durationMs)
+    {
+        drawList.AddText(new NVector2(labelX, rowY - 8), textColor, label);
+        drawList.AddLine(new NVector2(trackStart, rowY), new NVector2(trackEnd, rowY), lineColor, 1);
+
+        float trackWidth = Math.Max(1, trackEnd - trackStart);
+        foreach (TimelineMarker marker in markers)
+        {
+            float x = trackStart + (float)(Math.Clamp(marker.TimeMs, 0, durationMs) / durationMs * trackWidth);
+            float radius = marker.Selected ? 5.5f : 4f;
+            drawList.AddCircleFilled(new NVector2(x, rowY), radius, marker.Color, 12);
+            if (row == 0)
+            {
+                drawList.AddText(new NVector2(x + 5, rowY - 8), textColor, marker.Label);
+            }
+        }
+    }
+
+    private static double GetEditorAnimationDurationMs(Animation animation)
+    {
+        double baseDurationMs = animation.PlayerKeyFrames.Count == 0 ? 0 : animation.PlayerKeyFrames[^1].Time.TotalMilliseconds;
+        double durationMs = baseDurationMs;
+        durationMs = Math.Max(durationMs, animation.ItemAnimationEnd.TotalMilliseconds);
+
+        foreach (SoundFrame frame in animation.SoundFrames) durationMs = Math.Max(durationMs, baseDurationMs * frame.DurationFraction);
+        foreach (ParticlesFrame frame in animation.ParticlesFrames) durationMs = Math.Max(durationMs, baseDurationMs * frame.DurationFraction);
+        foreach (CallbackFrame frame in animation.CallbackFrames) durationMs = Math.Max(durationMs, baseDurationMs * frame.DurationFraction);
+
+        return Math.Max(1, durationMs);
+    }
+
+    private static uint TimelinePlayerColor() => ImGui.ColorConvertFloat4ToU32(new NVector4(0.30f, 0.72f, 1.0f, 1f));
+    private static uint TimelineSelectedColor() => ImGui.ColorConvertFloat4ToU32(new NVector4(0.26f, 1.0f, 0.48f, 1f));
+    private static uint TimelineItemColor() => ImGui.ColorConvertFloat4ToU32(new NVector4(0.98f, 0.65f, 0.22f, 1f));
+    private static uint TimelineSoundColor() => ImGui.ColorConvertFloat4ToU32(new NVector4(0.90f, 0.42f, 0.88f, 1f));
+    private static uint TimelineParticleColor() => ImGui.ColorConvertFloat4ToU32(new NVector4(0.55f, 0.92f, 0.55f, 1f));
+    private static uint TimelineCallbackColor() => ImGui.ColorConvertFloat4ToU32(new NVector4(0.94f, 0.86f, 0.38f, 1f));
+
+    private readonly struct TimelineMarker
+    {
+        public TimelineMarker(double timeMs, string label, uint color, bool selected)
+        {
+            TimeMs = timeMs;
+            Label = label;
+            Color = color;
+            Selected = selected;
+        }
+
+        public double TimeMs { get; }
+        public string Label { get; }
+        public uint Color { get; }
+        public bool Selected { get; }
     }
 
     private void DrawAnimationHistoryControls(string animationCode)
