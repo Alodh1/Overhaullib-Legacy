@@ -939,7 +939,7 @@ public sealed partial class DebugWindowManager
         if (animation.PlayerKeyFrames.Count == 0) return;
 
         ImGui.SeparatorText("Timeline");
-        ImGui.TextDisabled("Click timeline to scrub. Click a player marker to select it; drag player markers to retime.");
+        ImGui.TextDisabled("Click timeline to scrub. Click markers to select frames; drag player markers to retime.");
 
         double durationMs = GetEditorAnimationDurationMs(animation);
         float scrubMs = (float)Math.Clamp(GetEditorFrameTimeMs(animation), 0, durationMs);
@@ -976,11 +976,17 @@ public sealed partial class DebugWindowManager
         double XToTime(float x) => Math.Clamp((x - trackStart) / trackWidth, 0, 1) * durationMs;
         float RowY(int row) => canvasMin.Y + 16 + row * rowHeight;
 
-        DrawTimelineTrack(drawList, "Player", 0, BuildPlayerTimelineMarkers(animation), canvasMin.X + 8, trackStart, trackEnd, RowY(0), text, line, durationMs);
-        DrawTimelineTrack(drawList, "Item", 1, BuildFractionTimelineMarkers(animation.ItemKeyFrames.Count, index => animation.ItemAnimationStart.TotalMilliseconds + (animation.ItemAnimationEnd - animation.ItemAnimationStart).TotalMilliseconds * animation.ItemKeyFrames[index].DurationFraction, "I", TimelineItemColor()), canvasMin.X + 8, trackStart, trackEnd, RowY(1), text, line, durationMs);
-        DrawTimelineTrack(drawList, "Sound", 2, BuildFractionTimelineMarkers(animation.SoundFrames.Count, index => durationMs * animation.SoundFrames[index].DurationFraction, "S", TimelineSoundColor()), canvasMin.X + 8, trackStart, trackEnd, RowY(2), text, line, durationMs);
-        DrawTimelineTrack(drawList, "Particle", 3, BuildFractionTimelineMarkers(animation.ParticlesFrames.Count, index => durationMs * animation.ParticlesFrames[index].DurationFraction, "P", TimelineParticleColor()), canvasMin.X + 8, trackStart, trackEnd, RowY(3), text, line, durationMs);
-        DrawTimelineTrack(drawList, "Callback", 4, BuildFractionTimelineMarkers(animation.CallbackFrames.Count, index => durationMs * animation.CallbackFrames[index].DurationFraction, "C", TimelineCallbackColor()), canvasMin.X + 8, trackStart, trackEnd, RowY(4), text, line, durationMs);
+        TimelineMarker[] playerMarkers = BuildPlayerTimelineMarkers(animation);
+        TimelineMarker[] itemMarkers = BuildFractionTimelineMarkers(animation.ItemKeyFrames.Count, index => animation.ItemAnimationStart.TotalMilliseconds + (animation.ItemAnimationEnd - animation.ItemAnimationStart).TotalMilliseconds * animation.ItemKeyFrames[index].DurationFraction, "I", TimelineItemColor(), animation._itemFrameIndex);
+        TimelineMarker[] soundMarkers = BuildFractionTimelineMarkers(animation.SoundFrames.Count, index => durationMs * animation.SoundFrames[index].DurationFraction, "S", TimelineSoundColor(), animation._soundsFrameIndex);
+        TimelineMarker[] particleMarkers = BuildFractionTimelineMarkers(animation.ParticlesFrames.Count, index => durationMs * animation.ParticlesFrames[index].DurationFraction, "P", TimelineParticleColor(), animation._particlesFrameIndex);
+        TimelineMarker[] callbackMarkers = BuildFractionTimelineMarkers(animation.CallbackFrames.Count, index => durationMs * animation.CallbackFrames[index].DurationFraction, "C", TimelineCallbackColor(), animation._callbackFrameIndex);
+
+        DrawTimelineTrack(drawList, "Player", 0, playerMarkers, canvasMin.X + 8, trackStart, trackEnd, RowY(0), text, line, durationMs);
+        DrawTimelineTrack(drawList, "Item", 1, itemMarkers, canvasMin.X + 8, trackStart, trackEnd, RowY(1), text, line, durationMs);
+        DrawTimelineTrack(drawList, "Sound", 2, soundMarkers, canvasMin.X + 8, trackStart, trackEnd, RowY(2), text, line, durationMs);
+        DrawTimelineTrack(drawList, "Particle", 3, particleMarkers, canvasMin.X + 8, trackStart, trackEnd, RowY(3), text, line, durationMs);
+        DrawTimelineTrack(drawList, "Callback", 4, callbackMarkers, canvasMin.X + 8, trackStart, trackEnd, RowY(4), text, line, durationMs);
 
         float scrubX = TimeToX(GetEditorFrameTimeMs(animation));
         drawList.AddLine(new NVector2(scrubX, canvasMin.Y + 6), new NVector2(scrubX, canvasMax.Y - 6), scrub, 2);
@@ -995,10 +1001,26 @@ public sealed partial class DebugWindowManager
         if (ImGui.IsItemClicked(ImGuiMouseButton.Left))
         {
             NVector2 mouse = ImGui.GetIO().MousePos;
-            if (TryFindTimelinePlayerMarker(animation, mouse, trackStart, trackWidth, RowY(0), durationMs, out int markerIndex))
+            if (TryFindTimelineMarker(playerMarkers, mouse, trackStart, trackWidth, RowY(0), durationMs, out int markerIndex))
             {
                 SelectEditorTimelinePlayerKeyframe(animation, markerIndex);
                 BeginTimelinePlayerRetiming(animationCode, animation, markerIndex);
+            }
+            else if (TryFindTimelineMarker(itemMarkers, mouse, trackStart, trackWidth, RowY(1), durationMs, out markerIndex))
+            {
+                SelectEditorTimelineItemFrame(animation, markerIndex, itemMarkers[markerIndex].TimeMs);
+            }
+            else if (TryFindTimelineMarker(soundMarkers, mouse, trackStart, trackWidth, RowY(2), durationMs, out markerIndex))
+            {
+                SelectEditorTimelineEventFrame(animation, TimelineEventTrack.Sound, markerIndex, soundMarkers[markerIndex].TimeMs);
+            }
+            else if (TryFindTimelineMarker(particleMarkers, mouse, trackStart, trackWidth, RowY(3), durationMs, out markerIndex))
+            {
+                SelectEditorTimelineEventFrame(animation, TimelineEventTrack.Particle, markerIndex, particleMarkers[markerIndex].TimeMs);
+            }
+            else if (TryFindTimelineMarker(callbackMarkers, mouse, trackStart, trackWidth, RowY(4), durationMs, out markerIndex))
+            {
+                SelectEditorTimelineEventFrame(animation, TimelineEventTrack.Callback, markerIndex, callbackMarkers[markerIndex].TimeMs);
             }
             else
             {
@@ -1241,16 +1263,44 @@ public sealed partial class DebugWindowManager
         _editorPlaybackTimeMs = GetEditorFrameTimeMs(animation);
     }
 
-    private bool TryFindTimelinePlayerMarker(Animation animation, NVector2 mouse, float trackStart, float trackWidth, float rowY, double durationMs, out int markerIndex)
+    private void SelectEditorTimelineItemFrame(Animation animation, int index, double timeMs)
+    {
+        if (animation.ItemKeyFrames.Count == 0) return;
+
+        animation._itemFrameIndex = Math.Clamp(index, 0, animation.ItemKeyFrames.Count - 1);
+        ScrubEditorTimeline(animation, timeMs);
+    }
+
+    private void SelectEditorTimelineEventFrame(Animation animation, TimelineEventTrack track, int index, double timeMs)
+    {
+        switch (track)
+        {
+            case TimelineEventTrack.Sound when animation.SoundFrames.Count > 0:
+                animation._soundsFrameIndex = Math.Clamp(index, 0, animation.SoundFrames.Count - 1);
+                break;
+            case TimelineEventTrack.Particle when animation.ParticlesFrames.Count > 0:
+                animation._particlesFrameIndex = Math.Clamp(index, 0, animation.ParticlesFrames.Count - 1);
+                break;
+            case TimelineEventTrack.Callback when animation.CallbackFrames.Count > 0:
+                animation._callbackFrameIndex = Math.Clamp(index, 0, animation.CallbackFrames.Count - 1);
+                break;
+            default:
+                return;
+        }
+
+        ScrubEditorTimeline(animation, timeMs);
+    }
+
+    private bool TryFindTimelineMarker(TimelineMarker[] markers, NVector2 mouse, float trackStart, float trackWidth, float rowY, double durationMs, out int markerIndex)
     {
         markerIndex = -1;
         const float hitRadius = 8;
         if (Math.Abs(mouse.Y - rowY) > hitRadius + 2) return false;
 
         float bestDistance = float.MaxValue;
-        for (int index = 0; index < animation.PlayerKeyFrames.Count; index++)
+        for (int index = 0; index < markers.Length; index++)
         {
-            float x = trackStart + (float)(Math.Clamp(animation.PlayerKeyFrames[index].Time.TotalMilliseconds, 0, durationMs) / durationMs * trackWidth);
+            float x = trackStart + (float)(Math.Clamp(markers[index].TimeMs, 0, durationMs) / durationMs * trackWidth);
             float distance = Math.Abs(mouse.X - x);
             if (distance >= bestDistance || distance > hitRadius) continue;
 
@@ -1323,12 +1373,13 @@ public sealed partial class DebugWindowManager
         return markers;
     }
 
-    private static TimelineMarker[] BuildFractionTimelineMarkers(int count, System.Func<int, double> timeProvider, string prefix, uint color)
+    private static TimelineMarker[] BuildFractionTimelineMarkers(int count, System.Func<int, double> timeProvider, string prefix, uint color, int selectedIndex)
     {
         TimelineMarker[] markers = new TimelineMarker[count];
         for (int index = 0; index < count; index++)
         {
-            markers[index] = new TimelineMarker(timeProvider(index), $"{prefix}{index}", color, false);
+            bool selected = index == selectedIndex;
+            markers[index] = new TimelineMarker(timeProvider(index), $"{prefix}{index}", selected ? TimelineSelectedColor() : color, selected);
         }
 
         return markers;
@@ -1371,6 +1422,13 @@ public sealed partial class DebugWindowManager
     private static uint TimelineSoundColor() => ImGui.ColorConvertFloat4ToU32(new NVector4(0.90f, 0.42f, 0.88f, 1f));
     private static uint TimelineParticleColor() => ImGui.ColorConvertFloat4ToU32(new NVector4(0.55f, 0.92f, 0.55f, 1f));
     private static uint TimelineCallbackColor() => ImGui.ColorConvertFloat4ToU32(new NVector4(0.94f, 0.86f, 0.38f, 1f));
+
+    private enum TimelineEventTrack
+    {
+        Sound,
+        Particle,
+        Callback
+    }
 
     private readonly struct TimelineMarker
     {
