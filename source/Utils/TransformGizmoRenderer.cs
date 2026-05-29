@@ -133,6 +133,7 @@ internal sealed class TransformGizmoRenderer : IRenderer
             _dragStartScale = transform.ScaleXYZ;
         }
 
+        _debugManager.NotifyActiveTransformGizmoDragStarted();
         args.Handled = true;
     }
 
@@ -141,6 +142,7 @@ internal sealed class TransformGizmoRenderer : IRenderer
         if (!ShouldDraw)
         {
             _hoveredAxis = TransformGizmoAxis.None;
+            if (_draggedAxis != TransformGizmoAxis.None) _debugManager.NotifyActiveTransformGizmoDragEnded();
             _draggedAxis = TransformGizmoAxis.None;
             return;
         }
@@ -166,6 +168,7 @@ internal sealed class TransformGizmoRenderer : IRenderer
         if (_draggedAxis == TransformGizmoAxis.None) return;
         _draggedAxis = TransformGizmoAxis.None;
         _hoveredAxis = TransformGizmoAxis.None;
+        _debugManager.NotifyActiveTransformGizmoDragEnded();
         args.Handled = true;
     }
 

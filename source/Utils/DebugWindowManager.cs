@@ -367,6 +367,8 @@ public sealed partial class DebugWindowManager
     private BlockPos? _activeGizmoBlockPos;
     private Vec3d? _activeGizmoWorldCenter;
     private Action<ModelTransform>? _activeGizmoApply;
+    private Action? _activeGizmoDragStarted;
+    private Action? _activeGizmoDragEnded;
     internal TransformGizmoMode GizmoMode { get; private set; } = TransformGizmoMode.Move;
     internal bool GizmoLocalSpace { get; private set; } = true;
     internal bool IncludeGizmoInIncrement { get; private set; } = true;
@@ -988,16 +990,28 @@ public sealed partial class DebugWindowManager
         return ImGui.GetIO().WantCaptureMouse;
     }
 
+    internal void NotifyActiveTransformGizmoDragStarted()
+    {
+        _activeGizmoDragStarted?.Invoke();
+    }
+
+    internal void NotifyActiveTransformGizmoDragEnded()
+    {
+        _activeGizmoDragEnded?.Invoke();
+    }
+
     private void ClearActiveTransformGizmo()
     {
         _activeGizmoTransform = null;
         _activeGizmoApply = null;
+        _activeGizmoDragStarted = null;
+        _activeGizmoDragEnded = null;
         _activeGizmoBlockPos = null;
         _activeGizmoWorldCenter = null;
         _activeGizmoContext = TransformGizmoContext.Free;
     }
 
-    private void DrawTransformGizmoControls(string id, ModelTransform transform, TransformGizmoContext context, Action<ModelTransform>? apply, BlockPos? blockPos = null, Vec3d? worldCenter = null, bool allowMove = true, bool allowScale = true, bool allowRotate = true)
+    private void DrawTransformGizmoControls(string id, ModelTransform transform, TransformGizmoContext context, Action<ModelTransform>? apply, BlockPos? blockPos = null, Vec3d? worldCenter = null, bool allowMove = true, bool allowScale = true, bool allowRotate = true, Action? dragStarted = null, Action? dragEnded = null)
     {
         ImGui.SeparatorText("Gizmo");
 
@@ -1040,6 +1054,8 @@ public sealed partial class DebugWindowManager
         _activeGizmoTransform = transform;
         _activeGizmoContext = context;
         _activeGizmoApply = apply;
+        _activeGizmoDragStarted = dragStarted;
+        _activeGizmoDragEnded = dragEnded;
         _activeGizmoBlockPos = blockPos;
         _activeGizmoWorldCenter = worldCenter;
     }

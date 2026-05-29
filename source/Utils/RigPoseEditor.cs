@@ -33,6 +33,11 @@ public sealed partial class DebugWindowManager
 
     private bool _rigPoseEditorEnabled;
     private bool _highlightSelectedRigPart = true;
+    private bool _rigIkFollowParents;
+    private bool _rigIkDragActive;
+    private int _rigIkDragKeyframeIndex = -1;
+    private EnumAnimatedElement _rigIkDragPart = EnumAnimatedElement.Unknown;
+    private PlayerFrame _rigIkDragStartFrame = PlayerFrame.Zero;
     private int _rigPartIndex;
     private ModelTransform _rigGizmoTransform = CreateDefaultTransform();
 
@@ -82,7 +87,13 @@ public sealed partial class DebugWindowManager
         ImGui.Combo("Rig part##rig", ref _rigPartIndex, RigEditablePartNames, RigEditablePartNames.Length);
         ImGui.SameLine();
         ImGui.Checkbox("Highlight selected part##rig", ref _highlightSelectedRigPart);
+        ImGui.SameLine();
+        ImGui.Checkbox("IK follow parents##rig", ref _rigIkFollowParents);
         ImGui.TextDisabled("Shift-click a player body part to select it.");
+        if (_rigIkFollowParents)
+        {
+            ImGui.TextDisabled("IK affects Move gizmo drags on child parts; Rotate stays FK.");
+        }
 
         EnumAnimatedElement selectedPart = RigEditableParts[_rigPartIndex];
         PLayerKeyFrame keyFrame = animation.PlayerKeyFrames[animation._playerFrameIndex];
@@ -118,7 +129,9 @@ public sealed partial class DebugWindowManager
             TransformGizmoContext.RigPart,
             transform => ApplyRigTransform(animation, selectedPart, transform),
             worldCenter: worldCenter,
-            allowScale: false);
+            allowScale: false,
+            dragStarted: () => BeginRigGizmoDrag(animation, selectedPart),
+            dragEnded: EndRigGizmoDrag);
 
         ImGui.TextDisabled($"Editing {animationCode} / keyframe {animation._playerFrameIndex} / {selectedPart}.");
         return true;
@@ -147,7 +160,90 @@ public sealed partial class DebugWindowManager
             transform.Rotation.Y,
             transform.Rotation.Z);
 
+        if (_rigIkFollowParents && GizmoMode == TransformGizmoMode.Move && ApplyRigIkMove(animation, selectedPart, element)) return;
+
         SetRigElement(animation, selectedPart, element);
+    }
+
+    private void BeginRigGizmoDrag(Animation animation, EnumAnimatedElement selectedPart)
+    {
+        int index = animation._playerFrameIndex;
+        if (index < 0 || index >= animation.PlayerKeyFrames.Count)
+        {
+            EndRigGizmoDrag();
+            return;
+        }
+
+        _rigIkDragActive = true;
+        _rigIkDragKeyframeIndex = index;
+        _rigIkDragPart = selectedPart;
+        _rigIkDragStartFrame = animation.PlayerKeyFrames[index].Frame;
+    }
+
+    private void EndRigGizmoDrag()
+    {
+        _rigIkDragActive = false;
+        _rigIkDragKeyframeIndex = -1;
+        _rigIkDragPart = EnumAnimatedElement.Unknown;
+        _rigIkDragStartFrame = PlayerFrame.Zero;
+    }
+
+    private bool ApplyRigIkMove(Animation animation, EnumAnimatedElement selectedPart, AnimationElement desiredElement)
+    {
+        if (!TryGetIkFollowRoot(selectedPart, out EnumAnimatedElement rootPart)) return false;
+
+        int index = animation._playerFrameIndex;
+        if (!_rigIkDragActive || _rigIkDragKeyframeIndex != index || _rigIkDragPart != selectedPart)
+        {
+            BeginRigGizmoDrag(animation, selectedPart);
+        }
+
+        if (!_rigIkDragActive || index < 0 || index >= animation.PlayerKeyFrames.Count) return false;
+
+        AnimationElement startSelected = GetRigElement(_rigIkDragStartFrame, selectedPart, out bool selectedExists);
+        if (!selectedExists) return false;
+
+        AnimationElement startRoot = GetRigElement(_rigIkDragStartFrame, rootPart, out bool rootExists);
+        if (!rootExists) startRoot = AnimationElement.Zero;
+
+        AnimationElement solvedRoot = TranslateElementBy(startRoot, desiredElement, startSelected);
+        PLayerKeyFrame keyFrame = animation.PlayerKeyFrames[index];
+        PlayerFrame solvedFrame = SetRigElement(_rigIkDragStartFrame, rootPart, solvedRoot);
+        animation.PlayerKeyFrames[index] = new PLayerKeyFrame(solvedFrame, keyFrame.Time, keyFrame.EasingFunction, keyFrame.EasingType, keyFrame.FrameProgressRange);
+        animation._playerFrameEdited = true;
+        return true;
+    }
+
+    private static bool TryGetIkFollowRoot(EnumAnimatedElement selectedPart, out EnumAnimatedElement rootPart)
+    {
+        rootPart = selectedPart switch
+        {
+            EnumAnimatedElement.ItemAnchor => EnumAnimatedElement.UpperArmR,
+            EnumAnimatedElement.LowerArmR => EnumAnimatedElement.UpperArmR,
+            EnumAnimatedElement.ItemAnchorL => EnumAnimatedElement.UpperArmL,
+            EnumAnimatedElement.LowerArmL => EnumAnimatedElement.UpperArmL,
+            EnumAnimatedElement.LowerFootR => EnumAnimatedElement.UpperFootR,
+            EnumAnimatedElement.LowerFootL => EnumAnimatedElement.UpperFootL,
+            EnumAnimatedElement.Head => EnumAnimatedElement.Neck,
+            _ => EnumAnimatedElement.Unknown
+        };
+
+        return rootPart != EnumAnimatedElement.Unknown;
+    }
+
+    private static AnimationElement TranslateElementBy(AnimationElement rootStart, AnimationElement desiredSelected, AnimationElement selectedStart)
+    {
+        float dx = (desiredSelected.OffsetX ?? 0) - (selectedStart.OffsetX ?? 0);
+        float dy = (desiredSelected.OffsetY ?? 0) - (selectedStart.OffsetY ?? 0);
+        float dz = (desiredSelected.OffsetZ ?? 0) - (selectedStart.OffsetZ ?? 0);
+
+        return new AnimationElement(
+            (rootStart.OffsetX ?? 0) + dx,
+            (rootStart.OffsetY ?? 0) + dy,
+            (rootStart.OffsetZ ?? 0) + dz,
+            rootStart.RotationX,
+            rootStart.RotationY,
+            rootStart.RotationZ);
     }
 
     private static ModelTransform RigElementToTransform(AnimationElement element)
