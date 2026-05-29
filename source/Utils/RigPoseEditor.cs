@@ -38,6 +38,11 @@ public sealed partial class DebugWindowManager
     private int _rigIkDragKeyframeIndex = -1;
     private EnumAnimatedElement _rigIkDragPart = EnumAnimatedElement.Unknown;
     private PlayerFrame _rigIkDragStartFrame = PlayerFrame.Zero;
+    private bool _rigPartClipboardHasValue;
+    private EnumAnimatedElement _rigPartClipboardPart = EnumAnimatedElement.Unknown;
+    private AnimationElement _rigPartClipboard = AnimationElement.Zero;
+    private bool _rigFullPoseClipboardHasValue;
+    private PlayerFrame _rigFullPoseClipboard = PlayerFrame.Zero;
     private int _rigPartIndex;
     private ModelTransform _rigGizmoTransform = CreateDefaultTransform();
 
@@ -114,6 +119,7 @@ public sealed partial class DebugWindowManager
         }
 
         _detachedEditorCamera?.DrawControls("rig");
+        DrawRigPoseTools(animationCode, animation, selectedPart, ref element, ref exists);
 
         if (!exists) return true;
 
@@ -138,6 +144,92 @@ public sealed partial class DebugWindowManager
 
         ImGui.TextDisabled($"Editing {animationCode} / keyframe {animation._playerFrameIndex} / {selectedPart}.");
         return true;
+    }
+
+    private void DrawRigPoseTools(string animationCode, Animation animation, EnumAnimatedElement selectedPart, ref AnimationElement element, ref bool exists)
+    {
+        ImGui.SeparatorText("Pose tools");
+
+        if (!exists) ImGui.BeginDisabled();
+        if (ImGui.Button("Copy part##rig-pose-tools"))
+        {
+            _rigPartClipboard = element;
+            _rigPartClipboardPart = selectedPart;
+            _rigPartClipboardHasValue = true;
+        }
+        if (!exists) ImGui.EndDisabled();
+
+        ImGui.SameLine();
+        if (!_rigPartClipboardHasValue) ImGui.BeginDisabled();
+        if (ImGui.Button("Paste part##rig-pose-tools"))
+        {
+            ApplyRigPoseAction(animationCode, animation, "Paste rig part", () => SetRigElement(animation, selectedPart, _rigPartClipboard));
+            element = _rigPartClipboard;
+            exists = true;
+        }
+        if (!_rigPartClipboardHasValue) ImGui.EndDisabled();
+
+        ImGui.SameLine();
+        if (!exists) ImGui.BeginDisabled();
+        if (ImGui.Button("Reset part##rig-pose-tools"))
+        {
+            ApplyRigPoseAction(animationCode, animation, $"Reset {selectedPart}", () => SetRigElement(animation, selectedPart, AnimationElement.Zero));
+            element = AnimationElement.Zero;
+            exists = true;
+        }
+        if (!exists) ImGui.EndDisabled();
+
+        ImGui.SameLine();
+        EnumAnimatedElement oppositePart = EnumAnimatedElement.Unknown;
+        bool canMirrorPart = exists && TryGetOppositeRigPart(selectedPart, out oppositePart);
+        if (!canMirrorPart) ImGui.BeginDisabled();
+        if (ImGui.Button("Mirror to opposite side##rig-pose-tools"))
+        {
+            AnimationElement mirrored = MirrorRigElement(element);
+            ApplyRigPoseAction(animationCode, animation, $"Mirror {selectedPart} to {oppositePart}", () => SetRigElement(animation, oppositePart, mirrored));
+        }
+        if (!canMirrorPart) ImGui.EndDisabled();
+
+        if (_rigPartClipboardHasValue)
+        {
+            ImGui.TextDisabled($"Part clipboard: {_rigPartClipboardPart}");
+        }
+        else
+        {
+            ImGui.TextDisabled("Part clipboard: empty");
+        }
+
+        if (ImGui.Button("Copy full pose##rig-pose-tools"))
+        {
+            _rigFullPoseClipboard = animation.PlayerKeyFrames[animation._playerFrameIndex].Frame;
+            _rigFullPoseClipboardHasValue = true;
+        }
+
+        ImGui.SameLine();
+        if (!_rigFullPoseClipboardHasValue) ImGui.BeginDisabled();
+        if (ImGui.Button("Paste full pose##rig-pose-tools"))
+        {
+            ApplyRigPoseAction(animationCode, animation, "Paste full pose", () => SetCurrentRigFrame(animation, _rigFullPoseClipboard));
+            element = GetRigElement(animation.PlayerKeyFrames[animation._playerFrameIndex].Frame, selectedPart, out exists);
+        }
+        if (!_rigFullPoseClipboardHasValue) ImGui.EndDisabled();
+
+        ImGui.SameLine();
+        if (ImGui.Button("Mirror full pose##rig-pose-tools"))
+        {
+            ApplyRigPoseAction(animationCode, animation, "Mirror full pose", () => SetCurrentRigFrame(animation, MirrorRigFrame(animation.PlayerKeyFrames[animation._playerFrameIndex].Frame)));
+            element = GetRigElement(animation.PlayerKeyFrames[animation._playerFrameIndex].Frame, selectedPart, out exists);
+        }
+
+        ImGui.TextDisabled(_rigFullPoseClipboardHasValue ? "Full pose clipboard: populated" : "Full pose clipboard: empty");
+    }
+
+    private void ApplyRigPoseAction(string animationCode, Animation animation, string label, Action action)
+    {
+        _animationHistory.BeginEdit(animationCode, animation, label);
+        action();
+        _animationHistory.CommitEdit(animationCode, animation);
+        _animationHistoryExplicitEditThisFrame = true;
     }
 
     private bool DrawRigElementNumericEditor(EnumAnimatedElement selectedPart, AnimationElement element, out AnimationElement editedElement)
@@ -287,6 +379,16 @@ public sealed partial class DebugWindowManager
         animation._playerFrameEdited = true;
     }
 
+    private static void SetCurrentRigFrame(Animation animation, PlayerFrame frame)
+    {
+        int index = animation._playerFrameIndex;
+        if (index < 0 || index >= animation.PlayerKeyFrames.Count) return;
+
+        PLayerKeyFrame keyFrame = animation.PlayerKeyFrames[index];
+        animation.PlayerKeyFrames[index] = new PLayerKeyFrame(frame, keyFrame.Time, keyFrame.EasingFunction, keyFrame.EasingType, keyFrame.FrameProgressRange);
+        animation._playerFrameEdited = true;
+    }
+
     private static PlayerFrame SetRigElement(PlayerFrame frame, EnumAnimatedElement selectedPart, AnimationElement element)
     {
         RightHandFrame? right = frame.RightHand;
@@ -362,6 +464,80 @@ public sealed partial class DebugWindowManager
             detachedAnchorFollow: frame.DetachedAnchorFollow,
             lowerTorso: lowerTorso);
     }
+
+    private static bool TryGetOppositeRigPart(EnumAnimatedElement selectedPart, out EnumAnimatedElement oppositePart)
+    {
+        oppositePart = selectedPart switch
+        {
+            EnumAnimatedElement.ItemAnchor => EnumAnimatedElement.ItemAnchorL,
+            EnumAnimatedElement.ItemAnchorL => EnumAnimatedElement.ItemAnchor,
+            EnumAnimatedElement.LowerArmR => EnumAnimatedElement.LowerArmL,
+            EnumAnimatedElement.LowerArmL => EnumAnimatedElement.LowerArmR,
+            EnumAnimatedElement.UpperArmR => EnumAnimatedElement.UpperArmL,
+            EnumAnimatedElement.UpperArmL => EnumAnimatedElement.UpperArmR,
+            EnumAnimatedElement.UpperFootR => EnumAnimatedElement.UpperFootL,
+            EnumAnimatedElement.UpperFootL => EnumAnimatedElement.UpperFootR,
+            EnumAnimatedElement.LowerFootR => EnumAnimatedElement.LowerFootL,
+            EnumAnimatedElement.LowerFootL => EnumAnimatedElement.LowerFootR,
+            _ => EnumAnimatedElement.Unknown
+        };
+
+        return oppositePart != EnumAnimatedElement.Unknown;
+    }
+
+    private static AnimationElement MirrorRigElement(AnimationElement element)
+    {
+        return new AnimationElement(
+            Negate(element.OffsetX),
+            element.OffsetY,
+            element.OffsetZ,
+            element.RotationX,
+            Negate(element.RotationY),
+            Negate(element.RotationZ));
+    }
+
+    private static PlayerFrame MirrorRigFrame(PlayerFrame frame)
+    {
+        RightHandFrame? right = frame.LeftHand == null
+            ? null
+            : new RightHandFrame(
+                MirrorRigElement(frame.LeftHand.Value.ItemAnchorL),
+                MirrorRigElement(frame.LeftHand.Value.LowerArmL),
+                MirrorRigElement(frame.LeftHand.Value.UpperArmL));
+
+        LeftHandFrame? left = frame.RightHand == null
+            ? null
+            : new LeftHandFrame(
+                MirrorRigElement(frame.RightHand.Value.ItemAnchor),
+                MirrorRigElement(frame.RightHand.Value.LowerArmR),
+                MirrorRigElement(frame.RightHand.Value.UpperArmR));
+
+        OtherPartsFrame? other = frame.OtherParts == null
+            ? null
+            : new OtherPartsFrame(
+                MirrorRigElement(frame.OtherParts.Value.Neck),
+                MirrorRigElement(frame.OtherParts.Value.Head),
+                MirrorRigElement(frame.OtherParts.Value.UpperFootL),
+                MirrorRigElement(frame.OtherParts.Value.UpperFootR),
+                MirrorRigElement(frame.OtherParts.Value.LowerFootL),
+                MirrorRigElement(frame.OtherParts.Value.LowerFootR));
+
+        return new PlayerFrame(
+            right,
+            left,
+            other,
+            frame.UpperTorso == null ? null : MirrorRigElement(frame.UpperTorso.Value),
+            frame.DetachedAnchorFrame == null ? null : MirrorRigElement(frame.DetachedAnchorFrame.Value),
+            frame.DetachedAnchor,
+            frame.SwitchArms,
+            frame.PitchFollow,
+            frame.FovMultiplier,
+            frame.BobbingAmplitude,
+            frame.DetachedAnchorFollow,
+            frame.LowerTorso == null ? null : MirrorRigElement(frame.LowerTorso.Value));
+    }
+
+    private static float? Negate(float? value) => value == null ? null : -value.Value;
 
     private static AnimationElement GetRigElement(PlayerFrame frame, EnumAnimatedElement selectedPart, out bool exists)
     {
