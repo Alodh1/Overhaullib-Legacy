@@ -30,6 +30,7 @@ internal sealed class DetachedEditorCamera : IRenderer
     public bool Enabled { get; private set; }
     public double RenderOrder => 0.98;
     public int RenderRange => 9999;
+    internal static bool IsActive => _activeInstance?.Enabled == true;
 
     public DetachedEditorCamera(ICoreClientAPI api)
     {
