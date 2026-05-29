@@ -1401,9 +1401,20 @@ public sealed partial class DebugWindowManager
         string selection = GetTimelineSelectionLabel(animation);
         ImGui.TextDisabled(selection);
 
+        bool canInsert = CanInsertTimelineSelection(animation);
         bool canDuplicate = CanDuplicateTimelineSelection(animation);
         bool canDelete = CanDeleteTimelineSelection(animation);
 
+        if (!canInsert) ImGui.BeginDisabled();
+        if (ImGui.Button("Insert marker at time##timeline-actions"))
+        {
+            _animationHistory.BeginEdit(animationCode, animation, $"Insert {selection}");
+            InsertTimelineSelection(animation);
+            _animationHistory.CommitEdit(animationCode, animation);
+        }
+        if (!canInsert) ImGui.EndDisabled();
+
+        ImGui.SameLine();
         if (!canDuplicate) ImGui.BeginDisabled();
         if (ImGui.Button("Duplicate selected marker##timeline-actions"))
         {
@@ -1435,6 +1446,17 @@ public sealed partial class DebugWindowManager
         };
     }
 
+    private bool CanInsertTimelineSelection(Animation animation)
+    {
+        return _timelineSelectedKind switch
+        {
+            TimelineRetimingKind.Player => animation.PlayerKeyFrames.Count > 0,
+            TimelineRetimingKind.Item => (animation.ItemAnimationEnd - animation.ItemAnimationStart).TotalMilliseconds > 0.0001,
+            TimelineRetimingKind.Event => GetEditorPlayerDurationMs(animation) > 0.0001,
+            _ => false
+        };
+    }
+
     private bool CanDuplicateTimelineSelection(Animation animation)
     {
         return _timelineSelectedKind switch
@@ -1455,6 +1477,22 @@ public sealed partial class DebugWindowManager
             TimelineRetimingKind.Event => GetTimelineEventFrameCount(animation, _timelineSelectedEventTrack) > 0,
             _ => false
         };
+    }
+
+    private void InsertTimelineSelection(Animation animation)
+    {
+        switch (_timelineSelectedKind)
+        {
+            case TimelineRetimingKind.Player:
+                InsertTimelinePlayerKeyframe(animation);
+                break;
+            case TimelineRetimingKind.Item:
+                InsertTimelineItemKeyframe(animation);
+                break;
+            case TimelineRetimingKind.Event:
+                InsertTimelineEventFrame(animation, _timelineSelectedEventTrack);
+                break;
+        }
     }
 
     private void DuplicateTimelineSelection(Animation animation)
@@ -1487,6 +1525,62 @@ public sealed partial class DebugWindowManager
                 DeleteTimelineEventFrame(animation, _timelineSelectedEventTrack);
                 break;
         }
+    }
+
+    private void InsertTimelinePlayerKeyframe(Animation animation)
+    {
+        if (animation.PlayerKeyFrames.Count == 0) return;
+
+        double playerDurationMs = GetEditorPlayerDurationMs(animation);
+        double requestedMs = Math.Clamp(GetEditorFrameTimeMs(animation), 0, playerDurationMs);
+        int insertIndex = GetTimelineInsertIndex(animation.PlayerKeyFrames.Count, index => animation.PlayerKeyFrames[index].Time.TotalMilliseconds, requestedMs);
+        double insertMs = GetInsertMarkerTimeMs(requestedMs, insertIndex, animation.PlayerKeyFrames.Count, index => animation.PlayerKeyFrames[index].Time.TotalMilliseconds, 0, playerDurationMs);
+        PlayerFrame frame = animation.StillPlayerFrame(animation._playerFrameIndex, animation._frameProgress).Player;
+
+        animation.PlayerKeyFrames.Insert(insertIndex, new PLayerKeyFrame(frame, TimeSpan.FromMilliseconds(insertMs), EasingFunctionType.Linear));
+        animation._playerFrameIndex = insertIndex;
+        animation._frameProgress = 0;
+        animation._playerFrameEdited = true;
+        ProcessPlayerKeyFramesForEditor(animation);
+        SelectEditorTimelinePlayerKeyframe(animation, insertIndex);
+    }
+
+    private void InsertTimelineItemKeyframe(Animation animation)
+    {
+        double startMs = animation.ItemAnimationStart.TotalMilliseconds;
+        double endMs = animation.ItemAnimationEnd.TotalMilliseconds;
+        double spanMs = endMs - startMs;
+        if (spanMs <= 0.0001) return;
+
+        double requestedMs = Math.Clamp(GetEditorFrameTimeMs(animation), startMs, endMs);
+        int insertIndex = GetTimelineInsertIndex(animation.ItemKeyFrames.Count, index => GetTimelineItemKeyframeTimeMs(animation, index), requestedMs);
+        double insertMs = GetInsertMarkerTimeMs(requestedMs, insertIndex, animation.ItemKeyFrames.Count, index => GetTimelineItemKeyframeTimeMs(animation, index), startMs, endMs);
+        float fraction = (float)Math.Clamp((insertMs - startMs) / spanMs, 0, 1);
+        ItemFrame frame = animation.ItemKeyFrames.Count > 0
+            ? animation.ItemKeyFrames[Math.Clamp(animation._itemFrameIndex, 0, animation.ItemKeyFrames.Count - 1)].Frame
+            : ItemKeyFrame.Empty.Frame;
+        EasingFunctionType easing = animation.ItemKeyFrames.Count > 0
+            ? animation.ItemKeyFrames[Math.Clamp(animation._itemFrameIndex, 0, animation.ItemKeyFrames.Count - 1)].EasingFunction
+            : EasingFunctionType.Linear;
+
+        animation.ItemKeyFrames.Insert(insertIndex, new ItemKeyFrame(frame, fraction, easing));
+        animation._itemFrameIndex = insertIndex;
+        SelectEditorTimelineItemFrame(animation, insertIndex, insertMs);
+    }
+
+    private void InsertTimelineEventFrame(Animation animation, TimelineEventTrack track)
+    {
+        double playerDurationMs = GetEditorPlayerDurationMs(animation);
+        if (playerDurationMs <= 0.0001) return;
+
+        int count = GetTimelineEventFrameCount(animation, track);
+        double requestedMs = Math.Clamp(GetEditorFrameTimeMs(animation), 0, playerDurationMs);
+        int insertIndex = GetTimelineInsertIndex(count, index => GetTimelineEventFrameTimeMs(animation, track, index), requestedMs);
+        double insertMs = GetInsertMarkerTimeMs(requestedMs, insertIndex, count, index => GetTimelineEventFrameTimeMs(animation, track, index), 0, playerDurationMs);
+        float fraction = (float)Math.Clamp(insertMs / playerDurationMs, 0, 1);
+
+        InsertBlankTimelineEventFrame(animation, track, insertIndex, fraction);
+        SelectEditorTimelineEventFrame(animation, track, insertIndex, insertMs);
     }
 
     private void DuplicateTimelinePlayerKeyframe(Animation animation)
@@ -1611,6 +1705,29 @@ public sealed partial class DebugWindowManager
         }
 
         return Math.Clamp(sourceMs + 50, minMs, maxMs);
+    }
+
+    private static int GetTimelineInsertIndex(int count, System.Func<int, double> timeProvider, double timeMs)
+    {
+        int index = 0;
+        while (index < count && timeProvider(index) < timeMs)
+        {
+            index++;
+        }
+
+        return index;
+    }
+
+    private static double GetInsertMarkerTimeMs(double requestedMs, int insertIndex, int count, System.Func<int, double> timeProvider, double minMs, double maxMs)
+    {
+        double lowerMs = insertIndex <= 0 ? minMs : timeProvider(insertIndex - 1) + 1;
+        double upperMs = insertIndex >= count ? maxMs : timeProvider(insertIndex) - 1;
+        if (lowerMs <= upperMs)
+        {
+            return Math.Clamp(requestedMs, lowerMs, upperMs);
+        }
+
+        return Math.Clamp(requestedMs, minMs, maxMs);
     }
 
     private void RetimingTimelineItemKeyframe(Animation animation, int keyframeIndex, double requestedTimeMs)
@@ -1789,6 +1906,25 @@ public sealed partial class DebugWindowManager
             TimelineEventTrack.Callback => animation.CallbackFrames[index].DurationFraction,
             _ => 0
         };
+    }
+
+    private static void InsertBlankTimelineEventFrame(Animation animation, TimelineEventTrack track, int insertIndex, float fraction)
+    {
+        switch (track)
+        {
+            case TimelineEventTrack.Sound:
+                animation.SoundFrames.Insert(insertIndex, new SoundFrame(new[] { "" }, fraction));
+                animation._soundsFrameIndex = insertIndex;
+                break;
+            case TimelineEventTrack.Particle:
+                animation.ParticlesFrames.Insert(insertIndex, new ParticlesFrame("", fraction, OpenTK.Mathematics.Vector3.Zero, OpenTK.Mathematics.Vector3.Zero, 1));
+                animation._particlesFrameIndex = insertIndex;
+                break;
+            case TimelineEventTrack.Callback:
+                animation.CallbackFrames.Insert(insertIndex, new CallbackFrame("", fraction));
+                animation._callbackFrameIndex = insertIndex;
+                break;
+        }
     }
 
     private static void InsertTimelineEventFrameCopy(Animation animation, TimelineEventTrack track, int sourceIndex, int insertIndex, float fraction)
