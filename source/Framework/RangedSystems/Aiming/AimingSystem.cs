@@ -3,6 +3,7 @@ using CombatOverhaul.Integration;
 using CombatOverhaul.Utils;
 using OpenTK.Mathematics;
 using Vintagestory.API.Client;
+using Vintagestory.API.Common;
 using Vintagestory.API.Common.Entities;
 using Vintagestory.API.MathTools;
 using Vintagestory.Client.NoObf;
@@ -165,6 +166,7 @@ public sealed class ClientAimingSystem : IDisposable
 
         _reticleRenderer = renderer;
         AimingPatches.UpdateCameraYawPitch += UpdateAimPoint;
+        AimingPatches.AfterUpdateCameraYawPitch += RefreshAimAfterCameraUpdate;
     }
     public void StartAiming(AimingStats stats)
     {
@@ -196,6 +198,11 @@ public sealed class ClientAimingSystem : IDisposable
     }
     public void StopAiming()
     {
+        if (Aiming)
+        {
+            RefreshTargetVec();
+        }
+
         Aiming = false;
 
         _lastAimingEndTime = _clientApi.World.ElapsedMilliseconds;
@@ -268,6 +275,14 @@ public sealed class ClientAimingSystem : IDisposable
     public void Dispose()
     {
         AimingPatches.UpdateCameraYawPitch -= UpdateAimPoint;
+        AimingPatches.AfterUpdateCameraYawPitch -= RefreshAimAfterCameraUpdate;
+    }
+
+    public void RefreshTargetVec()
+    {
+        if (SetMountedAimFromPlayerView()) return;
+
+        SetAimFromRenderMatrices();
     }
 
     public static Vector3 Zeroing(Vector3 direction, float ZeroingAngle)
@@ -432,7 +447,77 @@ public sealed class ClientAimingSystem : IDisposable
 
         Aim = new(aimX, aimY);
     }
+    private void RefreshAimAfterCameraUpdate(ClientMain __instance)
+    {
+        if (!Aiming) return;
+
+        RefreshTargetVec();
+    }
+
     private void SetAim()
+    {
+        SetAimFromRenderMatrices();
+    }
+
+    private bool SetMountedAimFromPlayerView()
+    {
+        EntityPlayer? player = _clientApi.World?.Player?.Entity;
+        if (player?.MountedOn == null) return false;
+
+        Vector2 currentAim = GetCurrentAim();
+
+        float pitch = player.Pos.Pitch;
+        float yaw = player.Pos.Yaw;
+        float cosPitch = GameMath.Cos(pitch);
+
+        Vector3 forward = new(
+            -cosPitch * GameMath.Sin(yaw),
+            GameMath.Sin(pitch),
+            -cosPitch * GameMath.Cos(yaw)
+        );
+
+        if (forward.LengthSquared < 0.000001f) return false;
+
+        forward = Vector3.Normalize(forward);
+
+        Vector3 worldUp = Vector3.UnitY;
+        Vector3 right = Vector3.Cross(forward, worldUp);
+        if (right.LengthSquared < 0.000001f)
+        {
+            right = Vector3.UnitX;
+        }
+        else
+        {
+            right = Vector3.Normalize(right);
+        }
+
+        Vector3 up = Vector3.Cross(right, forward);
+        if (up.LengthSquared < 0.000001f)
+        {
+            up = worldUp;
+        }
+        else
+        {
+            up = Vector3.Normalize(up);
+        }
+
+        int frameWidth = Math.Max(_clientApi.Render.FrameWidth, 1);
+        int frameHeight = Math.Max(_clientApi.Render.FrameHeight, 1);
+        float verticalFovDeg = Math.Clamp(FirstPersonAnimationsBehavior.CurrentFov, 1f, 179f);
+        float verticalTan = MathF.Tan(verticalFovDeg * GameMath.DEG2RAD / 2f);
+        float horizontalTan = verticalTan * frameWidth / frameHeight;
+
+        float xOffset = currentAim.X / (frameWidth / 2f) * horizontalTan;
+        float yOffset = -currentAim.Y / (frameHeight / 2f) * verticalTan;
+        Vector3 direction = forward + right * xOffset + up * yOffset;
+
+        if (direction.LengthSquared < 0.000001f) return false;
+
+        TargetVec = Vector3.Normalize(direction);
+        return true;
+    }
+
+    private void SetAimFromRenderMatrices()
     {
         Vector2 currentAim = GetCurrentAim();
 

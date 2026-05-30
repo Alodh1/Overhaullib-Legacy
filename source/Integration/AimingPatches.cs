@@ -10,11 +10,13 @@ internal static class AimingPatches
 
     public static bool DrawDefaultReticle { get; set; } = true;
     public static event UpdateCameraYawPitchDelegate? UpdateCameraYawPitch;
+    public static event Action<ClientMain>? AfterUpdateCameraYawPitch;
 
     public static void Patch(string harmonyId)
     {
         new Harmony(harmonyId).Patch(typeof(ClientMain).GetMethod("UpdateCameraYawPitch", BindingFlags.Instance | BindingFlags.Public),
-            prefix: new HarmonyMethod(AimingPatches.UpdateCameraYawPitchPatch)
+            prefix: new HarmonyMethod(AimingPatches.UpdateCameraYawPitchPatch),
+            postfix: new HarmonyMethod(AimingPatches.UpdateCameraYawPitchPostfix)
             );
 
         new Harmony(harmonyId).Patch(typeof(SystemRenderAim).GetMethod("DrawAim", BindingFlags.Instance | BindingFlags.NonPublic),
@@ -25,6 +27,7 @@ internal static class AimingPatches
     public static void Unpatch(string harmonyId)
     {
         new Harmony(harmonyId).Unpatch(typeof(ClientMain).GetMethod("UpdateCameraYawPitch", BindingFlags.Instance | BindingFlags.Public), HarmonyPatchType.Prefix);
+        new Harmony(harmonyId).Unpatch(typeof(ClientMain).GetMethod("UpdateCameraYawPitch", BindingFlags.Instance | BindingFlags.Public), HarmonyPatchType.Postfix);
         new Harmony(harmonyId).Unpatch(typeof(SystemRenderAim).GetMethod("DrawAim", BindingFlags.Instance | BindingFlags.NonPublic), HarmonyPatchType.Prefix);
     }
 
@@ -39,5 +42,10 @@ internal static class AimingPatches
             float dt)
     {
         UpdateCameraYawPitch?.Invoke(__instance, ref ___MouseDeltaX, ref ___MouseDeltaY, ref ___DelayedMouseDeltaX, ref ___DelayedMouseDeltaY, dt);
+    }
+
+    private static void UpdateCameraYawPitchPostfix(ClientMain __instance)
+    {
+        AfterUpdateCameraYawPitch?.Invoke(__instance);
     }
 }

@@ -138,6 +138,7 @@ public class BowClient : RangeWeaponClient
         AimingAnimationController?.Play(mainHand);
 
         state = (int)BowState.Load;
+        LogMountedAimState(player, "load-start");
 
         AfterLoad = true;
 
@@ -209,6 +210,7 @@ public class BowClient : RangeWeaponClient
 
         state = (int)BowState.Draw;
 
+        LogMountedAimState(player, "draw-start");
 
         RangedWeaponSystem.SendStatusChange(player, RangedWeaponStatus.StartAiming, mainHand);
 
@@ -235,6 +237,7 @@ public class BowClient : RangeWeaponClient
     protected virtual bool Shoot(ItemSlot slot, EntityPlayer player, ref int state, ActionEventData eventData, bool mainHand, AttackDirection direction)
     {
         AimingSystem.StopAiming();
+        LogMountedAimState(player, "release");
 
         AnimationBehavior?.StopVanillaAnimation(Stats.TpAimAnimation, mainHand);
 
@@ -279,6 +282,7 @@ public class BowClient : RangeWeaponClient
         Vintagestory.API.MathTools.Vec3d position = player.LocalEyePos + player.Pos.XYZ;
         Vector3 targetDirection = AimingSystem.TargetVec;
         targetDirection = ClientAimingSystem.Zeroing(targetDirection, Stats.Zeroing);
+        LogMountedAimState(player, $"shoot target={targetDirection.X:0.000},{targetDirection.Y:0.000},{targetDirection.Z:0.000}");
 
         RangedWeaponSystem.Shoot(slot, 1, new((float)position.X, (float)position.Y, (float)position.Z), new(targetDirection.X, targetDirection.Y, targetDirection.Z), mainHand, _ => { });
         Attachable.ClearAttachments(player.EntityId);
@@ -297,7 +301,18 @@ public class BowClient : RangeWeaponClient
     {
         PlayerBehavior?.SetState((int)BowState.Drawn);
         AimingSystem.AimingState = WeaponAimingState.FullCharge;
+        LogMountedAimState(player, "full-draw");
         return true;
+    }
+
+    private void LogMountedAimState(EntityPlayer player, string action)
+    {
+        IMountableSeat? mountedOn = player.MountedOn;
+        if (mountedOn == null) return;
+
+        Vector3 target = AimingSystem.TargetVec;
+        LoggerUtil.Verbose(Api, this,
+            $"Mounted bow {action}: mount={mountedOn.Entity?.Code} seat={mountedOn.SeatId} angleMode={mountedOn.AngleMode} bodyYawLimit={mountedOn.Config?.BodyYawLimit?.ToString() ?? "none"} state={GetState<BowState>()} aimingState={AimingSystem.AimingState} pitch={player.Pos.Pitch:0.000} yaw={player.Pos.Yaw:0.000} bodyYaw={player.BodyYaw:0.000} target={target.X:0.000},{target.Y:0.000},{target.Z:0.000}");
     }
 
     protected virtual ItemSlot? GetArrowSlot(EntityPlayer player)

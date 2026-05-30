@@ -97,6 +97,8 @@ public sealed class FirstPersonAnimationsBehavior : EntityBehavior, IDisposable
         {
             _ownerEntityId = _api.World?.Player?.Entity?.EntityId ?? 0;
         }
+
+        AdvanceMountedAnimationFallback(deltaTime);
     }
 
     public void OnFrame(Entity entity, ElementPose pose, AnimatorBase animator)
@@ -300,6 +302,8 @@ public sealed class FirstPersonAnimationsBehavior : EntityBehavior, IDisposable
     private bool _immersiveFpModeSetting = false;
     private long _ownerEntityId = 0;
     private bool _restIfpSetting = false;
+    private long _lastAnimationAdvanceMs = 0;
+    private const long _mountedAnimationFallbackIntervalMs = 50;
 
     private bool TryActivateMainPlayer()
     {
@@ -374,9 +378,25 @@ public sealed class FirstPersonAnimationsBehavior : EntityBehavior, IDisposable
     {
         if (!IsOwner(targetEntity)) return;
 
-        _lastFrame = _composer.Compose(TimeSpan.FromSeconds(dt));
+        AdvanceAnimationFrame(targetEntity, dt, applyRenderState: true);
+    }
 
-        if (_composer.AnyActiveAnimations())
+    private void AdvanceMountedAnimationFallback(float dt)
+    {
+        if (_player.MountedOn == null || !_composer.AnyActiveAnimations()) return;
+
+        long elapsedMs = _api.World.ElapsedMilliseconds;
+        if (elapsedMs - _lastAnimationAdvanceMs <= _mountedAnimationFallbackIntervalMs) return;
+
+        AdvanceAnimationFrame(_player, dt, applyRenderState: false);
+    }
+
+    private void AdvanceAnimationFrame(Entity targetEntity, float dt, bool applyRenderState)
+    {
+        _lastFrame = _composer.Compose(TimeSpan.FromSeconds(dt));
+        _lastAnimationAdvanceMs = _api.World.ElapsedMilliseconds;
+
+        if (applyRenderState && _composer.AnyActiveAnimations())
         {
             if (_lastFrame.Player.FovMultiplier != 1) SetFov(_lastFrame.Player.FovMultiplier, true);
             _resetFov = true;
@@ -406,7 +426,7 @@ public sealed class FirstPersonAnimationsBehavior : EntityBehavior, IDisposable
                 _restIfpSetting = true;
             }
         }
-        else
+        else if (applyRenderState)
         {
             if (entity.Api is ICoreClientAPI clientApi && _restIfpSetting)
             {
