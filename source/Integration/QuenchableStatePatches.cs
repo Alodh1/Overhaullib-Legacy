@@ -1,5 +1,6 @@
 using CombatOverhaul.Utils;
 using HarmonyLib;
+using System.Globalization;
 using System.Text;
 using Vintagestory.API.Common;
 using Vintagestory.API.Config;
@@ -462,6 +463,85 @@ internal static class ArmorQuenchCollectibleTooltipPatch
 {
     private static void Postfix(ItemSlot inSlot, StringBuilder dsc)
     {
+        WeaponQuenchTooltipPatch.NormalizeTooltip(inSlot, dsc);
         ArmorQuenchTooltipPatch.AppendTooltip(inSlot, dsc);
+    }
+}
+
+internal static class WeaponQuenchTooltipPatch
+{
+    internal static void NormalizeTooltip(ItemSlot inSlot, StringBuilder dsc)
+    {
+        ItemStack? stack = inSlot.Itemstack;
+        if (inSlot.Empty
+            || stack?.Collectible == null
+            || QuenchableStateUtil.GetKind(stack) != QuenchableStateUtil.WeaponKind)
+        {
+            return;
+        }
+
+        float damageMultiplier = QuenchableStatUtil.GetAttackPowerMultiplier(stack);
+        if (damageMultiplier <= 1.0001f)
+        {
+            return;
+        }
+
+        List<string> linesToRemove = new()
+        {
+            Lang.Get("Attack power: {0} damage", stack.Collectible.GetAttackPower(stack).ToString("0.#", CultureInfo.CurrentCulture)),
+            Lang.Get("Attack tier: {0}", stack.Collectible.GetToolTier(inSlot)),
+            Lang.Get("mulbuff-hardened-attackpower", damageMultiplier - 1f, 0)
+        };
+
+        RemoveTooltipLines(dsc, linesToRemove);
+
+        float bonusPercent = (damageMultiplier - 1f) * 100f;
+        string bonusText = bonusPercent.ToString("0.#", CultureInfo.CurrentCulture);
+        AppendLineOnce(dsc, $"<font color=\"#00bb00\">{Lang.Get("combatoverhaul:quenchable-weapon-damage-multiplier", bonusText)}</font>");
+    }
+
+    private static void RemoveTooltipLines(StringBuilder dsc, IReadOnlyCollection<string> linesToRemove)
+    {
+        HashSet<string> normalizedTargets = linesToRemove
+            .Where(line => !string.IsNullOrWhiteSpace(line))
+            .Select(NormalizeLine)
+            .ToHashSet(StringComparer.Ordinal);
+
+        if (normalizedTargets.Count == 0)
+        {
+            return;
+        }
+
+        string[] lines = dsc.ToString().Replace("\r\n", "\n", StringComparison.Ordinal).Split('\n');
+        dsc.Clear();
+
+        foreach (string line in lines)
+        {
+            if (normalizedTargets.Contains(NormalizeLine(line)))
+            {
+                continue;
+            }
+
+            dsc.AppendLine(line);
+        }
+    }
+
+    private static string NormalizeLine(string line)
+    {
+        return line
+            .Replace("<font color=\"#00bb00\">", "", StringComparison.Ordinal)
+            .Replace("<font color=\"#bb0000\">", "", StringComparison.Ordinal)
+            .Replace("</font>", "", StringComparison.Ordinal)
+            .Trim();
+    }
+
+    private static void AppendLineOnce(StringBuilder dsc, string line)
+    {
+        if (string.IsNullOrWhiteSpace(line) || dsc.ToString().Contains(line, StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        dsc.AppendLine(line);
     }
 }

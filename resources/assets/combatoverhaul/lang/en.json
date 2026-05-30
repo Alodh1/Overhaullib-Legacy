@@ -167,5 +167,6 @@
   "quenchable-armor-protection-gain": "Armor protection gain: +1 level",
   "quenchable-armor-durability-gain": "Armor durability gain: +10%",
   "quenchable-armor-flat-reduction-gain": "Armor flat damage reduction gain: +0.2",
-  "quenchable-armor-penalty-reduction": "Armor penalties reduced: {0}%"
+  "quenchable-armor-penalty-reduction": "Armor penalties reduced: {0}%",
+  "quenchable-weapon-damage-multiplier": "Hardened: +{0}% weapon damage"
 }
