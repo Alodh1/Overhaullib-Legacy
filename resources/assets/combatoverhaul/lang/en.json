@@ -164,6 +164,7 @@
   "interaction-toggle-light-source": "Toggle wearable light source",
   "interaction-toggle-light-source-hotkey": "Toggle wearable light source",
   "setting-fueled_item_update_in_game_hours": "Fueled items update period (in game hours)",
+  "setting-second_chance_available": "Second chance mechanic",
   "quenchable-armor-protection-gain": "Armor protection gain: +1 level",
   "quenchable-armor-durability-gain": "Armor durability gain: +10%",
   "quenchable-armor-flat-reduction-gain": "Armor flat damage reduction gain: +0.2",

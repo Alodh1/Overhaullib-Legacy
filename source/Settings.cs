@@ -47,6 +47,8 @@ public sealed class Settings
 
     public int GlobalAttackCooldownMs { get; set; } = 1000;
 
+    public bool SecondChanceAvailable { get; set; } = true;
+
     public bool SecondChanceParticles { get; set; } = true;
 
     public bool DebugHitParticles { get; set; } = false;

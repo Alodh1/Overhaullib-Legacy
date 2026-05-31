@@ -275,7 +275,7 @@ public sealed class PlayerDamageModelBehavior : EntityBehavior
 
         damage *= multiplier;
 
-        if (SecondChanceAvailable) ApplySecondChance(ref damage);
+        if (_settings.SecondChanceAvailable && SecondChanceAvailable) ApplySecondChance(ref damage);
 
         OnReceiveDamage?.Invoke(ref damage, damageSource, detailedDamageZone);
 
