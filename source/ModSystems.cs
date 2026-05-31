@@ -523,7 +523,7 @@ public partial class CombatOverhaulSystem : ModSystem
 
         system.SettingChanged += (domain, config, setting) =>
         {
-            if (domain != "combatoverhaul" && domain != "combatoverhaulfork" && domain != "bullseyecontinued" && domain != "overhaullib" && domain != "overhaulliblegacycompat") return;
+            if (domain != "combatoverhaul" && domain != "combatoverhaulfork" && domain != "bullseyecontinued" && domain != "overhaullib") return;
 
             setting.AssignSettingValue(Settings);
             SettingsChanged?.Invoke(Settings);
@@ -537,7 +537,6 @@ public partial class CombatOverhaulSystem : ModSystem
             system.GetConfig("combatoverhaulfork")?.AssignSettingsValues(Settings);
             system.GetConfig("bullseyecontinued")?.AssignSettingsValues(Settings);
             system.GetConfig("overhaullib")?.AssignSettingsValues(Settings);
-            system.GetConfig("overhaulliblegacycompat")?.AssignSettingsValues(Settings);
             SettingsLoaded?.Invoke(Settings);
 
             DamageResistData.EntityProtectionFactor = Settings.EntityProtectionMultiplier;
