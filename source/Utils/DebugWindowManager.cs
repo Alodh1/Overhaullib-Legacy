@@ -333,7 +333,7 @@ public sealed partial class DebugWindowManager
         string? sourceRoot = GetSourceRoot();
         if (sourceRoot == null || !Directory.Exists(sourceRoot))
         {
-            return SourceSaveResult.Fail("ModsNeedUpdate source root not found.");
+            return SourceSaveResult.Fail("VS mods source root not found.");
         }
 
         IEnumerable<string> candidates = Directory.EnumerateFiles(sourceRoot, "*.json", SearchOption.AllDirectories)
@@ -441,8 +441,19 @@ public sealed partial class DebugWindowManager
 
     private static string? GetSourceRoot()
     {
-        string sourceRoot = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory), "ModsNeedUpdate");
-        return Directory.Exists(sourceRoot) ? sourceRoot : null;
+        string? envRoot = Environment.GetEnvironmentVariable("VS_MODS_ROOT");
+        string documentsRoot = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), "VSMods");
+        string legacyRoot = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory), "ModsNeedUpdate");
+
+        foreach (string? sourceRoot in new[] { envRoot, documentsRoot, legacyRoot })
+        {
+            if (!string.IsNullOrWhiteSpace(sourceRoot) && Directory.Exists(sourceRoot))
+            {
+                return sourceRoot;
+            }
+        }
+
+        return null;
     }
 
     private static string GetAnimationSourceText(string animationCode)
