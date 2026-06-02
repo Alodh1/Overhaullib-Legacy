@@ -80,6 +80,7 @@ public class WearableArmorBehavior : CollectibleBehavior
 
     public override void OnCreatedByCrafting(ItemSlot[] allInputSlots, ItemSlot outputSlot, IRecipeBase byRecipe, ref EnumHandling bhHandling)
     {
+        bool isRepairRecipe = IsRepairRecipe(byRecipe);
         int newDurability = 0;
 
         if (outputSlot is not DummySlot)
@@ -87,7 +88,7 @@ public class WearableArmorBehavior : CollectibleBehavior
             EnsureConditionExists(outputSlot);
             outputSlot.Itemstack.Attributes.SetFloat("condition", 1);
 
-            if (byRecipe.Name.Path.Contains("repair"))
+            if (isRepairRecipe)
             {
                 CalculateRepairValueProperly(allInputSlots, outputSlot, out float repairValue, out int _);
 
@@ -98,13 +99,13 @@ public class WearableArmorBehavior : CollectibleBehavior
             }
         }
 
-        // Leave PassThrough so other behaviors/the base Item still get their normal crafting hooks.
-        bhHandling = EnumHandling.PassThrough;
+        // Repair recipes are fully handled here; letting vanilla Wearable run after this can crash on CO armor JSON.
+        bhHandling = isRepairRecipe ? EnumHandling.PreventSubsequent : EnumHandling.PassThrough;
 
         // Prevent derp in the handbook
         if (outputSlot is DummySlot) return;
 
-        if (byRecipe.Name.Path.Contains("repair"))
+        if (isRepairRecipe)
         {
             outputSlot.Itemstack.Attributes.SetInt("durability", newDurability);
         }
@@ -113,7 +114,7 @@ public class WearableArmorBehavior : CollectibleBehavior
     public override bool ConsumeCraftingIngredients(ItemSlot[] slots, ItemSlot outputSlot, IRecipeBase matchingRecipe, ref EnumHandling handling)
     {
         // Consume as much materials in the input grid as needed
-        if (matchingRecipe.Name.Path.Contains("repair"))
+        if (IsRepairRecipe(matchingRecipe))
         {
             CalculateRepairValueProperly(slots, outputSlot, out float _, out int matCostPerMatType);
 
@@ -130,12 +131,17 @@ public class WearableArmorBehavior : CollectibleBehavior
                 islot.TakeOut(matCostPerMatType);
             }
 
-            handling = EnumHandling.PreventDefault;
+            handling = EnumHandling.PreventSubsequent;
             return true;
         }
 
         handling = EnumHandling.PassThrough;
         return false;
+    }
+
+    private static bool IsRepairRecipe(IRecipeBase? recipe)
+    {
+        return recipe?.Name?.Path?.Contains("repair", StringComparison.OrdinalIgnoreCase) == true;
     }
 
     protected static InventoryBase? GetGearInventory(Entity entity)
