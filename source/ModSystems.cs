@@ -290,6 +290,8 @@ public partial class CombatOverhaulSystem : ModSystem
     }
     public override void AssetsLoaded(ICoreAPI api)
     {
+        QuenchablePatchGate.DisableCustomQuenchRecipeAssetsIfDisabled(api);
+
         if (api is not ICoreClientAPI clientApi) return;
 
         foreach (ArmorLayers layer in Enum.GetValues<ArmorLayers>())

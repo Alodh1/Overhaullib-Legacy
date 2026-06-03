@@ -24,6 +24,24 @@ internal static class QuenchablePatchGate
         return api.ModLoader.IsModEnabled("combatoverhaul") || api.ModLoader.IsModEnabled("combatoverhaulfork");
     }
 
+    internal static void DisableCustomQuenchRecipeAssetsIfDisabled(ICoreAPI api)
+    {
+        if (Enabled)
+        {
+            return;
+        }
+
+        byte[] emptyRecipeArray = Encoding.UTF8.GetBytes("[]");
+        foreach (string recipeName in CustomQuenchRecipeNames)
+        {
+            IAsset? asset = api.Assets.TryGet(new AssetLocation("game", $"recipes/grid/{recipeName}.json"), true);
+            if (asset != null)
+            {
+                asset.Data = emptyRecipeArray;
+            }
+        }
+    }
+
     internal static void RemoveCustomQuenchRecipesIfDisabled(ICoreAPI api)
     {
         if (Enabled)
