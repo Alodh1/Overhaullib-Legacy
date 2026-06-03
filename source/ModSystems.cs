@@ -326,6 +326,8 @@ public partial class CombatOverhaulSystem : ModSystem
         // with mixed mod stacks on 1.22.1. We'll reintroduce with a safer pipeline.
         // ShieldAutoPatcher.Patch(api);
 
+        QuenchablePatchGate.RemoveCustomQuenchRecipesIfDisabled(api);
+
         IAsset armorConfigAsset = api.Assets.Get("combatoverhaul:config/armor-config.json");
         JsonObject armorConfig = JsonObject.FromJson(armorConfigAsset.ToText());
         ArmorConfig armorConfigObj = armorConfig.AsObject<ArmorConfig>();

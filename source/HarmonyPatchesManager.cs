@@ -83,6 +83,7 @@ internal static class HarmonyPatchesManager
         }
         _patchedUniversalSide = true;
 
+        QuenchablePatchGate.Enabled = QuenchablePatchGate.IsCombatOverhaulEnabled(api);
         new Harmony(_harmonyIdTranspilers).PatchAll();
 
         InventorySafeguardsPatches.Patch(_harmonyIdInventory);
@@ -98,6 +99,7 @@ internal static class HarmonyPatchesManager
         _patchedUniversalSide = false;
 
         new Harmony(_harmonyIdTranspilers).UnpatchAll();
+        QuenchablePatchGate.Enabled = false;
 
         InventorySafeguardsPatches.Unpatch(_harmonyIdInventory);
         if (_api != null)

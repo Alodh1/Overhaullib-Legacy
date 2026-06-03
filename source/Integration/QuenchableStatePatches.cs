@@ -8,9 +8,57 @@ using Vintagestory.GameContent;
 
 namespace CombatOverhaul.Integration;
 
+internal static class QuenchablePatchGate
+{
+    private static readonly HashSet<string> CustomQuenchRecipeNames =
+    [
+        "claycovering-armoryparts",
+        "claycovering-coblades",
+        "claycovering-cospears"
+    ];
+
+    internal static bool Enabled { get; set; }
+
+    internal static bool IsCombatOverhaulEnabled(ICoreAPI api)
+    {
+        return api.ModLoader.IsModEnabled("combatoverhaul") || api.ModLoader.IsModEnabled("combatoverhaulfork");
+    }
+
+    internal static void RemoveCustomQuenchRecipesIfDisabled(ICoreAPI api)
+    {
+        if (Enabled)
+        {
+            return;
+        }
+
+        List<GridRecipe>? recipes = api.World?.GridRecipes;
+        if (recipes == null)
+        {
+            return;
+        }
+
+        int removed = recipes.RemoveAll(IsCustomQuenchRecipe);
+        if (removed > 0)
+        {
+            LoggerUtil.Verbose(api, typeof(QuenchablePatchGate), $"Removed {removed} custom quench recipes because Combat Overhaul is not loaded.");
+        }
+    }
+
+    internal static bool Prepare() => Enabled;
+
+    private static bool IsCustomQuenchRecipe(GridRecipe recipe)
+    {
+        string name = recipe?.Name?.Path ?? recipe?.Name?.ToString() ?? "";
+        return CustomQuenchRecipeNames.Contains(name);
+    }
+}
+
 [HarmonyPatch(typeof(CollectibleBehaviorQuenchable), "applyQuenchedStats")]
 internal static class QuenchableApplyQuenchedStatsPatch
 {
+    [HarmonyPrepare]
+    private static bool Prepare() => QuenchablePatchGate.Prepare();
+
     private static bool Prefix(CollectibleBehaviorQuenchable __instance, IWorldAccessor world, ItemStack itemstack)
     {
         if (!QuenchableStateUtil.IsArmorOrArmorComponent(itemstack) || !QuenchableStateUtil.IsFerrous(itemstack))
@@ -60,6 +108,9 @@ internal static class QuenchableApplyQuenchedStatsPatch
 [HarmonyPatch(typeof(CollectibleBehaviorQuenchable), "applyTemperedStats")]
 internal static class QuenchableApplyTemperedStatsPatch
 {
+    [HarmonyPrepare]
+    private static bool Prepare() => QuenchablePatchGate.Prepare();
+
     private static bool Prefix(CollectibleBehaviorQuenchable __instance, ItemStack itemstack, object[] __args)
     {
         if (!QuenchableStateUtil.HasAnyQuenchState(itemstack))
@@ -122,6 +173,9 @@ internal static class QuenchableApplyTemperedStatsPatch
 [HarmonyPatch(typeof(GridRecipe), nameof(GridRecipe.Matches))]
 internal static class GridRecipeQuenchStateMatchPatch
 {
+    [HarmonyPrepare]
+    private static bool Prepare() => QuenchablePatchGate.Prepare();
+
     private static void Postfix(ItemSlot[] ingredients, ref bool __result)
     {
         if (!__result)
@@ -174,6 +228,9 @@ internal static class GridRecipeQuenchStateMatchPatch
 [HarmonyPatch(typeof(CollectibleObject), nameof(CollectibleObject.OnCreatedByCrafting))]
 internal static class CraftedArmorQuenchStatePatch
 {
+    [HarmonyPrepare]
+    private static bool Prepare() => QuenchablePatchGate.Prepare();
+
     private static void Postfix(ItemSlot[] allInputSlots, ItemSlot outputSlot)
     {
         if (outputSlot.Empty || outputSlot.Itemstack == null)
@@ -397,6 +454,9 @@ internal static class CraftedArmorQuenchStatePatch
 [HarmonyPatch(typeof(CollectibleObject), nameof(CollectibleObject.GetMaxDurability))]
 internal static class ArmorQuenchDurabilityPatch
 {
+    [HarmonyPrepare]
+    private static bool Prepare() => QuenchablePatchGate.Prepare();
+
     private static void Postfix(ItemStack itemstack, ref int __result)
     {
         if (__result <= 0 || !QuenchableStateUtil.IsArmorOrArmorComponent(itemstack))
@@ -417,6 +477,9 @@ internal static class ArmorQuenchDurabilityPatch
 [HarmonyPatch(typeof(CollectibleBehaviorQuenchable), nameof(CollectibleBehaviorQuenchable.GetHeldItemInfo))]
 internal static class ArmorQuenchTooltipPatch
 {
+    [HarmonyPrepare]
+    private static bool Prepare() => QuenchablePatchGate.Prepare();
+
     private static void Postfix(ItemSlot inSlot, StringBuilder dsc)
     {
         AppendTooltip(inSlot, dsc);
@@ -461,6 +524,9 @@ internal static class ArmorQuenchTooltipPatch
 [HarmonyPatch(typeof(CollectibleObject), nameof(CollectibleObject.GetHeldItemInfo))]
 internal static class ArmorQuenchCollectibleTooltipPatch
 {
+    [HarmonyPrepare]
+    private static bool Prepare() => QuenchablePatchGate.Prepare();
+
     private static void Postfix(ItemSlot inSlot, StringBuilder dsc)
     {
         WeaponQuenchTooltipPatch.NormalizeTooltip(inSlot, dsc);
