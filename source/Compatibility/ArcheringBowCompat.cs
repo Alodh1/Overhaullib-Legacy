@@ -1,13 +1,16 @@
+using CombatOverhaul.Integration;
+using CombatOverhaul.RangedSystems;
 using CombatOverhaul.Utils;
 using OpenTK.Mathematics;
 using System.Collections;
 using System.Reflection;
 using Vintagestory.API.Client;
-using Vintagestory.API.Config;
 using Vintagestory.API.Common;
 using Vintagestory.API.Common.Entities;
+using Vintagestory.API.Config;
 using Vintagestory.API.MathTools;
 using Vintagestory.API.Util;
+using Vintagestory.Client.NoObf;
 
 namespace CombatOverhaul.Compatibility;
 
@@ -15,6 +18,19 @@ internal sealed class ArcheringBowCompat
 {
     private const string ModId = "archering";
     private const string ModSystemTypeName = "Archering.ArcheringModSystem";
+    private const float VanillaDrawTime = 0.65f;
+
+    private static readonly Dictionary<string, float> DefaultBowDamageByKey = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ["bow-crude"] = 2f,
+        ["bow-simple"] = 5f,
+        ["bow-long"] = 15.9f,
+        ["bow-recurve"] = 10.8f,
+        ["bowsbykanahaku:hornybow-nomad*"] = 15.9f,
+        ["bowsbykanahaku:hornybow-yagermaster*"] = 10.8f,
+        ["bowsbykanahaku:expandedbow-ranger*"] = 15.9f,
+        ["bowsbykanahaku:expandedbow-yager*"] = 10.8f
+    };
 
     private readonly ICoreAPI _api;
     private bool _warnedMissingSystem;
@@ -39,11 +55,17 @@ internal sealed class ArcheringBowCompat
         IDictionary? bowSettings = GetValue(config, "BowSettings") as IDictionary;
         if (bowSettings == null) return null;
 
-        object? bowStats = ResolveBowStats(item.Code, bowSettings);
+        (object? bowStats, string matchedKey) = ResolveBowStats(item.Code, bowSettings);
         if (bowStats == null) return null;
+
+        IDictionary? arrowBreakChances = GetValue(config, "ArrowBreakChances") as IDictionary;
 
         return new ArcheringBowAimingSettings
         {
+            MatchedKey = matchedKey,
+            Damage = Math.Max(0f, GetFloat(bowStats, "Damage", 0f)),
+            DefaultDamage = ResolveDefaultDamage(item.Code, matchedKey),
+            DamageMult = Math.Max(0f, GetFloat(config, "DamageMult", 1f)),
             DrawTime = Math.Max(0.05f, GetFloat(bowStats, "DrawTime", 1.2f)),
             DrawWeight = Math.Max(0.05f, GetFloat(bowStats, "DrawWeight", 1.5f)),
             SwayAmplitude = Math.Max(0f, GetFloat(config, "SwayAmplitude", 1f)),
@@ -57,11 +79,16 @@ internal sealed class ArcheringBowCompat
             DrawWeightDropPower = GetFloat(config, "DrawWeightDropPower", 0.65f),
             DrawWeightChargePower = GetFloat(config, "DrawWeightChargePower", 0.85f),
             EnableSwaying = GetBool(config, "EnableSwaying", true),
+            EnableBowDamageTweaks = GetBool(config, "EnableBowDamageTweaks", true),
             EnableDrawTimeTweaks = GetBool(config, "EnableDrawTimeTweaks", true),
+            EnableDrawTimeArrowDamageTweaks = GetBool(config, "EnableDrawTimeArrowDamageTweaks", true),
             EnableHoldBreath = GetBool(config, "EnableHoldBreath", true),
+            EnableDenockingWithLeftClick = GetBool(config, "EnableDenockingWithLeftClick", true),
             EnableArcheringChargedReticle = GetBool(config, "EnableArcheringChargedReticle", true),
             EnableSpeedIncreasesWithDrawWeight = GetBool(config, "EnableSpeedIncreasesWithDrawWeight", true),
+            EnableArrowBreakTweaks = GetBool(config, "EnableArrowBreakTweaks", true),
             DisableVanillaReticle = GetBool(config, "DisableVanillaReticle", true),
+            ArrowBreakChances = CopyFloatRules(arrowBreakChances)
         };
     }
 
@@ -70,7 +97,49 @@ internal sealed class ArcheringBowCompat
         ArcheringBowAimingSettings? settings = GetSettings(item);
         if (settings?.EnableSpeedIncreasesWithDrawWeight != true) return 1f;
 
-        return Math.Max(0.01f, MathF.Pow(settings.DrawWeight, settings.DrawWeightDropPower));
+        return settings.DrawWeightSpeedMultiplier;
+    }
+
+    public float GetGravityFactorMultiplier(Item item)
+    {
+        ArcheringBowAimingSettings? settings = GetSettings(item);
+        if (settings == null || settings.EnableSpeedIncreasesWithDrawWeight) return 1f;
+
+        float speedMultiplier = settings.DrawWeightSpeedMultiplier;
+        return Math.Max(0.01f, 1f / (speedMultiplier * speedMultiplier));
+    }
+
+    public float GetBowDamageMultiplier(Item item)
+    {
+        ArcheringBowAimingSettings? settings = GetSettings(item);
+        if (settings?.EnableBowDamageTweaks != true) return 1f;
+
+        float multiplier = settings.DamageMult;
+        if (settings.Damage > 0f && settings.DefaultDamage > 0f)
+        {
+            multiplier *= settings.Damage / settings.DefaultDamage;
+        }
+
+        return Math.Max(0f, multiplier);
+    }
+
+    public float GetDrawTimeArrowDamageMultiplier(Item item)
+    {
+        ArcheringBowAimingSettings? settings = GetSettings(item);
+        if (settings?.EnableDrawTimeArrowDamageTweaks != true) return 1f;
+
+        return Math.Max(0f, settings.DrawTime / VanillaDrawTime);
+    }
+
+    public void ApplyArrowBreakChance(Item bowItem, Item projectileItem, ProjectileStats stats)
+    {
+        ArcheringBowAimingSettings? settings = GetSettings(bowItem);
+        if (settings?.EnableArrowBreakTweaks != true || projectileItem.Code == null) return;
+
+        float? breakChance = ResolveFloatRule(projectileItem.Code, settings.ArrowBreakChances);
+        if (breakChance == null) return;
+
+        stats.DropChance = Math.Clamp(1f - breakChance.Value, 0f, 1f);
     }
 
     private object? GetConfig()
@@ -149,7 +218,7 @@ internal sealed class ArcheringBowCompat
         }
     }
 
-    private static object? ResolveBowStats(AssetLocation bowCode, IDictionary bowSettings)
+    private static (object? stats, string matchedKey) ResolveBowStats(AssetLocation bowCode, IDictionary bowSettings)
     {
         string bowPath = bowCode.Path;
         string fullCode = bowCode.ToString();
@@ -160,7 +229,7 @@ internal sealed class ArcheringBowCompat
             if (key.Equals(bowPath, StringComparison.OrdinalIgnoreCase) ||
                 key.Equals(fullCode, StringComparison.OrdinalIgnoreCase))
             {
-                return entry.Value;
+                return (entry.Value, key);
             }
         }
 
@@ -169,17 +238,80 @@ internal sealed class ArcheringBowCompat
             if (entry.Key is not string key) continue;
             if (!key.Contains('*') && !key.Contains('?')) continue;
 
-            if (key.Contains(':'))
+            if (MatchesRule(key, bowCode))
             {
-                if (WildcardUtil.Match(new AssetLocation(key), bowCode)) return entry.Value;
-            }
-            else if (WildcardUtil.Match(key, bowPath) || WildcardUtil.Match(key, fullCode))
-            {
-                return entry.Value;
+                return (entry.Value, key);
             }
         }
 
-        return bowSettings.Contains("bow-generic") ? bowSettings["bow-generic"] : null;
+        return bowSettings.Contains("bow-generic") ? (bowSettings["bow-generic"], "bow-generic") : (null, "");
+    }
+
+    private static float ResolveDefaultDamage(AssetLocation bowCode, string matchedKey)
+    {
+        if (DefaultBowDamageByKey.TryGetValue(matchedKey, out float exactDamage))
+        {
+            return exactDamage;
+        }
+
+        foreach ((string key, float damage) in DefaultBowDamageByKey)
+        {
+            if (MatchesRule(key, bowCode))
+            {
+                return damage;
+            }
+        }
+
+        return 0f;
+    }
+
+    private static Dictionary<string, float> CopyFloatRules(IDictionary? source)
+    {
+        Dictionary<string, float> result = new(StringComparer.OrdinalIgnoreCase);
+        if (source == null) return result;
+
+        foreach (DictionaryEntry entry in source)
+        {
+            if (entry.Key is not string key) continue;
+            result[key] = ToFloat(entry.Value, 0f);
+        }
+
+        return result;
+    }
+
+    private static float? ResolveFloatRule(AssetLocation code, IReadOnlyDictionary<string, float> rules)
+    {
+        string path = code.Path;
+        string full = code.ToString();
+
+        foreach ((string key, float value) in rules)
+        {
+            if (key.Equals(path, StringComparison.OrdinalIgnoreCase) ||
+                key.Equals(full, StringComparison.OrdinalIgnoreCase))
+            {
+                return value;
+            }
+        }
+
+        foreach ((string key, float value) in rules)
+        {
+            if ((key.Contains('*') || key.Contains('?')) && MatchesRule(key, code))
+            {
+                return value;
+            }
+        }
+
+        return null;
+    }
+
+    private static bool MatchesRule(string key, AssetLocation code)
+    {
+        if (key.Contains(':'))
+        {
+            return WildcardUtil.Match(new AssetLocation(key), code);
+        }
+
+        return WildcardUtil.Match(key, code.Path) || WildcardUtil.Match(key, code.ToString());
     }
 
     private static object? GetValue(object instance, string name)
@@ -193,7 +325,11 @@ internal sealed class ArcheringBowCompat
 
     private static float GetFloat(object instance, string name, float fallback)
     {
-        object? value = GetValue(instance, name);
+        return ToFloat(GetValue(instance, name), fallback);
+    }
+
+    private static float ToFloat(object? value, float fallback)
+    {
         return value switch
         {
             float floatValue => floatValue,
@@ -213,6 +349,10 @@ internal sealed class ArcheringBowCompat
 
 internal sealed class ArcheringBowAimingSettings
 {
+    public string MatchedKey { get; init; } = "";
+    public float Damage { get; init; }
+    public float DefaultDamage { get; init; }
+    public float DamageMult { get; init; } = 1f;
     public float DrawTime { get; init; } = 1.2f;
     public float DrawWeight { get; init; } = 1.5f;
     public float SwayAmplitude { get; init; } = 1f;
@@ -226,18 +366,26 @@ internal sealed class ArcheringBowAimingSettings
     public float DrawWeightDropPower { get; init; } = 0.65f;
     public float DrawWeightChargePower { get; init; } = 0.85f;
     public bool EnableSwaying { get; init; } = true;
+    public bool EnableBowDamageTweaks { get; init; } = true;
     public bool EnableDrawTimeTweaks { get; init; } = true;
+    public bool EnableDrawTimeArrowDamageTweaks { get; init; } = true;
     public bool EnableHoldBreath { get; init; } = true;
+    public bool EnableDenockingWithLeftClick { get; init; } = true;
     public bool EnableArcheringChargedReticle { get; init; } = true;
     public bool EnableSpeedIncreasesWithDrawWeight { get; init; } = true;
+    public bool EnableArrowBreakTweaks { get; init; } = true;
     public bool DisableVanillaReticle { get; init; } = true;
+    public IReadOnlyDictionary<string, float> ArrowBreakChances { get; init; } = new Dictionary<string, float>();
+
+    public float DrawWeightSpeedMultiplier => Math.Max(0.01f, MathF.Pow(DrawWeight, DrawWeightDropPower));
 }
 
-internal sealed class ArcheringBowAimingController : IRenderer
+internal sealed class ArcheringBowAimingSession : IRenderer
 {
     private readonly ICoreClientAPI _api;
     private readonly Random _random = new();
-    private LoadedTexture _chargedReticle;
+    private readonly LoadedTexture _chargedReticle;
+    private readonly ArcheringBowBreathHud _breathHud;
     private ArcheringBowAimingSettings? _settings;
     private EntityPlayer? _player;
     private Vector2 _oldPos;
@@ -250,19 +398,22 @@ internal sealed class ArcheringBowAimingController : IRenderer
     private bool _isRecovering;
     private bool _isHoldingBreath;
     private bool _charged;
-    private bool _swayRegistered;
-    private bool _hudRegistered;
+    private bool _reticleRegistered;
+    private bool _cameraHookRegistered;
     private Func<bool>? _shouldContinue;
 
-    public ArcheringBowAimingController(ICoreClientAPI api)
+    public ArcheringBowAimingSession(ICoreClientAPI api)
     {
         _api = api;
         _chargedReticle = new(api);
         api.Render.GetOrLoadTexture(new AssetLocation("combatoverhaul", "gui/aiming/default-full.png"), ref _chargedReticle);
+        _breathHud = new(api);
+        _breathHud.TryOpen();
     }
 
     public double RenderOrder => 0.98;
     public int RenderRange => 9999;
+    public bool Active => _settings != null;
 
     public void Start(ArcheringBowAimingSettings settings, EntityPlayer player, Func<bool> shouldContinue)
     {
@@ -292,31 +443,28 @@ internal sealed class ArcheringBowAimingController : IRenderer
             _targetOffset.X / 2f + _targetOffset.Y * 1.2f * 0.9f,
             _targetOffset.Y / 2f - _targetOffset.X * 1.2f * 1.2f * MathF.Sqrt(drawWeight + 1.5f) * 1.1f);
 
-        if (settings.EnableSwaying)
-        {
-            _api.Event.RegisterRenderer(this, EnumRenderStage.Before, "CombatOverhaulArcheringBowSway");
-            _swayRegistered = true;
-        }
+        AimingPatches.UpdateCameraYawPitch += OnCameraYawPitch;
+        _cameraHookRegistered = true;
 
         if (settings.EnableArcheringChargedReticle)
         {
             _api.Event.RegisterRenderer(this, EnumRenderStage.Ortho);
-            _hudRegistered = true;
+            _reticleRegistered = true;
         }
     }
 
     public void Stop()
     {
-        if (_swayRegistered)
+        if (_cameraHookRegistered)
         {
-            _api.Event.UnregisterRenderer(this, EnumRenderStage.Before);
-            _swayRegistered = false;
+            AimingPatches.UpdateCameraYawPitch -= OnCameraYawPitch;
+            _cameraHookRegistered = false;
         }
 
-        if (_hudRegistered)
+        if (_reticleRegistered)
         {
             _api.Event.UnregisterRenderer(this, EnumRenderStage.Ortho);
-            _hudRegistered = false;
+            _reticleRegistered = false;
         }
 
         _settings = null;
@@ -324,14 +472,17 @@ internal sealed class ArcheringBowAimingController : IRenderer
         _shouldContinue = null;
         _isHoldingBreath = false;
         _charged = false;
+        _breathHud.UpdateBar(1f, 1f, isRecovering: false, visible: false);
     }
-
 
     public void Dispose()
     {
         Stop();
         _chargedReticle.Dispose();
+        _breathHud.TryClose();
+        _breathHud.Dispose();
     }
+
     public void SetCharged()
     {
         if (_charged) return;
@@ -342,13 +493,19 @@ internal sealed class ArcheringBowAimingController : IRenderer
 
     public void OnRenderFrame(float deltaTime, EnumRenderStage stage)
     {
-        if (_settings == null || _player == null) return;
+        if (_settings == null || _player == null || stage != EnumRenderStage.Ortho) return;
 
-        if (stage == EnumRenderStage.Ortho)
-        {
-            RenderChargeFlash();
-            return;
-        }
+        RenderChargeFlash();
+    }
+
+    private void OnCameraYawPitch(ClientMain __instance,
+        ref double mouseDeltaX,
+        ref double mouseDeltaY,
+        ref double delayedMouseDeltaX,
+        ref double delayedMouseDeltaY,
+        float dt)
+    {
+        if (_settings == null || _player == null) return;
 
         if (_api.IsGamePaused || _shouldContinue?.Invoke() != true)
         {
@@ -356,8 +513,8 @@ internal sealed class ArcheringBowAimingController : IRenderer
             return;
         }
 
-        ApplyHoldBreath(deltaTime);
-        ApplyCameraSway(deltaTime);
+        ApplyHoldBreath(dt);
+        ApplyCameraSway(dt);
     }
 
     private void RenderChargeFlash()
@@ -379,6 +536,7 @@ internal sealed class ArcheringBowAimingController : IRenderer
         if (_settings == null || _player == null || !_settings.EnableHoldBreath)
         {
             _isHoldingBreath = false;
+            _breathHud.UpdateBar(1f, 1f, isRecovering: false, visible: false);
             return;
         }
 
@@ -389,6 +547,7 @@ internal sealed class ArcheringBowAimingController : IRenderer
         {
             _isHoldingBreath = true;
             _currentBreath = Math.Max(0f, _currentBreath - deltaTime / _settings.BreathDuration);
+            _breathHud.UpdateBar(_currentBreath, 1f, _isRecovering, visible: _currentBreath < 1f);
             return;
         }
 
@@ -396,11 +555,13 @@ internal sealed class ArcheringBowAimingController : IRenderer
         _isRecovering = _currentBreath == 0f || _isRecovering;
         _currentBreath = Math.Min(1f, _currentBreath + deltaTime / _settings.BreathRecoveryDuration);
         if (_currentBreath >= 1f) _isRecovering = false;
+
+        _breathHud.UpdateBar(_currentBreath, 1f, _isRecovering, visible: _currentBreath < 1f);
     }
 
     private void ApplyCameraSway(float deltaTime)
     {
-        if (_settings == null || _player == null) return;
+        if (_settings == null || _player == null || !_settings.EnableSwaying) return;
 
         float elapsedSec = (_api.World.ElapsedMilliseconds - _startMs) / 1000f;
         float worldTimeSec = _api.World.ElapsedMilliseconds / 1000f;
@@ -468,4 +629,52 @@ internal sealed class ArcheringBowAimingController : IRenderer
     }
 
     private static float Rational(float x, float k, float max = 1f) => x / (x + k) * max;
+}
+
+internal sealed class ArcheringBowBreathHud : HudElement
+{
+    private readonly double[] _breathColor = [0.2, 0.7, 0.8, 0.8];
+    private bool _visible;
+
+    public ArcheringBowBreathHud(ICoreClientAPI capi) : base(capi)
+    {
+        ElementBounds dialogBounds = ElementBounds.Fixed(EnumDialogArea.CenterBottom, 0.0, -150.0, 200.0, 10.0);
+        ElementBounds barBounds = ElementBounds.Fixed(0.0, 0.0, 200.0, 10.0);
+        SingleComposer = capi.Gui.CreateCompo("combatOverhaulArcheringBreathHud", dialogBounds)
+            .AddStatbar(barBounds, _breathColor, "breathBar")
+            .Compose();
+    }
+
+    public override bool Focusable => false;
+    public override bool ShouldReceiveMouseEvents() => false;
+    public override bool ShouldReceiveKeyboardEvents() => false;
+
+    public void UpdateBar(float currentBreath, float maxBreath, bool isRecovering, bool visible)
+    {
+        _visible = visible;
+
+        if (isRecovering)
+        {
+            _breathColor[0] = 0.8;
+            _breathColor[1] = 0.2;
+            _breathColor[2] = 0.2;
+            _breathColor[3] = 0.8;
+        }
+        else
+        {
+            _breathColor[0] = 0.2;
+            _breathColor[1] = 0.7;
+            _breathColor[2] = 0.8;
+            _breathColor[3] = 0.8;
+        }
+
+        SingleComposer.GetStatbar("breathBar")?.SetValues(currentBreath, 0f, maxBreath);
+    }
+
+    public override void OnRenderGUI(float deltaTime)
+    {
+        if (!_visible) return;
+
+        base.OnRenderGUI(deltaTime);
+    }
 }

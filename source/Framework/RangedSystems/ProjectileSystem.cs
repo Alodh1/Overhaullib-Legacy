@@ -106,6 +106,7 @@ public struct ProjectileSpawnStats
     public int DamageTier { get; set; }
     public Vector3d Position { get; set; }
     public Vector3d Velocity { get; set; }
+    public float GravityFactorMultiplier { get; set; }
     [Obsolete("Use DamageTier instead")]
     public float DamageStrength { get => DamageTier; set => DamageTier = (int)value; } // for compatibility
 }
@@ -846,6 +847,13 @@ public sealed class ProjectileSystemServer
         }
 
         api.World.SpawnEntity(entity);
+
+        float gravityFactorMultiplier = spawnStats.GravityFactorMultiplier <= 0 ? 1f : spawnStats.GravityFactorMultiplier;
+        if (Math.Abs(gravityFactorMultiplier - 1f) > 0.0001f &&
+            entity.GetBehavior<EntityBehaviorPassivePhysics>() is { } physics)
+        {
+            physics.GravityPerSecond *= gravityFactorMultiplier;
+        }
     }
     private sealed class LateProjectileCollision
     {

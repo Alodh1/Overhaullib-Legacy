@@ -109,7 +109,7 @@ public class BowClient : RangeWeaponClient
     protected readonly Settings Settings;
     private readonly ArcheringBowCompat ArcheringCompat;
     protected AimingAnimationController? AimingAnimationController;
-    private ArcheringBowAimingController? ArcheringController;
+    private ArcheringBowAimingSession? ArcheringSession;
     private ArcheringBowAimingSettings? ActiveArcheringSettings;
     private long ArcheringDrawStartMs;
     private long ArcheringDrawTickListenerId;
@@ -244,6 +244,35 @@ public class BowClient : RangeWeaponClient
         return true;
     }
 
+    [ActionEventHandler(EnumEntityAction.LeftMouseDown, ActionState.Active)]
+    protected virtual bool Denock(ItemSlot slot, EntityPlayer player, ref int state, ActionEventData eventData, bool mainHand, AttackDirection direction)
+    {
+        if (ActiveArcheringSettings?.EnableDenockingWithLeftClick != true) return false;
+        if (!CheckState(state, BowState.Load, BowState.PreLoaded, BowState.Loaded, BowState.Draw, BowState.Drawn)) return false;
+
+        AimingSystem.StopAiming();
+        StopArcheringAiming();
+        AnimationBehavior?.StopVanillaAnimation(Stats.TpAimAnimation, mainHand);
+        AnimationBehavior?.PlayReadyAnimation(mainHand);
+        TpAnimationBehavior?.PlayReadyAnimation(mainHand);
+        RangedWeaponSystem.SendStatusChange(player, RangedWeaponStatus.EndAiming, mainHand);
+
+        if (CheckState(state, BowState.Load, BowState.PreLoaded))
+        {
+            Attachable.ClearAttachments(player.EntityId);
+            AttachmentSystem.SendClearPacket(player.EntityId);
+            RangedWeaponSystem.SendStatusChange(player, RangedWeaponStatus.EndLoading, mainHand);
+            state = (int)BowState.Unloaded;
+        }
+        else
+        {
+            state = (int)BowState.Loaded;
+        }
+
+        AfterLoad = false;
+        return true;
+    }
+
     [ActionEventHandler(EnumEntityAction.RightMouseDown, ActionState.Released)]
     protected virtual bool Shoot(ItemSlot slot, EntityPlayer player, ref int state, ActionEventData eventData, bool mainHand, AttackDirection direction)
     {
@@ -300,7 +329,11 @@ public class BowClient : RangeWeaponClient
 
         if (archeringSettings != null)
         {
-            aimingStats.CursorType = AimingCursorType.None;
+            if (archeringSettings.DisableVanillaReticle)
+            {
+                aimingStats.CursorType = AimingCursorType.None;
+            }
+
             aimingStats.AimDifficulty = 0;
             aimingStats.AimDrift = 0;
             aimingStats.AimTwitch = 0;
@@ -320,8 +353,8 @@ public class BowClient : RangeWeaponClient
         ArcheringDrawMainHand = mainHand;
         ArcheringDrawStartMs = Api.World.ElapsedMilliseconds;
 
-        ArcheringController ??= new(Api);
-        ArcheringController.Start(settings, player, () =>
+        ArcheringSession ??= new(Api);
+        ArcheringSession.Start(settings, player, () =>
         {
             BowState state = GetState<BowState>(mainHand);
             return ActiveArcheringSettings == settings && (state == BowState.Draw || state == BowState.Drawn);
@@ -353,14 +386,14 @@ public class BowClient : RangeWeaponClient
         if (elapsedMs < ActiveArcheringSettings.DrawTime * 1000f) return;
 
         FullLoadCallback(ArcheringDrawPlayer, ArcheringDrawMainHand);
-        ArcheringController?.SetCharged();
+        ArcheringSession?.SetCharged();
         StopArcheringDrawTimer();
     }
 
     private void StopArcheringAiming()
     {
         StopArcheringDrawTimer();
-        ArcheringController?.Stop();
+        ArcheringSession?.Stop();
         ActiveArcheringSettings = null;
         ArcheringDrawPlayer = null;
     }
@@ -379,6 +412,7 @@ public class BowClient : RangeWeaponClient
         PlayerBehavior?.SetState(0, mainHand);
 
         Vintagestory.API.MathTools.Vec3d position = player.LocalEyePos + player.Pos.XYZ;
+        AimingSystem.RefreshTargetVec();
         Vector3 targetDirection = AimingSystem.TargetVec;
         targetDirection = ClientAimingSystem.Zeroing(targetDirection, Stats.Zeroing);
         LogMountedAimState(player, $"shoot target={targetDirection.X:0.000},{targetDirection.Y:0.000},{targetDirection.Z:0.000}");
@@ -400,7 +434,7 @@ public class BowClient : RangeWeaponClient
     {
         PlayerBehavior?.SetState((int)BowState.Drawn);
         AimingSystem.AimingState = WeaponAimingState.FullCharge;
-        ArcheringController?.SetCharged();
+        ArcheringSession?.SetCharged();
         LogMountedAimState(player, "full-draw");
         return true;
     }
@@ -503,16 +537,20 @@ public class BowServer : RangeWeaponServer
         }
 
         ItemStackRangedStats stackStats = ItemStackRangedStats.FromItemStack(slot.Itemstack);
+        ArcheringCompat.ApplyArrowBreakChance(slot.Itemstack.Item, arrowSlot.Itemstack.Item, stats);
+        float archeringDamageMultiplier = ArcheringCompat.GetBowDamageMultiplier(slot.Itemstack.Item)
+            * ArcheringCompat.GetDrawTimeArrowDamageMultiplier(slot.Itemstack.Item);
 
         Vector3d playerVelocity = new(player.Entity.ServerPos.Motion.X, player.Entity.ServerPos.Motion.Y, player.Entity.ServerPos.Motion.Z);
 
         ProjectileSpawnStats spawnStats = new()
         {
             ProducerEntityId = player.Entity.EntityId,
-            DamageMultiplier = Stats.ArrowDamageMultiplier * stackStats.DamageMultiplier,
+            DamageMultiplier = Stats.ArrowDamageMultiplier * stackStats.DamageMultiplier * archeringDamageMultiplier,
             DamageTier = Stats.ArrowDamageTier + stackStats.DamageTierBonus,
             Position = new Vector3d(packet.Position[0], packet.Position[1], packet.Position[2]),
-            Velocity = GetDirectionWithDispersion(packet.Velocity, [Stats.DispersionMOA[0] * stackStats.DispersionMultiplier, Stats.DispersionMOA[1] * stackStats.DispersionMultiplier]) * Stats.ArrowVelocity * stackStats.ProjectileSpeed * ArcheringCompat.GetVelocityMultiplier(slot.Itemstack.Item) + playerVelocity
+            Velocity = GetDirectionWithDispersion(packet.Velocity, [Stats.DispersionMOA[0] * stackStats.DispersionMultiplier, Stats.DispersionMOA[1] * stackStats.DispersionMultiplier]) * Stats.ArrowVelocity * stackStats.ProjectileSpeed * ArcheringCompat.GetVelocityMultiplier(slot.Itemstack.Item) + playerVelocity,
+            GravityFactorMultiplier = ArcheringCompat.GetGravityFactorMultiplier(slot.Itemstack.Item)
         };
 
         ProjectileSystem.Spawn(packet.ProjectileId[0], stats, spawnStats, arrowSlot.TakeOut(1), slot.Itemstack, shooter);
@@ -562,6 +600,7 @@ public class BowItem : Item, IHasWeaponLogic, IHasRangedWeaponLogic, IHasMoveAni
             _stats = stats;
             _ammoSelector = new(clientAPI, _stats.ArrowWildcard);
             _clientApi = clientAPI;
+            _clientArcheringCompat = new(clientAPI);
 
             ClientLogic = new(clientAPI, this, _ammoSelector);
         }
@@ -611,6 +650,14 @@ public class BowItem : Item, IHasWeaponLogic, IHasRangedWeaponLogic, IHasMoveAni
         ItemStackRangedStats stackStats = ItemStackRangedStats.FromItemStack(inSlot.Itemstack);
 
         dsc.AppendLine(Lang.Get("combatoverhaul:iteminfo-range-weapon-damage", $"{_stats.ArrowDamageMultiplier * stackStats.DispersionMultiplier:F1}", _stats.ArrowDamageTier + stackStats.DamageTierBonus));
+
+        ArcheringBowAimingSettings? archeringSettings = _clientArcheringCompat?.GetSettings(inSlot.Itemstack.Item);
+        if (archeringSettings != null)
+        {
+            dsc.AppendLine($"{archeringSettings.DrawTime:F2}s draw time");
+            dsc.AppendLine($"{archeringSettings.DrawWeight:F2} draw weight");
+            dsc.AppendLine($"{archeringSettings.DrawTime / 0.65f * 100f:F0}% arrow damage");
+        }
     }
 
     public override WorldInteraction[] GetHeldInteractionHelp(ItemSlot inSlot)
@@ -662,6 +709,7 @@ public class BowItem : Item, IHasWeaponLogic, IHasRangedWeaponLogic, IHasMoveAni
     private BowStats? _stats;
     private AmmoSelector? _ammoSelector;
     private ICoreClientAPI? _clientApi;
+    private ArcheringBowCompat? _clientArcheringCompat;
     private WorldInteraction? _altForInteractions;
     private WorldInteraction? _ammoSelection;
 }
