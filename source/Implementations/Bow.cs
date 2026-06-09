@@ -321,7 +321,11 @@ public class BowClient : RangeWeaponClient
         ArcheringDrawStartMs = Api.World.ElapsedMilliseconds;
 
         ArcheringController ??= new(Api);
-        ArcheringController.Start(settings, player);
+        ArcheringController.Start(settings, player, () =>
+        {
+            BowState state = GetState<BowState>(mainHand);
+            return ActiveArcheringSettings == settings && (state == BowState.Draw || state == BowState.Drawn);
+        });
 
         StopArcheringDrawTimer();
 

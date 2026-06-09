@@ -252,6 +252,7 @@ internal sealed class ArcheringBowAimingController : IRenderer
     private bool _charged;
     private bool _swayRegistered;
     private bool _hudRegistered;
+    private Func<bool>? _shouldContinue;
 
     public ArcheringBowAimingController(ICoreClientAPI api)
     {
@@ -263,12 +264,13 @@ internal sealed class ArcheringBowAimingController : IRenderer
     public double RenderOrder => 0.98;
     public int RenderRange => 9999;
 
-    public void Start(ArcheringBowAimingSettings settings, EntityPlayer player)
+    public void Start(ArcheringBowAimingSettings settings, EntityPlayer player, Func<bool> shouldContinue)
     {
         Stop();
 
         _settings = settings;
         _player = player;
+        _shouldContinue = shouldContinue;
         _charged = false;
         _flashUntilMs = 0;
         _startMs = _api.World.ElapsedMilliseconds;
@@ -292,7 +294,7 @@ internal sealed class ArcheringBowAimingController : IRenderer
 
         if (settings.EnableSwaying)
         {
-            _api.Event.RegisterRenderer(this, (EnumRenderStage)0);
+            _api.Event.RegisterRenderer(this, EnumRenderStage.Before, "CombatOverhaulArcheringBowSway");
             _swayRegistered = true;
         }
 
@@ -307,7 +309,7 @@ internal sealed class ArcheringBowAimingController : IRenderer
     {
         if (_swayRegistered)
         {
-            _api.Event.UnregisterRenderer(this, (EnumRenderStage)0);
+            _api.Event.UnregisterRenderer(this, EnumRenderStage.Before);
             _swayRegistered = false;
         }
 
@@ -319,6 +321,7 @@ internal sealed class ArcheringBowAimingController : IRenderer
 
         _settings = null;
         _player = null;
+        _shouldContinue = null;
         _isHoldingBreath = false;
         _charged = false;
     }
@@ -347,7 +350,7 @@ internal sealed class ArcheringBowAimingController : IRenderer
             return;
         }
 
-        if (_api.IsGamePaused || !_player.Controls.RightMouseDown)
+        if (_api.IsGamePaused || _shouldContinue?.Invoke() != true)
         {
             Stop();
             return;
