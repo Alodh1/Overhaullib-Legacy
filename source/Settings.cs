@@ -63,6 +63,8 @@ public sealed class Settings
 
     public float EntityProtectionMultiplier { get; set; } = 0.5f;
 
+    public float WeaponQuenchDamageBonusPerQuench { get; set; } = 0.10f;
+
     public bool RangedWeaponsDamageSupport { get; set; } = true;
 
     public bool SwitchFromImmersiveFirstPerson { get; set; } = true;

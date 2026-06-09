@@ -530,9 +530,8 @@ public partial class CombatOverhaulSystem : ModSystem
             if (domain != "combatoverhaul" && domain != "combatoverhaulfork" && domain != "bullseyecontinued" && domain != "overhaullib") return;
 
             setting.AssignSettingValue(Settings);
+            ApplyRuntimeSettings(Settings);
             SettingsChanged?.Invoke(Settings);
-
-            DamageResistData.EntityProtectionFactor = Settings.EntityProtectionMultiplier;
         };
 
         system.ConfigsLoaded += () =>
@@ -541,10 +540,15 @@ public partial class CombatOverhaulSystem : ModSystem
             system.GetConfig("combatoverhaulfork")?.AssignSettingsValues(Settings);
             system.GetConfig("bullseyecontinued")?.AssignSettingsValues(Settings);
             system.GetConfig("overhaullib")?.AssignSettingsValues(Settings);
+            ApplyRuntimeSettings(Settings);
             SettingsLoaded?.Invoke(Settings);
-
-            DamageResistData.EntityProtectionFactor = Settings.EntityProtectionMultiplier;
         };
+    }
+
+    private static void ApplyRuntimeSettings(Settings settings)
+    {
+        DamageResistData.EntityProtectionFactor = settings.EntityProtectionMultiplier;
+        QuenchableStatUtil.WeaponDamageBonusPerQuench = Math.Max(0f, settings.WeaponQuenchDamageBonusPerQuench);
     }
 
     private void EnsureOwnPlayerAnimationBehaviors(IClientPlayer player)

@@ -1,7 +1,6 @@
 using CombatOverhaul.Utils;
 using HarmonyLib;
 using System.Globalization;
-using System.Reflection;
 using System.Text;
 using Vintagestory.API.Common;
 using Vintagestory.API.Config;
@@ -397,44 +396,8 @@ internal static class CraftedArmorQuenchStatePatch
 
     private static float GetPowerPerQuench(ItemStack stack)
     {
-        const float fallback = 0.1f;
-        CollectibleBehaviorQuenchable? behavior = stack.Collectible?.GetCollectibleBehavior<CollectibleBehaviorQuenchable>(true);
-        if (behavior == null)
-        {
-            return fallback;
-        }
-
-        try
-        {
-            object? value = behavior.GetType().GetProperty("PowerPerQuench")?.GetValue(behavior);
-            if (value is float f && f > 0f) return f;
-            if (value is double d && d > 0d) return (float)d;
-            if (value is int i && i > 0) return i;
-        }
-        catch (Exception exception)
-        {
-            LogPowerPerQuenchReflectionError(stack, exception);
-        }
-
-        return fallback;
+        return Math.Max(0f, QuenchableStatUtil.WeaponDamageBonusPerQuench);
     }
-
-    private static void LogPowerPerQuenchReflectionError(ItemStack stack, Exception exception)
-    {
-        if (_reportedPowerPerQuenchReflectionError) return;
-
-        _reportedPowerPerQuenchReflectionError = true;
-        LoggerUtil.Warn(GetCollectibleApi(stack), typeof(CraftedArmorQuenchStatePatch), $"Error while reading PowerPerQuench for '{stack.Collectible?.Code}':\n{exception}");
-    }
-
-    private static ICoreAPI? GetCollectibleApi(ItemStack stack)
-    {
-        return stack.Collectible?.GetType()
-            .GetField("api", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)
-            ?.GetValue(stack.Collectible) as ICoreAPI;
-    }
-
-    private static bool _reportedPowerPerQuenchReflectionError;
 
     private static void NormalizeVisibleWeaponQuenchBuffs(ItemStack output, float powerValue, float durationBonus)
     {

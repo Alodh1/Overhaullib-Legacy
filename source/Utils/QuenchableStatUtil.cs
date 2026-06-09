@@ -1,5 +1,4 @@
 using CombatOverhaul.DamageSystems;
-using System.Reflection;
 using Vintagestory.API.Common;
 using Vintagestory.API.Datastructures;
 using Vintagestory.GameContent;
@@ -13,6 +12,9 @@ public static class QuenchableStatUtil
     private const float ArmorFlatReductionPerQuench = 0.20f;
     public const float TemperShatterChanceMultiplier = 0.80f;
     public const float TemperPowerMultiplier = 0.92f;
+    public const float DefaultWeaponDamageBonusPerQuench = 0.10f;
+
+    public static float WeaponDamageBonusPerQuench { get; set; } = DefaultWeaponDamageBonusPerQuench;
 
     public static float GetAttackPowerMultiplier(ItemStack? stack)
     {
@@ -193,54 +195,6 @@ public static class QuenchableStatUtil
 
     private static float GetPowerPerQuench(ItemStack stack)
     {
-        const float fallback = 0.1f;
-
-        CollectibleBehaviorQuenchable? behavior = stack.Collectible.GetCollectibleBehavior<CollectibleBehaviorQuenchable>(true);
-        if (behavior == null)
-        {
-            return fallback;
-        }
-
-        try
-        {
-            object? value = behavior.GetType().GetProperty("PowerPerQuench")?.GetValue(behavior);
-            if (value is float f && f > 0f)
-            {
-                return f;
-            }
-
-            if (value is double d && d > 0d)
-            {
-                return (float)d;
-            }
-
-            if (value is int i && i > 0)
-            {
-                return i;
-            }
-        }
-        catch (Exception exception)
-        {
-            LogPowerPerQuenchReflectionError(stack, exception);
-        }
-
-        return fallback;
+        return Math.Max(0f, WeaponDamageBonusPerQuench);
     }
-
-    private static void LogPowerPerQuenchReflectionError(ItemStack stack, Exception exception)
-    {
-        if (_reportedPowerPerQuenchReflectionError) return;
-
-        _reportedPowerPerQuenchReflectionError = true;
-        LoggerUtil.Warn(GetCollectibleApi(stack), typeof(QuenchableStatUtil), $"Error while reading PowerPerQuench for '{stack.Collectible?.Code}':\n{exception}");
-    }
-
-    private static ICoreAPI? GetCollectibleApi(ItemStack stack)
-    {
-        return stack.Collectible?.GetType()
-            .GetField("api", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)
-            ?.GetValue(stack.Collectible) as ICoreAPI;
-    }
-
-    private static bool _reportedPowerPerQuenchReflectionError;
 }
