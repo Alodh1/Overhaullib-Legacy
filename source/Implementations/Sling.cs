@@ -224,7 +224,7 @@ public class SlingClient : RangeWeaponClient
         AnimationBehavior?.Play(request, mainHand);
         TpAnimationBehavior?.Play(request, mainHand);
 
-        AimingStats.CursorType = Enum.Parse<AimingCursorType>(Settings.SlingsAimingCursorType);
+        AimingStats.CursorType = Enum.Parse<AimingCursorType>(Settings.SlingsAimingCursorType, ignoreCase: true);
         AimingStats.VerticalLimit = Settings.SlingsAimingVerticalLimit * Stats.Aiming.VerticalLimit;
         AimingStats.HorizontalLimit = Settings.SlingsAimingHorizontalLimit * Stats.Aiming.HorizontalLimit;
         AimingSystem.ResetAim();
@@ -242,7 +242,7 @@ public class SlingClient : RangeWeaponClient
             AimingStats aimingStats = AimingStats.Clone();
             aimingStats.AimDifficulty *= stackStats.AimingDifficulty;
 
-            AimingStats.CursorType = Enum.Parse<AimingCursorType>(Settings.SlingsAimingCursorType);
+            AimingStats.CursorType = Enum.Parse<AimingCursorType>(Settings.SlingsAimingCursorType, ignoreCase: true);
             AimingStats.VerticalLimit = Settings.SlingsAimingVerticalLimit * Stats.Aiming.VerticalLimit;
             AimingStats.HorizontalLimit = Settings.SlingsAimingHorizontalLimit * Stats.Aiming.HorizontalLimit;
             AimingSystem.StartAiming(aimingStats);

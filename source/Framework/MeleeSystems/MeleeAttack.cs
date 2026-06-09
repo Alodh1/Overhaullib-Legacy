@@ -231,8 +231,6 @@ public sealed class MeleeAttack
         List<(Entity entity, Vector3d point)> entitiesCollisions = new();
 
         List<MeleeDamagePacket> damagePackets = new();
-        List<MeleeCollisionPacket> collisionPackets = new();
-
         foreach (MeleeDamageType damageType in DamageTypes)
         {
             bool attackedAtLeastOnce = false;
@@ -247,11 +245,10 @@ public sealed class MeleeAttack
                     continue;
                 }
 
-                bool collided = damageType.Collide(player, entity, out string collider, out Vector3d point, out MeleeCollisionPacket collisionPacket, mainHand, maximumParameter, stats, out ColliderTypes colliderType);
+                bool collided = damageType.Collide(entity, out string collider, out Vector3d point, out double parameter, out ColliderTypes colliderType);
 
-                if (!collided) continue;
+                if (!collided || maximumParameter < parameter) continue;
 
-                collisionPackets.Add(collisionPacket);
                 entitiesCollisions.Add((entity, point));
 
                 if (_attackedEntities[entityId].Contains(entity.EntityId)) continue;
@@ -279,7 +276,7 @@ public sealed class MeleeAttack
         }
 
         packets = damagePackets;
-        collisions = collisionPackets;
+        collisions = [];
 
         return entitiesCollisions;
     }

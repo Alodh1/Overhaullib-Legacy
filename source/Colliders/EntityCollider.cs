@@ -106,86 +106,6 @@ public readonly struct LineCollider
     }
 }
 
-public readonly struct TriangleCollider
-{
-    public readonly Vector3d VertexA;
-    public readonly Vector3d VertexB;
-    public readonly Vector3d VertexC;
-
-    public TriangleCollider(Vector3d vertexA, Vector3d vertexB, Vector3d vertexC)
-    {
-        VertexA = vertexA;
-        VertexB = vertexB;
-        VertexC = vertexC;
-    }
-
-    public static bool IntersectTriangles(TriangleCollider first, TriangleCollider second)
-    {
-        if (!IntersectTrianglePlanes(first, second))
-            return false;
-
-        return GenerateSeparatingAxesAndCheckOverlap(first, second);
-    }
-
-    private static bool IntersectTrianglePlanes(TriangleCollider first, TriangleCollider second)
-    {
-        // Compute plane normals
-        Vector3d N1 = Vector3d.Normalize(Vector3d.Cross(first.VertexB - first.VertexA, first.VertexC - first.VertexA));
-        Vector3d N2 = Vector3d.Normalize(Vector3d.Cross(second.VertexB - second.VertexA, second.VertexC - second.VertexA));
-
-        // Planes dont intersect if these normalized vectors are parallel.
-        return Math.Abs(Vector3d.Dot(N1, N2)) < 1.0f;
-    }
-
-    private static bool GenerateSeparatingAxesAndCheckOverlap(TriangleCollider first, TriangleCollider second)
-    {
-        Vector3d firstEdgeAB = first.VertexB - first.VertexA;
-        Vector3d firstEdgeBC = first.VertexC - first.VertexB;
-        Vector3d firstEdgeCA = first.VertexA - first.VertexC;
-        Vector3d secondEdgeAB = second.VertexB - second.VertexA;
-        Vector3d secondEdgeBC = second.VertexC - second.VertexB;
-        Vector3d secondEdgeCA = second.VertexA - second.VertexC;
-
-        Vector3d axisABAB = Vector3d.Cross(firstEdgeAB, secondEdgeAB);
-        Vector3d axisABBC = Vector3d.Cross(firstEdgeAB, secondEdgeBC);
-        Vector3d axisABCA = Vector3d.Cross(firstEdgeAB, secondEdgeCA);
-        Vector3d axisBCAB = Vector3d.Cross(firstEdgeBC, secondEdgeAB);
-        Vector3d axisBCBC = Vector3d.Cross(firstEdgeBC, secondEdgeBC);
-        Vector3d axisBCCA = Vector3d.Cross(firstEdgeBC, secondEdgeCA);
-        Vector3d axisCAAB = Vector3d.Cross(firstEdgeCA, secondEdgeAB);
-        Vector3d axisCABC = Vector3d.Cross(firstEdgeCA, secondEdgeBC);
-        Vector3d axisCACA = Vector3d.Cross(firstEdgeCA, secondEdgeCA);
-
-        bool overlap =
-            OverlapOnAxis(first, second, axisABAB) ||
-            OverlapOnAxis(first, second, axisABBC) ||
-            OverlapOnAxis(first, second, axisABCA) ||
-            OverlapOnAxis(first, second, axisBCAB) ||
-            OverlapOnAxis(first, second, axisBCBC) ||
-            OverlapOnAxis(first, second, axisBCCA) ||
-            OverlapOnAxis(first, second, axisCAAB) ||
-            OverlapOnAxis(first, second, axisCABC) ||
-            OverlapOnAxis(first, second, axisCACA);
-
-        return overlap;
-    }
-
-    private static bool OverlapOnAxis(TriangleCollider first, TriangleCollider second, Vector3d axis)
-    {
-        Vector3d firstProjection = new(Vector3d.Dot(first.VertexA, axis), Vector3d.Dot(first.VertexB, axis), Vector3d.Dot(first.VertexC, axis));
-        Vector3d secondProjection = new(Vector3d.Dot(second.VertexA, axis), Vector3d.Dot(second.VertexB, axis), Vector3d.Dot(second.VertexC, axis));
-
-        double firstMin = Math.Min(firstProjection.X, Math.Min(firstProjection.Y, firstProjection.Z));
-        double firstMax = Math.Max(firstProjection.X, Math.Max(firstProjection.Y, firstProjection.Z));
-        double secondMin = Math.Min(secondProjection.X, Math.Min(secondProjection.Y, secondProjection.Z));
-        double secondMax = Math.Max(secondProjection.X, Math.Max(secondProjection.Y, secondProjection.Z));
-
-        // Check for overlap
-        return firstMin >= secondMin && secondMax >= firstMax;
-    }
-
-}
-
 public readonly struct CuboidAABBCollider
 {
     /// <summary>
@@ -230,60 +150,32 @@ public readonly struct CuboidAABBCollider
         Vector3d max = Vector3d.ComponentMax(VertexA, VertexB);
 
         parameter = 0;
+        double tmin = 0;
+        double tmax = 1;
 
-        double tmin = (min.X - segmentStart.X) / segmentDirection.X;
-        double tmax = (max.X - segmentStart.X) / segmentDirection.X;
+        if (!UpdateSlab(segmentStart.X, segmentDirection.X, min.X, max.X, ref tmin, ref tmax)) return false;
+        if (!UpdateSlab(segmentStart.Y, segmentDirection.Y, min.Y, max.Y, ref tmin, ref tmax)) return false;
+        if (!UpdateSlab(segmentStart.Z, segmentDirection.Z, min.Z, max.Z, ref tmin, ref tmax)) return false;
 
-        if (tmin > tmax)
-        {
-            double temp = tmin;
-            tmin = tmax;
-            tmax = temp;
-        }
-
-        double tymin = (min.Y - segmentStart.Y) / segmentDirection.Y;
-        double tymax = (max.Y - segmentStart.Y) / segmentDirection.Y;
-
-        if (tymin > tymax)
-        {
-            double temp = tymin;
-            tymin = tymax;
-            tymax = temp;
-        }
-
-        if ((tmin > tymax) || (tymin > tmax))
-        {
-            return false;
-        }
-
-        if (tymin > tmin)
-        {
-            tmin = tymin;
-        }
-
-        if (tymax < tmax)
-        {
-            tmax = tymax;
-        }
-
-        double tzmin = (min.Z - segmentStart.Z) / segmentDirection.Z;
-        double tzmax = (max.Z - segmentStart.Z) / segmentDirection.Z;
-
-        if (tzmin > tzmax)
-        {
-            double temp = tzmin;
-            tzmin = tzmax;
-            tzmax = temp;
-        }
-
-        if ((tmin > tzmax) || (tzmin > tmax))
-        {
-            return false;
-        }
-
-        parameter = tzmin;
-
+        parameter = tmin;
         return true;
+    }
+
+    private static bool UpdateSlab(double start, double direction, double min, double max, ref double tmin, ref double tmax)
+    {
+        if (Math.Abs(direction) <= double.Epsilon)
+        {
+            return start >= min && start <= max;
+        }
+
+        double axisMin = (min - start) / direction;
+        double axisMax = (max - start) / direction;
+        if (axisMin > axisMax) Swap(ref axisMin, ref axisMax);
+
+        if (axisMin > tmin) tmin = axisMin;
+        if (axisMax < tmax) tmax = axisMax;
+
+        return tmin <= tmax;
     }
     public bool Collide(Vector3d origin, double radius, out Vector3d intersection)
     {
@@ -349,8 +241,7 @@ public readonly struct CuboidAABBCollider
         int maxZ = (int)(Math.Max(thisTickOrigin.Z, previousTickOrigin.Z) + radius);
 
         blockPosition = null;
-        BlockPos blockPos = _blockPosBuffer;
-        Vec3d blockPosVec = _vecBuffer;
+        BlockPos blockPos = new(0);
         block = null;
         facing = null;
         intersection = new();
@@ -359,11 +250,9 @@ public readonly struct CuboidAABBCollider
         for (int y = minY; y <= maxY; y++)
         {
             blockPos.SetAndCorrectDimension(minX, y, minZ);
-            blockPosVec.Set(minX, y, minZ);
             for (int x = minX; x <= maxX; x++)
             {
                 blockPos.X = x;
-                blockPosVec.X = x;
                 for (int z = minZ; z <= maxZ; z++)
                 {
                     blockPos.Z = z;
@@ -372,7 +261,6 @@ public readonly struct CuboidAABBCollider
                     Cuboidf?[]? collisionBoxes = blockBuffer.GetCollisionBoxes(blockAccessor, blockPos);
                     if (collisionBoxes == null || collisionBoxes.Length == 0) continue;
 
-                    blockPosVec.Z = z;
                     for (int i = 0; i < collisionBoxes.Length; i++)
                     {
                         Cuboidf? collisionBox = collisionBoxes[i];
@@ -410,9 +298,6 @@ public readonly struct CuboidAABBCollider
 
         return BlockFacing.FromNormal(new Vec3f((float)normal.X, (float)normal.Y, (float)normal.Z));
     }
-
-    private static BlockPos _blockPosBuffer = new(0);
-    private static Vec3d _vecBuffer = new();
 
     private static Vector3d GetIntersectingFaceNormal(Vector3d min, Vector3d max, Vector3d dir)
     {
@@ -543,6 +428,12 @@ public sealed class ShapeElementCollider
     public const int VertexCount = 8;
     public Vector4d[] ElementVertices { get; } = new Vector4d[VertexCount];
     public Vector4d[] InworldVertices { get; } = new Vector4d[VertexCount];
+    // Reused on the game render/tick thread; ShapeElementCollider is not thread-safe.
+    private readonly CuboidFace[] _faces = new CuboidFace[6];
+    private readonly Vector3d[] _vertexScratch = new Vector3d[VertexCount];
+    private readonly Vector3d[] _axesScratch = new Vector3d[3];
+    private readonly double[] _halfSizeScratch = new double[3];
+    private readonly double[] _transformScratch = new double[16];
     public int JointId { get; set; }
 
     public EntityShapeRenderer? Renderer { get; set; } = null;
@@ -576,21 +467,18 @@ public sealed class ShapeElementCollider
     }
     public bool Collide(Vector3d segmentStart, Vector3d segmentDirection, out double parameter, out Vector3d intersection)
     {
-        CuboidFace[] faces = new[]
-        {
-            new CuboidFace(InworldVertices[0], InworldVertices[1], InworldVertices[2], InworldVertices[3]),
-            new CuboidFace(InworldVertices[4], InworldVertices[5], InworldVertices[6], InworldVertices[7]),
-            new CuboidFace(InworldVertices[0], InworldVertices[1], InworldVertices[5], InworldVertices[4]),
-            new CuboidFace(InworldVertices[2], InworldVertices[3], InworldVertices[7], InworldVertices[6]),
-            new CuboidFace(InworldVertices[0], InworldVertices[3], InworldVertices[7], InworldVertices[4]),
-            new CuboidFace(InworldVertices[1], InworldVertices[2], InworldVertices[6], InworldVertices[5])
-        };
+        _faces[0] = new CuboidFace(InworldVertices[0], InworldVertices[1], InworldVertices[2], InworldVertices[3]);
+        _faces[1] = new CuboidFace(InworldVertices[4], InworldVertices[5], InworldVertices[6], InworldVertices[7]);
+        _faces[2] = new CuboidFace(InworldVertices[0], InworldVertices[1], InworldVertices[5], InworldVertices[4]);
+        _faces[3] = new CuboidFace(InworldVertices[2], InworldVertices[3], InworldVertices[7], InworldVertices[6]);
+        _faces[4] = new CuboidFace(InworldVertices[0], InworldVertices[3], InworldVertices[7], InworldVertices[4]);
+        _faces[5] = new CuboidFace(InworldVertices[1], InworldVertices[2], InworldVertices[6], InworldVertices[5]);
 
         double closestParameter = double.MaxValue;
         bool foundIntersection = false;
         intersection = Vector3d.Zero;
 
-        foreach (CuboidFace face in faces)
+        foreach (CuboidFace face in _faces)
         {
             if (face.Collide(segmentStart, segmentDirection, out double currentParameter, out Vector3d faceIntersection) && currentParameter < closestParameter)
             {
@@ -605,29 +493,29 @@ public sealed class ShapeElementCollider
     }
     public bool Collide(Vector3d thisTickOrigin, Vector3d previousTickOrigin, double radius, out double distance, out Vector3d intersection)
     {
-        Vector3d[] vertices = new Vector3d[VertexCount];
-        for (int index = 0; index < VertexCount; index++)
-        {
-            vertices[index] = new(InworldVertices[index].X, InworldVertices[index].Y, InworldVertices[index].Z);
-        }
+        FillVertexScratch();
 
-        intersection = ClosestPoint(thisTickOrigin, previousTickOrigin, vertices, out Vector3d segmentClosestPoint);
+        intersection = ClosestPoint(thisTickOrigin, previousTickOrigin, _vertexScratch, out Vector3d segmentClosestPoint);
         distance = Vector3d.Distance(intersection, segmentClosestPoint);
 
         return distance <= radius;
     }
     public bool Collide(Vector3d thisTickOrigin, Vector3d previousTickOrigin, double radius, out double distance, out Vector3d intersection, out Vector3d segmentClosestPoint)
     {
-        Vector3d[] vertices = new Vector3d[VertexCount];
-        for (int index = 0; index < VertexCount; index++)
-        {
-            vertices[index] = new(InworldVertices[index].X, InworldVertices[index].Y, InworldVertices[index].Z);
-        }
+        FillVertexScratch();
 
-        intersection = ClosestPoint(thisTickOrigin, previousTickOrigin, vertices, out segmentClosestPoint);
+        intersection = ClosestPoint(thisTickOrigin, previousTickOrigin, _vertexScratch, out segmentClosestPoint);
         distance = Vector3d.Distance(intersection, segmentClosestPoint);
 
         return distance <= radius;
+    }
+
+    private void FillVertexScratch()
+    {
+        for (int index = 0; index < VertexCount; index++)
+        {
+            _vertexScratch[index] = new(InworldVertices[index].X, InworldVertices[index].Y, InworldVertices[index].Z);
+        }
     }
 
     private void SetElementVertices(ShapeElement element)
@@ -711,8 +599,7 @@ public sealed class ShapeElementCollider
     }
     private double[] GetTransformMatrix(int jointId, float[] TransformationMatrices4x4)
     {
-        double[] transformMatrix = new double[16];
-        Mat4d.Identity(transformMatrix);
+        Mat4d.Identity(_transformScratch);
         for (int elementIndex = 0; elementIndex < 16; elementIndex++)
         {
             int? transformMatricesIndex = GetIndex(jointId, elementIndex);
@@ -720,13 +607,13 @@ public sealed class ShapeElementCollider
             {
                 if (transformMatricesIndex.Value >= TransformationMatrices4x4.Length)
                 {
-                    return transformMatrix;
+                    return _transformScratch;
                 }
 
-                transformMatrix[elementIndex] = TransformationMatrices4x4[transformMatricesIndex.Value];
+                _transformScratch[elementIndex] = TransformationMatrices4x4[transformMatricesIndex.Value];
             }
         }
-        return transformMatrix;
+        return _transformScratch;
     }
     private static void GetElementTransformMatrixA(Matrixd matrix, ShapeElement element, double[] TransformationMatrices4x4)
     {
@@ -775,16 +662,14 @@ public sealed class ShapeElementCollider
                           obbVertices[4] + obbVertices[5] + obbVertices[6] + obbVertices[7]) / 8.0f;
 
         // Calculate the axes of the OBB
-        Vector3d[] axes = new Vector3d[3];
-        axes[0] = Vector3d.Normalize(obbVertices[1] - obbVertices[0]); // X-axis
-        axes[1] = Vector3d.Normalize(obbVertices[3] - obbVertices[0]); // Y-axis
-        axes[2] = Vector3d.Normalize(obbVertices[4] - obbVertices[0]); // Z-axis
+        _axesScratch[0] = Vector3d.Normalize(obbVertices[1] - obbVertices[0]); // X-axis
+        _axesScratch[1] = Vector3d.Normalize(obbVertices[3] - obbVertices[0]); // Y-axis
+        _axesScratch[2] = Vector3d.Normalize(obbVertices[4] - obbVertices[0]); // Z-axis
 
         // Calculate the half-sizes of the OBB along each axis
-        double[] halfSizes = new double[3];
-        halfSizes[0] = Vector3d.Distance(obbVertices[0], obbVertices[1]) / 2.0f; // X half-size
-        halfSizes[1] = Vector3d.Distance(obbVertices[0], obbVertices[3]) / 2.0f; // Y half-size
-        halfSizes[2] = Vector3d.Distance(obbVertices[0], obbVertices[4]) / 2.0f; // Z half-size
+        _halfSizeScratch[0] = Vector3d.Distance(obbVertices[0], obbVertices[1]) / 2.0f; // X half-size
+        _halfSizeScratch[1] = Vector3d.Distance(obbVertices[0], obbVertices[3]) / 2.0f; // Y half-size
+        _halfSizeScratch[2] = Vector3d.Distance(obbVertices[0], obbVertices[4]) / 2.0f; // Z half-size
 
         // Calculate the closest point on the OBB
         Vector3d closestPoint = center;
@@ -793,9 +678,9 @@ public sealed class ShapeElementCollider
 
         for (int i = 0; i < 3; i++)
         {
-            double distance = Vector3d.Dot(direction, axes[i]);
-            distance = Math.Clamp(distance, -halfSizes[i], halfSizes[i]);
-            closestPoint += distance * axes[i];
+            double distance = Vector3d.Dot(direction, _axesScratch[i]);
+            distance = Math.Clamp(distance, -_halfSizeScratch[i], _halfSizeScratch[i]);
+            closestPoint += distance * _axesScratch[i];
         }
 
         return closestPoint;
@@ -828,7 +713,7 @@ public sealed class ShapeElementCollider
         RenderLine(api, InworldVertices[0], InworldVertices[3], playerPos, deltaPos, color);
         RenderLine(api, InworldVertices[0], InworldVertices[4], playerPos, deltaPos, color);
 
-        RenderLine(api, InworldVertices[1], InworldVertices[1], playerPos, deltaPos, color);
+        RenderLine(api, InworldVertices[1], InworldVertices[2], playerPos, deltaPos, color);
         RenderLine(api, InworldVertices[1], InworldVertices[5], playerPos, deltaPos, color);
         RenderLine(api, InworldVertices[2], InworldVertices[6], playerPos, deltaPos, color);
         RenderLine(api, InworldVertices[2], InworldVertices[3], playerPos, deltaPos, color);
@@ -837,7 +722,6 @@ public sealed class ShapeElementCollider
         RenderLine(api, InworldVertices[4], InworldVertices[5], playerPos, deltaPos, color);
         RenderLine(api, InworldVertices[6], InworldVertices[7], playerPos, deltaPos, color);
         RenderLine(api, InworldVertices[6], InworldVertices[5], playerPos, deltaPos, color);
-        RenderLine(api, InworldVertices[2], InworldVertices[1], playerPos, deltaPos, color);
     }
 
     private static void RenderLine(ICoreClientAPI api, Vector4d start, Vector4d end, BlockPos playerPos, Vec3f deltaPos, int color)

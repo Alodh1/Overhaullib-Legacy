@@ -1,7 +1,6 @@
 ﻿using CombatOverhaul.MeleeSystems;
 using OpenTK.Mathematics;
 using ProtoBuf;
-using System.Diagnostics;
 using Vintagestory.API.Client;
 using Vintagestory.API.Common;
 using Vintagestory.API.Common.Entities;
@@ -88,8 +87,6 @@ public class RangedWeaponSystemClient
 
     public void SendStatusChange(EntityPlayer attacker, RangedWeaponStatus status, bool mainHand)
     {
-        Debug.WriteLine(status);
-        
         ItemSlot weaponSlot = mainHand ? attacker.ActiveHandItemSlot : attacker.LeftHandItemSlot;
 
         RangedWeaponStatusChanged?.Invoke(attacker, weaponSlot, status);

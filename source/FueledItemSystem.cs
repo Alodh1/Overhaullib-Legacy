@@ -1,6 +1,7 @@
 ﻿using Vintagestory.API.Client;
 using Vintagestory.API.Common;
 using Vintagestory.API.Config;
+using CombatOverhaul.Utils;
 using Vintagestory.API.MathTools;
 using Vintagestory.API.Server;
 using Vintagestory.GameContent;
@@ -72,6 +73,8 @@ public sealed class FueledItemSystem : ModSystem, IRenderer
     private ICoreServerAPI? _serverApi;
     private EntityBehaviorPlayerInventory? _playerInventoryBehavior;
     private Settings _settings = new();
+    private bool _reportedSleepingStateError;
+    private bool _reportedInventoryLookupError;
 
     private void OnServerTick(float dt)
     {
@@ -126,8 +129,14 @@ public sealed class FueledItemSystem : ModSystem, IRenderer
         {
             return player.GetBehavior<EntityBehaviorTiredness>()?.IsSleeping == true;
         }
-        catch
+        catch (Exception exception)
         {
+            if (!_reportedSleepingStateError)
+            {
+                _reportedSleepingStateError = true;
+                LoggerUtil.Warn(_serverApi ?? player.Api, this, $"Error while checking sleep state for '{player.Player?.PlayerName}':\n{exception}");
+            }
+
             return false;
         }
     }
@@ -138,9 +147,13 @@ public sealed class FueledItemSystem : ModSystem, IRenderer
         {
             _playerInventoryBehavior = _clientApi?.World?.Player?.Entity?.GetBehavior<EntityBehaviorPlayerInventory>();
         }
-        catch
+        catch (Exception exception)
         {
-            // just keep on
+            if (!_reportedInventoryLookupError)
+            {
+                _reportedInventoryLookupError = true;
+                LoggerUtil.Warn(_clientApi, this, $"Error while resolving player inventory behavior for fueled item rendering:\n{exception}");
+            }
         }
     }
 }

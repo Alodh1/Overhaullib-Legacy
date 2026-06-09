@@ -1,3 +1,4 @@
+using CombatOverhaul.Utils;
 using Vintagestory.API.Client;
 using Vintagestory.API.Common;
 using Vintagestory.API.Common.Entities;
@@ -97,7 +98,7 @@ public partial class ActionListener : IDisposable
         api.Event.MouseDown += HandleMouseDownEvents;
         api.Event.MouseUp += HandleMouseUpEvents;
 
-        foreach (EnumEntityAction action in Enum.GetValues<EnumEntityAction>())
+        foreach (EnumEntityAction action in _allActions)
         {
             _actionStates[action] = ActionState.Inactive;
             _timers[action] = new();
@@ -157,7 +158,8 @@ public partial class ActionListener : IDisposable
     public IEnumerable<EnumEntityAction> GetModifiers() => _modifiers.Where(IsActive);
 
     private readonly Dictionary<ActionEventId, List<System.Func<ActionEventData, bool>>> _subscriptions = new();
-    private readonly HashSet<EnumEntityAction> _tyronDecidedToMakeTheseActionsInconsistent_ThanksTyron = new()
+    private static readonly EnumEntityAction[] _allActions = Enum.GetValues<EnumEntityAction>();
+    private readonly HashSet<EnumEntityAction> _inconsistentInWorldMouseActions = new()
     {
         EnumEntityAction.InWorldLeftMouseDown,
         EnumEntityAction.InWorldRightMouseDown
@@ -215,15 +217,10 @@ public partial class ActionListener : IDisposable
     {
         if (_clientApi.World?.Player?.Entity is not EntityPlayer player) return;
 
-        Item? offhandItem = player.LeftHandItemSlot?.Itemstack?.Item;
-        string fullTypeName = offhandItem?.GetType().FullName ?? "";
-
         // Only bridge RMB to Ctrl for shields still using the real vanilla ItemShield class.
         // CO-patched vanilla shields are CombatOverhaul.Implementations.VanillaShield and
         // should not receive this vanilla Ctrl-style animation bridge.
-        bool isVanillaShield = fullTypeName == "Vintagestory.GameContent.ItemShield";
-
-        if (!isVanillaShield) return;
+        if (!CollectibleClassifier.IsVanillaItemShield(player.LeftHandItemSlot?.Itemstack?.Item)) return;
 
         player.Controls.RightMouseDown = on;
         player.ServerControls.RightMouseDown = on;
@@ -302,15 +299,9 @@ public partial class ActionListener : IDisposable
             return;
         }
 
-        if (_tyronDecidedToMakeTheseActionsInconsistent_ThanksTyron.Contains(action))
+        if (_inconsistentInWorldMouseActions.Contains(action))
         {
             OnEntityActionInconsistent(action, ref handled);
-
-            /*if (handled == EnumHandling.Handled && action == EnumEntityAction.InWorldLeftMouseDown) _suppressLMB = true;
-            if (handled == EnumHandling.Handled && action == EnumEntityAction.InWorldRightMouseDown) _suppressRMB = true;
-
-            if (_suppressLMB && (action == EnumEntityAction.LeftMouseDown || action == EnumEntityAction.InWorldLeftMouseDown)) handled = EnumHandling.Handled;
-            if (_suppressRMB && (action == EnumEntityAction.RightMouseDown || action == EnumEntityAction.InWorldRightMouseDown)) handled = EnumHandling.Handled;*/
 
             return;
         }
@@ -332,12 +323,6 @@ public partial class ActionListener : IDisposable
         {
             handled = EnumHandling.Handled;
         }
-
-        /*if (handled == EnumHandling.Handled && action == EnumEntityAction.LeftMouseDown) _suppressLMB = true;
-        if (handled == EnumHandling.Handled && action == EnumEntityAction.RightMouseDown) _suppressRMB = true;
-
-        if (_suppressLMB && (action == EnumEntityAction.LeftMouseDown || action == EnumEntityAction.InWorldLeftMouseDown)) handled = EnumHandling.Handled;
-        if (_suppressRMB && (action == EnumEntityAction.RightMouseDown || action == EnumEntityAction.InWorldRightMouseDown)) handled = EnumHandling.Handled;*/
     }
     private void OnEntityActionInWorldMouse(EnumEntityAction action, ref EnumHandling handled)
     {
@@ -413,7 +398,7 @@ public partial class ActionListener : IDisposable
 
         bool handled = false;
 
-        ActionEventData eventData = new(id, Enum.GetValues<EnumEntityAction>().Where(IsActive), AltPressed(_clientApi));
+        ActionEventData eventData = new(id, GetActiveActions(), AltPressed(_clientApi));
         foreach (System.Func<ActionEventData, bool> callback in value)
         {
             if (callback.Invoke(eventData))
@@ -424,6 +409,23 @@ public partial class ActionListener : IDisposable
         }
 
         return handled;
+    }
+    private EnumEntityAction[] GetActiveActions()
+    {
+        int count = 0;
+        foreach (EnumEntityAction action in _allActions)
+        {
+            if (IsActive(action)) count++;
+        }
+
+        EnumEntityAction[] activeActions = new EnumEntityAction[count];
+        int index = 0;
+        foreach (EnumEntityAction action in _allActions)
+        {
+            if (IsActive(action)) activeActions[index++] = action;
+        }
+
+        return activeActions;
     }
     private ActionState SwitchState(EnumEntityAction action, bool on)
     {
@@ -445,20 +447,6 @@ public partial class ActionListener : IDisposable
     }
     private ActionState SwitchStateInconsistent(EnumEntityAction action)
     {
-        return (true, _actionStates[action]) switch
-        {
-            (true, ActionState.Inactive) => ActionState.Pressed,
-            (true, ActionState.Pressed) => ActionState.Inactive,
-            (true, ActionState.Active) => ActionState.Inactive,
-            (true, ActionState.Hold) => ActionState.Inactive,
-            (true, ActionState.Released) => ActionState.Inactive,
-
-            (false, ActionState.Inactive) => ActionState.Inactive,
-            (false, ActionState.Pressed) => ActionState.Inactive,
-            (false, ActionState.Active) => ActionState.Inactive,
-            (false, ActionState.Hold) => ActionState.Inactive,
-            (false, ActionState.Released) => ActionState.Inactive,
-            _ => ActionState.Inactive
-        };
+        return _actionStates[action] == ActionState.Inactive ? ActionState.Pressed : ActionState.Inactive;
     }
 }

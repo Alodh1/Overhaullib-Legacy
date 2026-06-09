@@ -1,6 +1,7 @@
 using CombatOverhaul.Animations;
 using CombatOverhaul.Colliders;
 using CombatOverhaul.Integration.Transpilers;
+using CombatOverhaul.Utils;
 using HarmonyLib;
 using OpenTK.Mathematics;
 using System.Reflection;
@@ -23,6 +24,9 @@ internal static class AnimationPatches
     public static long OwnerEntityId { get; set; } = 0;
     public static HashSet<long> ActiveEntities { get; set; } = [];
     public static ObjectCache<ClientAnimator, EntityPlayer>? Animators { get; private set; }
+    private static readonly FieldInfo? _lightrgbsField = typeof(EntityShapeRenderer).GetField("lightrgbs", BindingFlags.NonPublic | BindingFlags.Instance);
+    private static bool _reportedColliderRenderError;
+    private static bool _reportedHeldItemRenderError;
 
     private enum HeldItemAttachmentMode
     {
@@ -34,33 +38,34 @@ internal static class AnimationPatches
     public static void Patch(string harmonyId, ICoreAPI api)
     {
         Animators = new(api, "animators to players cache", 10000, 5 * 60 * 1000, threadSafe: true);
+        Harmony harmony = new(harmonyId);
 
-        new Harmony(harmonyId).Patch(
+        harmony.Patch(
                 typeof(EntityShapeRenderer).GetMethod("RenderHeldItem", AccessTools.all),
                 prefix: new HarmonyMethod(AccessTools.Method(typeof(AnimationPatches), nameof(RenderHeldItem)))
             );
 
-        new Harmony(harmonyId).Patch(
+        harmony.Patch(
                 typeof(EntityShapeRenderer).GetMethod("DoRender3DOpaque", AccessTools.all),
                 prefix: new HarmonyMethod(AccessTools.Method(typeof(AnimationPatches), nameof(DoRender3DOpaque)))
             );
 
-        new Harmony(harmonyId).Patch(
+        harmony.Patch(
                 typeof(EntityPlayerShapeRenderer).GetMethod("DoRender3DOpaque", AccessTools.all),
                 prefix: new HarmonyMethod(AccessTools.Method(typeof(AnimationPatches), nameof(DoRender3DOpaquePlayer)))
             );
 
-        new Harmony(harmonyId).Patch(
+        harmony.Patch(
                 typeof(EntityShapeRenderer).GetMethod("BeforeRender", AccessTools.all),
                 prefix: new HarmonyMethod(AccessTools.Method(typeof(AnimationPatches), nameof(BeforeRender)))
             );
 
-        new Harmony(harmonyId).Patch(
+        harmony.Patch(
                 typeof(EntityPlayer).GetMethod(nameof(EntityPlayer.OnSelfBeforeRender), AccessTools.all),
                 postfix: new HarmonyMethod(AccessTools.Method(typeof(AnimationPatches), nameof(OnSelfBeforeRender)))
             );
 
-        new Harmony(harmonyId).Patch(
+        harmony.Patch(
                 typeof(Vintagestory.API.Common.AnimationManager).GetMethod("OnClientFrame", AccessTools.all),
                 postfix: new HarmonyMethod(AccessTools.Method(typeof(AnimationPatches), nameof(AnimationManagerOnClientFrame)))
             );
@@ -68,12 +73,14 @@ internal static class AnimationPatches
 
     public static void Unpatch(string harmonyId, ICoreAPI api)
     {
-        new Harmony(harmonyId).Unpatch(typeof(EntityShapeRenderer).GetMethod("RenderHeldItem", AccessTools.all), HarmonyPatchType.Prefix, harmonyId);
-        new Harmony(harmonyId).Unpatch(typeof(EntityShapeRenderer).GetMethod("DoRender3DOpaque", AccessTools.all), HarmonyPatchType.Prefix, harmonyId);
-        new Harmony(harmonyId).Unpatch(typeof(EntityPlayerShapeRenderer).GetMethod("DoRender3DOpaque", AccessTools.all), HarmonyPatchType.Prefix, harmonyId);
-        new Harmony(harmonyId).Unpatch(typeof(EntityShapeRenderer).GetMethod("BeforeRender", AccessTools.all), HarmonyPatchType.Prefix, harmonyId);
-        new Harmony(harmonyId).Unpatch(typeof(EntityPlayer).GetMethod(nameof(EntityPlayer.OnSelfBeforeRender), AccessTools.all), HarmonyPatchType.Postfix, harmonyId);
-        new Harmony(harmonyId).Unpatch(typeof(Vintagestory.API.Common.AnimationManager).GetMethod("OnClientFrame", AccessTools.all), HarmonyPatchType.Postfix, harmonyId);
+        Harmony harmony = new(harmonyId);
+
+        harmony.Unpatch(typeof(EntityShapeRenderer).GetMethod("RenderHeldItem", AccessTools.all), HarmonyPatchType.Prefix, harmonyId);
+        harmony.Unpatch(typeof(EntityShapeRenderer).GetMethod("DoRender3DOpaque", AccessTools.all), HarmonyPatchType.Prefix, harmonyId);
+        harmony.Unpatch(typeof(EntityPlayerShapeRenderer).GetMethod("DoRender3DOpaque", AccessTools.all), HarmonyPatchType.Prefix, harmonyId);
+        harmony.Unpatch(typeof(EntityShapeRenderer).GetMethod("BeforeRender", AccessTools.all), HarmonyPatchType.Prefix, harmonyId);
+        harmony.Unpatch(typeof(EntityPlayer).GetMethod(nameof(EntityPlayer.OnSelfBeforeRender), AccessTools.all), HarmonyPatchType.Postfix, harmonyId);
+        harmony.Unpatch(typeof(Vintagestory.API.Common.AnimationManager).GetMethod("OnClientFrame", AccessTools.all), HarmonyPatchType.Postfix, harmonyId);
 
         Animators?.Dispose();
     }
@@ -154,9 +161,9 @@ internal static class AnimationPatches
             CollidersEntityBehavior behavior = __instance.entity?.GetBehavior<CollidersEntityBehavior>();
             behavior?.Render(__instance.entity?.Api as ICoreClientAPI, __instance.entity as EntityAgent, __instance);
         }
-        catch (Exception)
+        catch (Exception exception)
         {
-            // just ignore
+            LogColliderRenderError(__instance.entity?.Api, exception);
         }
 
     }
@@ -168,9 +175,9 @@ internal static class AnimationPatches
             CollidersEntityBehavior behavior = __instance.entity?.GetBehavior<CollidersEntityBehavior>();
             behavior?.Render(__instance.entity?.Api as ICoreClientAPI, __instance.entity as EntityAgent, __instance);
         }
-        catch (Exception)
+        catch (Exception exception)
         {
-            // just ignore
+            LogColliderRenderError(__instance.entity?.Api, exception);
         }
     }
 
@@ -208,19 +215,31 @@ internal static class AnimationPatches
             renderInfo.TextureId = atlasPos.atlasTextureId;
         }
 
-        Vec4f? lightrgbs = (Vec4f?)typeof(EntityShapeRenderer)
-            .GetField("lightrgbs", BindingFlags.NonPublic | BindingFlags.Instance)
-            ?.GetValue(__instance);
+        Vec4f? lightrgbs = (Vec4f?)_lightrgbsField?.GetValue(__instance);
 
         try
         {
             behavior.AttachmentPointOverride = GetHeldItemAttachmentPointOverride(player, right);
             return !behavior.RenderHeldItem(__instance.ModelMat, __instance.capi, slot, __instance.entity, lightrgbs, dt, isShadowPass, right, renderInfo, renderTarget);
         }
-        catch
+        catch (Exception exception)
         {
+            if (!_reportedHeldItemRenderError)
+            {
+                _reportedHeldItemRenderError = true;
+                LoggerUtil.Warn(__instance.entity?.Api, typeof(AnimationPatches), $"Error while rendering animated held item for '{slot.Itemstack.Collectible?.Code}':\n{exception}");
+            }
+
             return true;
         }
+    }
+
+    private static void LogColliderRenderError(ICoreAPI? api, Exception exception)
+    {
+        if (_reportedColliderRenderError) return;
+
+        _reportedColliderRenderError = true;
+        LoggerUtil.Warn(api, typeof(AnimationPatches), $"Error while rendering collider debug overlay:\n{exception}");
     }
 
     private static bool IsTongsHeldItemRender(EntityPlayer player, bool right)
@@ -240,13 +259,7 @@ internal static class AnimationPatches
 
     private static bool IsTongsStack(ItemStack? stack)
     {
-        string domain = stack?.Collectible?.Code?.Domain ?? "";
-        string path = stack?.Collectible?.Code?.Path ?? "";
-        if (domain.Length == 0 || path.Length == 0) return false;
-
-        // Matches vanilla tongs/tongsmetal and derived variants.
-        return path.StartsWith("tongs", StringComparison.OrdinalIgnoreCase)
-            || path.Contains("tongsmetal", StringComparison.OrdinalIgnoreCase);
+        return CollectibleClassifier.IsTongs(stack);
     }
     private static string? GetHeldItemAttachmentPointOverride(EntityPlayer? player, bool right)
     {

@@ -1,5 +1,6 @@
 ﻿using CombatOverhaul.Integration;
 using CombatOverhaul.Integration.Transpilers;
+using CombatOverhaul.Utils;
 using System.Diagnostics;
 using Vintagestory.API.Client;
 using Vintagestory.API.Common;
@@ -102,6 +103,7 @@ public sealed class AnimatableShape : ITexPositionSource, IDisposable
     private readonly Dictionary<long, string> _cacheKeys = new();
     private readonly Item _item;
     private readonly string _cachePrefix;
+    private static bool _reportedGenerateFramesError;
 
     private AnimatableShape(ICoreClientAPI api, string cacheKey, Shape currentShape, Item item)
     {
@@ -199,7 +201,14 @@ public sealed class AnimatableShape : ITexPositionSource, IDisposable
                 {
                     shape.Animations[i].GenerateAllFrames(shape.Elements, shape.JointsById);
                 }
-                catch (Exception ex) { }
+                catch (Exception exception)
+                {
+                    if (!_reportedGenerateFramesError)
+                    {
+                        _reportedGenerateFramesError = true;
+                        LoggerUtil.Warn(clientApi, typeof(AnimatableShape), $"Error while generating animation frames for '{cacheDictKey}':\n{exception}");
+                    }
+                }
             }
 
             animator = clientApi.Side == EnumAppSide.Client ?

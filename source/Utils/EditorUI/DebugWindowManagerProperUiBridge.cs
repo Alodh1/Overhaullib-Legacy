@@ -1,4 +1,4 @@
-﻿#if DEBUG
+#if DEBUG
 using System.Text;
 using CombatOverhaul.Animations.EditorUI;
 using CombatOverhaul.Integration.Transpilers;
@@ -28,7 +28,7 @@ public sealed partial class DebugWindowManager
         _editorAppState.SelectedKeyframe = animation.PlayerKeyFrames.Count == 0 ? 0 : Math.Clamp(animation._playerFrameIndex, 0, animation.PlayerKeyFrames.Count - 1);
     }
 
-    internal IReadOnlyList<string> ProperAnimationCodes => AnimationsManager._instance?.Animations?.Keys.ToArray() ?? Array.Empty<string>();
+    internal IReadOnlyList<string> ProperAnimationCodes => _animationsManager?.Animations?.Keys.ToArray() ?? Array.Empty<string>();
 
     internal string EnsureProperAnimationSelection(EditorAppState state)
     {
@@ -40,14 +40,14 @@ public sealed partial class DebugWindowManager
             return "";
         }
 
-        if (string.IsNullOrWhiteSpace(state.SelectedAnimation) || !AnimationsManager._instance.Animations.ContainsKey(state.SelectedAnimation))
+        if (string.IsNullOrWhiteSpace(state.SelectedAnimation) || !_animationsManager.Animations.ContainsKey(state.SelectedAnimation))
         {
             int selected = Math.Clamp(_selectedAnimationIndex, 0, codes.Length - 1);
             state.SelectedAnimation = codes[selected];
         }
 
         _selectedAnimationIndex = Math.Max(0, Array.IndexOf(codes, state.SelectedAnimation));
-        Animation animation = AnimationsManager._instance.Animations[state.SelectedAnimation];
+        Animation animation = _animationsManager.Animations[state.SelectedAnimation];
         state.SelectedKeyframe = animation.PlayerKeyFrames.Count == 0 ? 0 : Math.Clamp(animation._playerFrameIndex, 0, animation.PlayerKeyFrames.Count - 1);
         return state.SelectedAnimation;
     }
@@ -164,7 +164,7 @@ public sealed partial class DebugWindowManager
         if (string.IsNullOrWhiteSpace(selected)) return false;
 
         CommitPendingAnimationEdit(selected);
-        _animationHistory.Undo(selected, AnimationsManager._instance.Animations, out string status);
+        _animationHistory.Undo(selected, _animationsManager.Animations, out string status);
         state.SetStatus(status);
         return true;
     }
@@ -175,7 +175,7 @@ public sealed partial class DebugWindowManager
         if (string.IsNullOrWhiteSpace(selected)) return false;
 
         CommitPendingAnimationEdit(selected);
-        _animationHistory.Redo(selected, AnimationsManager._instance.Animations, out string status);
+        _animationHistory.Redo(selected, _animationsManager.Animations, out string status);
         state.SetStatus(status);
         return true;
     }
@@ -235,10 +235,10 @@ public sealed partial class DebugWindowManager
         string selected = EnsureProperAnimationSelection(state);
         if (string.IsNullOrWhiteSpace(selected) || _animationBuffer == null) return false;
 
-        Animation currentAnimation = AnimationsManager._instance.Animations[selected];
+        Animation currentAnimation = _animationsManager.Animations[selected];
         _animationHistory.BeginEdit(selected, currentAnimation, "Load from buffer");
-        AnimationsManager._instance.Animations[selected] = _animationBuffer.ToAnimation();
-        _animationHistory.CommitEdit(selected, AnimationsManager._instance.Animations[selected]);
+        _animationsManager.Animations[selected] = _animationBuffer.ToAnimation();
+        _animationHistory.CommitEdit(selected, _animationsManager.Animations[selected]);
         state.SetStatus($"Loaded animation buffer into {selected}.");
         return true;
     }
@@ -373,7 +373,7 @@ public sealed partial class DebugWindowManager
     {
         animation = null;
         if (string.IsNullOrWhiteSpace(animationCode)) return false;
-        return AnimationsManager._instance?.Animations?.TryGetValue(animationCode, out animation) == true && animation != null;
+        return _animationsManager?.Animations?.TryGetValue(animationCode, out animation) == true && animation != null;
     }
 }
 #endif

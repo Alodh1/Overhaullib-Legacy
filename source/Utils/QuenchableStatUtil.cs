@@ -1,4 +1,5 @@
 using CombatOverhaul.DamageSystems;
+using System.Reflection;
 using Vintagestory.API.Common;
 using Vintagestory.API.Datastructures;
 using Vintagestory.GameContent;
@@ -218,10 +219,28 @@ public static class QuenchableStatUtil
                 return i;
             }
         }
-        catch
+        catch (Exception exception)
         {
+            LogPowerPerQuenchReflectionError(stack, exception);
         }
 
         return fallback;
     }
+
+    private static void LogPowerPerQuenchReflectionError(ItemStack stack, Exception exception)
+    {
+        if (_reportedPowerPerQuenchReflectionError) return;
+
+        _reportedPowerPerQuenchReflectionError = true;
+        LoggerUtil.Warn(GetCollectibleApi(stack), typeof(QuenchableStatUtil), $"Error while reading PowerPerQuench for '{stack.Collectible?.Code}':\n{exception}");
+    }
+
+    private static ICoreAPI? GetCollectibleApi(ItemStack stack)
+    {
+        return stack.Collectible?.GetType()
+            .GetField("api", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)
+            ?.GetValue(stack.Collectible) as ICoreAPI;
+    }
+
+    private static bool _reportedPowerPerQuenchReflectionError;
 }

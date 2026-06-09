@@ -1,5 +1,3 @@
-﻿using CombatOverhaul.Colliders;
-using CombatOverhaul.MeleeSystems;
 using CombatOverhaul.Utils;
 using Newtonsoft.Json.Linq;
 using System.Diagnostics.CodeAnalysis;
@@ -17,10 +15,7 @@ public sealed class AnimationsManager
 
     public AnimationsManager(ICoreClientAPI api, ParticleEffectsManager particleEffectsManager)
     {
-        _instance = this;
-
         _api = api;
-        _colliders.Clear();
     }
     public void Load()
     {
@@ -57,12 +52,12 @@ public sealed class AnimationsManager
 
     public Animation? GetAnimation(string code, EntityPlayer player, bool firstPerson = true)
     {
-        return GetAnimationRecursive(code, GetTags(player, firstPerson));
+        return GetAnimationRecursive(code, GetTags(player, firstPerson).ToArray());
     }
     
     public bool GetAnimation([NotNullWhen(true)] out Animation? animation, string code, EntityPlayer player, bool firstPerson = true)
     {
-        animation = GetAnimationRecursive(code, GetTags(player, firstPerson));
+        animation = GetAnimationRecursive(code, GetTags(player, firstPerson).ToArray());
         return animation != null;
     }
 
@@ -91,35 +86,38 @@ public sealed class AnimationsManager
         return tags;
     }
 
-    [Obsolete("Use one from DebugWindowManager")]
-    public static void RegisterTransformByCode(ModelTransform transform, string code) => DebugWindowManager.RegisterTransformByCode(transform, code);
-    [Obsolete("Use one from DebugWindowManager")]
-    public void RegisterTransform(ModelTransform transform, string code) => DebugWindowManager._instance.RegisterTransform(transform, code);
-    [Obsolete("Use one from DebugWindowManager")]
-    public static void RegisterCollider(string item, string type, MeleeDamageType collider) => DebugWindowManager.RegisterCollider(item, type, collider);
-    [Obsolete("Use one from DebugWindowManager")]
-    public static void RegisterCollider(string item, string type, Action<LineSegmentCollider> setter, System.Func<LineSegmentCollider> getter) => DebugWindowManager.RegisterCollider(item, type, setter, getter);
-
     private readonly ICoreClientAPI _api;
-    private static Dictionary<string, Dictionary<string, (Action<LineSegmentCollider> setter, System.Func<LineSegmentCollider> getter)>> _colliders = new();
-    internal static AnimationsManager _instance;
-
-    private Animation? GetAnimationRecursive(string code, IEnumerable<string> tags)
+    private Animation? GetAnimationRecursive(string code, IReadOnlyList<string> tags)
     {
-        foreach (string tag in tags)
+        bool[] excluded = tags.Count == 0 ? [] : new bool[tags.Count];
+        return GetAnimationRecursive(code, tags, excluded, tags.Count);
+    }
+
+    private Animation? GetAnimationRecursive(string code, IReadOnlyList<string> tags, bool[] excluded, int remainingTags)
+    {
+        if (remainingTags > 0)
         {
-            string newCode = code + "-" + tag;
+            for (int index = 0; index < tags.Count; index++)
+            {
+                if (excluded[index]) continue;
 
-            Animation? result = GetAnimationRecursive(newCode, tags.Except([tag]));
+                excluded[index] = true;
+                Animation? result = GetAnimationRecursive($"{code}-{tags[index]}", tags, excluded, remainingTags - 1);
+                excluded[index] = false;
 
-            if (result != null) return result;
-        }
+                if (result != null) return result;
+            }
 
-        foreach (string tag in tags)
-        {
-            Animation? result = GetAnimationRecursive(code, tags.Except([tag]));
+            for (int index = 0; index < tags.Count; index++)
+            {
+                if (excluded[index]) continue;
 
-            if (result != null) return result;
+                excluded[index] = true;
+                Animation? result = GetAnimationRecursive(code, tags, excluded, remainingTags - 1);
+                excluded[index] = false;
+
+                if (result != null) return result;
+            }
         }
 
         if (Animations.TryGetValue(code, out Animation finalResult))

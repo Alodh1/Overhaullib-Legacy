@@ -214,26 +214,6 @@ public sealed class ProjectileSystemClient
             }
         }
 
-        /*_stopwatch.Start();
-
-        for (int i = 0; i < 1000; i++)
-        {
-            Vector3d currentPosition = new(packet.CurrentPosition[0], packet.CurrentPosition[1], packet.CurrentPosition[2]);
-            Vector3d previousPosition = new(packet.PreviousPosition[0], packet.PreviousPosition[1], packet.PreviousPosition[2]);
-            Vector3d velocity = new(packet.Velocity[0], packet.Velocity[1], packet.Velocity[2]);
-
-            foreach (Entity entity in entities.Where(entity => entity.IsCreature))
-            {
-                if (Collide(entity, packet, currentPosition, previousPosition, velocity))
-                {
-                    break;
-                }
-            }
-        }
-
-        _stopwatch.Stop();
-        Console.WriteLine($"{_stopwatch.Elapsed.TotalMicroseconds / 1000:F3} microseconds\t{entities.Length} entities");
-        _stopwatch.Reset();*/
     }
 
     private void RecordFirearmsCollisionMiss(string reason)
@@ -782,14 +762,7 @@ public sealed class ProjectileSystemServer
             return true;
         }
 
-        Type collectibleType = collectible.GetType();
-        if (collectibleType.FullName?.StartsWith("Firearms.", StringComparison.Ordinal) == true)
-        {
-            return true;
-        }
-
-        string? assemblyName = collectibleType.Assembly.GetName().Name;
-        return assemblyName?.Contains("Firearms", StringComparison.OrdinalIgnoreCase) == true;
+        return CollectibleClassifier.IsFirearm(collectible);
     }
 
     private static bool CanProjectileHit(Entity entity)

@@ -112,7 +112,7 @@ public class MeleeWeaponServer : RangeWeaponServer
                 }
             }
 
-            if (replacementSlot == null && projectileCode.ToString().Contains("dagger", StringComparison.OrdinalIgnoreCase))
+            if (replacementSlot == null && CollectibleClassifier.IsDaggerCode(projectileCode))
             {
                 WalkInventory(player.Entity, slot =>
                 {
@@ -142,21 +142,7 @@ public class MeleeWeaponServer : RangeWeaponServer
 
     protected virtual bool IsDaggerStack(ItemStack? stack)
     {
-        CollectibleObject? collectible = stack?.Collectible;
-        if (collectible == null) return false;
-
-        object? tagsObject = stack?.Item?.Tags;
-        if (tagsObject is System.Collections.IEnumerable tags)
-        {
-            foreach (object? tagObject in tags)
-            {
-                string tag = tagObject?.ToString() ?? "";
-                if (tag.Equals("dagger", StringComparison.OrdinalIgnoreCase)) return true;
-            }
-        }
-
-        string code = collectible.Code?.ToString() ?? "";
-        return code.Contains("dagger", StringComparison.OrdinalIgnoreCase);
+        return CollectibleClassifier.IsDagger(stack);
     }
 
     protected virtual void WalkInventory(EntityPlayer player, System.Func<ItemSlot, bool> selector)

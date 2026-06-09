@@ -107,17 +107,19 @@ public readonly struct LineSegmentCollider : IWeaponCollider
     }
     public Vector3d? IntersectCuboids(IEnumerable<Cuboidf> collisionBoxes)
     {
-        double tMin = 0.0f;
-        double tMax = 1.0f;
+        Vector3d? closestIntersection = null;
+        double closestParameter = double.MaxValue;
 
         foreach (Cuboidf collisionBox in collisionBoxes)
         {
-            if (!CheckAxisIntersection(Direction.X, Position.X, collisionBox.MinX, collisionBox.MaxX, ref tMin, ref tMax)) continue;
-            if (!CheckAxisIntersection(Direction.Y, Position.Y, collisionBox.MinY, collisionBox.MaxY, ref tMin, ref tMax)) continue;
-            if (!CheckAxisIntersection(Direction.Z, Position.Z, collisionBox.MinZ, collisionBox.MaxZ, ref tMin, ref tMax)) continue;
+            Vector3d? intersection = IntersectCuboid(collisionBox, out double parameter);
+            if (intersection == null || parameter >= closestParameter) continue;
+
+            closestIntersection = intersection;
+            closestParameter = parameter;
         }
 
-        return Position + tMin * Direction;
+        return closestIntersection;
     }
     public Vector3d? IntersectCuboid(Cuboidf collisionBox, out double parameter)
     {
@@ -209,8 +211,6 @@ public readonly struct LineSegmentCollider : IWeaponCollider
         }
     }
 
-    private static readonly BlockPos _blockPosBuffer = new(0, 0, 0, 0);
-    private static readonly Vec3d _blockPosVecBuffer = new();
     private const float _epsilon = 1e-6f;
 
     private static LineSegmentCollider TransformSegment(LineSegmentCollider value, Matrixf modelMatrix, EntityPos playerPos)
@@ -265,15 +265,13 @@ public readonly struct LineSegmentCollider : IWeaponCollider
     {
         BlockPos position = new(x, y, z, 0);
         Block block = blockAccessor.GetBlock(position, BlockLayersAccess.MostSolid);
-        _blockPosBuffer.Set(x, y, z);
 
-        Cuboidf[] collisionBoxes = block.GetCollisionBoxes(blockAccessor, _blockPosBuffer);
+        Cuboidf[] collisionBoxes = block.GetCollisionBoxes(blockAccessor, position);
         if (collisionBoxes == null || collisionBoxes.Length == 0) return null;
 
         double closestIntersectionParameter = 1;
         Vector3d? closestIntersection = null;
 
-        _blockPosVecBuffer.Set(x, y, z);
         for (int i = 0; i < collisionBoxes.Length; i++)
         {
             Cuboidf? collBox = collisionBoxes[i];

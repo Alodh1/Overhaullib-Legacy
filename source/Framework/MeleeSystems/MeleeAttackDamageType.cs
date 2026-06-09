@@ -2,6 +2,7 @@
 using CombatOverhaul.DamageSystems;
 using CombatOverhaul.Implementations;
 using CombatOverhaul.Inputs;
+using CombatOverhaul.Utils;
 using OpenTK.Mathematics;
 using ProtoBuf;
 using System.Diagnostics;
@@ -327,8 +328,7 @@ public class MeleeDamageType : IHasLineCollider
 
     private static bool IsDagger(ItemSlot slot)
     {
-        string code = slot.Itemstack?.Collectible?.Code?.Path ?? "";
-        return code.Contains("dagger", StringComparison.OrdinalIgnoreCase);
+        return CollectibleClassifier.IsDagger(slot);
     }
 
     

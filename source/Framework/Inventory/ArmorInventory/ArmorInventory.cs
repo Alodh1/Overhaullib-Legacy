@@ -684,7 +684,7 @@ public class ArmorInventory : InventoryCharacter
                 }
                 catch (Exception exception)
                 {
-                    Debug.WriteLine(exception);
+                    LoggerUtil.Error(_api, this, $"Error while clearing vanilla armor slot {index} for player '{playerUID}':\n{exception}");
                     return;
                 }
             }
@@ -713,7 +713,7 @@ public class ArmorInventory : InventoryCharacter
                 }
                 catch (Exception exception)
                 {
-                    Debug.WriteLine(exception);
+                    LoggerUtil.Error(_api, this, $"Error while clearing overhaul armor slot {index} for player '{playerUID}':\n{exception}");
                     return;
                 }
             }

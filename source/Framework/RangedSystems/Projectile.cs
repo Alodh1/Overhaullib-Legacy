@@ -3,7 +3,6 @@ using CombatOverhaul.DamageSystems;
 using CombatOverhaul.Implementations;
 using CombatOverhaul.Utils;
 using OpenTK.Mathematics;
-using System.Diagnostics;
 using System.Reflection;
 using System.Runtime.CompilerServices;
 using System.Text;
@@ -341,9 +340,7 @@ public class ProjectileEntity : Entity
         }
         catch (Exception exception)
         {
-#if DEBUG
-            Debug.WriteLine($"Error on restoring projectile {Code} from bytes:\n{exception}");
-#endif
+            LoggerUtil.Error(Api, this, $"Error on restoring projectile {Code} from bytes:\n{exception}");
         }
     }
     public override void OnEntityDespawn(EntityDespawnData despawn)

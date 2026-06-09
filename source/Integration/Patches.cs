@@ -287,13 +287,7 @@ internal static class HarmonyPatches
 
     private static bool IsOffhandDagger(ItemStack? stack)
     {
-        AssetLocation? code = stack?.Collectible?.Code;
-        if (code == null) return false;
-
-        string path = code.Path.ToLowerInvariant();
-        string domain = code.Domain.ToLowerInvariant();
-
-        return path.Contains("dagger") || domain.Contains("dagger");
+        return CollectibleClassifier.IsDagger(stack);
     }
 
     private static MethodInfo? GetEntityPlayerLightHsvGetter()
@@ -454,8 +448,7 @@ internal static class HarmonyPatches
         }
         catch (Exception exception)
         {
-            Debug.WriteLine("BagInventory_SaveSlotIntoBag");
-            Debug.WriteLine(exception);
+            LoggerUtil.Error(_api, typeof(HarmonyPatches), $"Error in BagInventory_SaveSlotIntoBag:\n{exception}");
             return true;
         }
 
@@ -488,14 +481,10 @@ internal static class HarmonyPatches
         if (_api is not Vintagestory.API.Client.ICoreClientAPI capi) return true;
         if (capi.World?.Player?.Entity is not EntityPlayer player) return true;
 
-        Item? offhandItem = player.LeftHandItemSlot?.Itemstack?.Item;
-        string fullTypeName = offhandItem?.GetType().FullName ?? "";
-
         // Do not keep the vanilla raiseshield animation alive for CO-patched shields.
         // Those are CombatOverhaul.Implementations.VanillaShield and should animate through
         // Combat Overhaul's BlockAnimation/ReadyAnimation path.
-        bool vanillaShield = fullTypeName == "Vintagestory.GameContent.ItemShield";
-        if (!vanillaShield) return true;
+        if (!CollectibleClassifier.IsVanillaItemShield(player.LeftHandItemSlot?.Itemstack?.Item)) return true;
 
         CombatOverhaulSystem? coSystem = capi.ModLoader.GetModSystem<CombatOverhaulSystem>();
         if (coSystem?.ActionListener == null) return true;

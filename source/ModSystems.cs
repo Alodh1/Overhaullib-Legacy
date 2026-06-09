@@ -250,7 +250,7 @@ public partial class CombatOverhaulSystem : ModSystem
         api.Input.RegisterHotKey("toggleTpAnimations", "Toggle CO third person animations", GlKeys.PageDown, ctrlPressed: true);
         api.Input.RegisterHotKey("toggleAllAnimations", "Toggle all CO animations", GlKeys.PageUp, ctrlPressed: true);
 
-        //api.Input.AddHotkeyListener((code, _) => ToggleWearableItem(api.World.Player, code)); // Works only for vanilla hotkeys for some fucking reason!
+        // api.Input.AddHotkeyListener only receives vanilla hotkeys here.
 
         api.Input.SetHotKeyHandler("toggleAllAnimations", _ =>
         {
@@ -668,7 +668,7 @@ public partial class CombatOverhaulAnimationsSystem : ModSystem
         _ = LoadAnimatedItemShaders();
         ParticleEffectsManager = new(api);
         PlayerAnimationsManager = new(api, ParticleEffectsManager);
-        DebugManager = new(api, ParticleEffectsManager);
+        DebugManager = new(api, ParticleEffectsManager, PlayerAnimationsManager);
         ClientVanillaAnimations = new(api);
         ClientTpAnimationSystem = new(api);
     }

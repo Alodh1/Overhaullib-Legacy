@@ -378,81 +378,182 @@ public readonly struct ItemKeyFrame
 public readonly struct ItemFrame
 {
     public readonly int ElementsHash = 0;
-    public readonly Dictionary<string, AnimationElement> Elements = new();
-    public readonly Dictionary<int, AnimationElement> ElementsByHash = new();
+    private readonly string[] _elementNames = [];
+    private readonly int[] _elementNameHashes = [];
+    private readonly AnimationElement[] _elements = [];
+    private readonly Dictionary<string, int>? _elementIndexes = null;
+
+    public IEnumerable<KeyValuePair<string, AnimationElement>> Elements => EnumerateElements();
+    public int Count => _elements.Length;
 
     public ItemFrame(Dictionary<string, AnimationElement> elements)
     {
+        _elementNames = new string[elements.Count];
+        _elementNameHashes = new int[elements.Count];
+        _elements = new AnimationElement[elements.Count];
+        _elementIndexes = new(elements.Count, StringComparer.Ordinal);
+
+        int index = 0;
         foreach ((string code, AnimationElement value) in elements)
         {
-            Elements.Add(code, value);
-            ElementsByHash.Add(code.GetHashCode(), value);
+            int hash = code.GetHashCode();
+            _elementNames[index] = code;
+            _elementNameHashes[index] = hash;
+            _elements[index] = value;
+            _elementIndexes.Add(code, index);
+            ElementsHash = index == 0 ? hash : HashCode.Combine(ElementsHash, hash);
+            index++;
         }
+    }
 
-        if (elements.Any())
-        {
-            ElementsHash = Elements.Select(entry => entry.Key.GetHashCode()).Aggregate((first, second) => HashCode.Combine(first, second));
-        }
+    private ItemFrame(string[] elementNames, int[] elementNameHashes, AnimationElement[] elements, int elementsHash)
+    {
+        _elementNames = elementNames;
+        _elementNameHashes = elementNameHashes;
+        _elements = elements;
+        _elementIndexes = null;
+        ElementsHash = elementsHash;
     }
 
     public static readonly ItemFrame Empty = new(new Dictionary<string, AnimationElement>());
 
     public void Apply(ElementPose pose)
     {
-        if (Elements.TryGetValue(pose.ForElement.Name, out AnimationElement element))
+        if (TryGetElement(pose.ForElement.Name, out AnimationElement element))
         {
             element.Apply(pose);
         }
     }
     public void Apply(ExtendedElementPose pose)
     {
-        if (ElementsByHash.TryGetValue(pose.ElementNameHash, out AnimationElement element))
+        if (TryGetElement(pose.ElementNameHash, out AnimationElement element))
         {
             element.Apply(pose);
         }
     }
     public static ItemFrame Interpolate(ItemFrame from, ItemFrame to, float progress)
     {
-        if (!from.Elements.Any()) return to;
+        if (from.Count == 0) return to;
+        if (to.Count == 0) return Empty;
 
-        Dictionary<string, AnimationElement> elements = new();
-        foreach ((string key, AnimationElement toElement) in to.Elements)
+        AnimationElement[] elements = new AnimationElement[to._elements.Length];
+        for (int index = 0; index < to._elements.Length; index++)
         {
-            if (from.Elements.TryGetValue(key, out AnimationElement fromElement))
+            if (from.TryGetElement(to._elementNames[index], out AnimationElement fromElement))
             {
-                elements.Add(key, AnimationElement.Interpolate(fromElement, toElement, progress));
+                elements[index] = AnimationElement.Interpolate(fromElement, to._elements[index], progress);
             }
             else
             {
-                elements.Add(key, toElement);
+                elements[index] = to._elements[index];
             }
         }
 
-        return new(elements);
+        return new(to._elementNames, to._elementNameHashes, elements, to.ElementsHash);
     }
     public static ItemFrame Compose(IEnumerable<(ItemFrame element, float weight)> frames)
     {
-        if (!frames.Any()) return Empty;
-
-        HashSet<string> keys = frames
-            .Select(entry => entry.element.Elements.Keys)
-            .SelectMany(entry => entry)
-            .ToHashSet();
-
-
-        Dictionary<string, AnimationElement> elements = new();
-        foreach (string key in keys)
+        if (frames is not IReadOnlyList<(ItemFrame element, float weight)> materializedFrames)
         {
-            elements.Add(key,
-                AnimationElement.Compose(
-                    frames
-                        .Where(entry => entry.element.Elements.ContainsKey(key))
-                        .Select(entry => (entry.element.Elements[key], entry.weight))
-                    )
-                );
+            materializedFrames = frames.ToArray();
         }
 
-        return new(elements);
+        if (materializedFrames.Count == 0) return Empty;
+
+        List<string> names = new();
+        List<int> hashes = new();
+        foreach ((ItemFrame frame, _) in materializedFrames)
+        {
+            for (int elementIndex = 0; elementIndex < frame._elementNames.Length; elementIndex++)
+            {
+                string name = frame._elementNames[elementIndex];
+                if (ContainsName(names, name)) continue;
+
+                names.Add(name);
+                hashes.Add(frame._elementNameHashes[elementIndex]);
+            }
+        }
+
+        if (names.Count == 0) return Empty;
+
+        AnimationElement[] elements = new AnimationElement[names.Count];
+        List<(AnimationElement element, float weight)> weightedElements = new(materializedFrames.Count);
+        for (int nameIndex = 0; nameIndex < names.Count; nameIndex++)
+        {
+            weightedElements.Clear();
+            string name = names[nameIndex];
+            foreach ((ItemFrame frame, float weight) in materializedFrames)
+            {
+                if (frame.TryGetElement(name, out AnimationElement element))
+                {
+                    weightedElements.Add((element, weight));
+                }
+            }
+
+            elements[nameIndex] = AnimationElement.Compose(weightedElements);
+        }
+
+        string[] elementNames = names.ToArray();
+        int[] elementHashes = hashes.ToArray();
+        int elementsHash = 0;
+        for (int index = 0; index < elementHashes.Length; index++)
+        {
+            elementsHash = index == 0 ? elementHashes[index] : HashCode.Combine(elementsHash, elementHashes[index]);
+        }
+
+        return new(elementNames, elementHashes, elements, elementsHash);
+    }
+
+    private bool TryGetElement(string name, out AnimationElement element)
+    {
+        if (_elementIndexes != null && _elementIndexes.TryGetValue(name, out int mappedIndex))
+        {
+            element = _elements[mappedIndex];
+            return true;
+        }
+
+        for (int index = 0; index < _elementNames.Length; index++)
+        {
+            if (!string.Equals(_elementNames[index], name, StringComparison.Ordinal)) continue;
+
+            element = _elements[index];
+            return true;
+        }
+
+        element = default;
+        return false;
+    }
+
+    private bool TryGetElement(int nameHash, out AnimationElement element)
+    {
+        for (int index = 0; index < _elementNameHashes.Length; index++)
+        {
+            if (_elementNameHashes[index] != nameHash) continue;
+
+            element = _elements[index];
+            return true;
+        }
+
+        element = default;
+        return false;
+    }
+
+    private IEnumerable<KeyValuePair<string, AnimationElement>> EnumerateElements()
+    {
+        for (int index = 0; index < _elementNames.Length; index++)
+        {
+            yield return new(_elementNames[index], _elements[index]);
+        }
+    }
+
+    private static bool ContainsName(List<string> names, string name)
+    {
+        foreach (string existingName in names)
+        {
+            if (string.Equals(existingName, name, StringComparison.Ordinal)) return true;
+        }
+
+        return false;
     }
 
 #if DEBUG
@@ -1323,8 +1424,10 @@ public readonly struct AnimationElement
         float rotationYMaxWeight = 0;
         float rotationZMaxWeight = 0;
 
-        foreach ((AnimationElement element, float weight) in elements.Where(entry => entry.weight > 0))
+        foreach ((AnimationElement element, float weight) in elements)
         {
+            if (weight <= 0) continue;
+
             if (weight >= offsetXMaxWeight && element.OffsetX.HasValue) { offsetXMaxWeight = weight; offsetX = element.OffsetX.Value; }
             if (weight >= offsetYMaxWeight && element.OffsetY.HasValue) { offsetYMaxWeight = weight; offsetY = element.OffsetY.Value; }
             if (weight >= offsetZMaxWeight && element.OffsetZ.HasValue) { offsetZMaxWeight = weight; offsetZ = element.OffsetZ.Value; }
@@ -1333,8 +1436,10 @@ public readonly struct AnimationElement
             if (weight >= rotationZMaxWeight && element.RotationZ.HasValue) { rotationZMaxWeight = weight; rotationZ = element.RotationZ.Value; }
         }
 
-        foreach ((AnimationElement element, float weight) in elements.Where(entry => entry.weight <= 0))
+        foreach ((AnimationElement element, float weight) in elements)
         {
+            if (weight > 0) continue;
+
             if (element.OffsetX.HasValue) offsetX += element.OffsetX.Value;
             if (element.OffsetY.HasValue) offsetY += element.OffsetY.Value;
             if (element.OffsetZ.HasValue) offsetZ += element.OffsetZ.Value;

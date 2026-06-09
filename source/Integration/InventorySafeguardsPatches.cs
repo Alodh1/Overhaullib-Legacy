@@ -10,26 +10,30 @@ internal static class InventorySafeguardsPatches
 {
     public static void Patch(string harmonyId)
     {
-        new Harmony(harmonyId).Patch(typeof(PlayerInventoryNetworkUtil).GetMethod("UpdateFromPacket", BindingFlags.Instance | BindingFlags.Public, [typeof(IWorldAccessor), typeof(Packet_InventoryUpdate)]),
+        Harmony harmony = new(harmonyId);
+
+        harmony.Patch(typeof(PlayerInventoryNetworkUtil).GetMethod("UpdateFromPacket", BindingFlags.Instance | BindingFlags.Public, [typeof(IWorldAccessor), typeof(Packet_InventoryUpdate)]),
             prefix: new HarmonyMethod(InventorySafeguardsPatches.UpdateFromPacket)
             );
-        new Harmony(harmonyId).Patch(typeof(InventoryNetworkUtil).GetMethod("UpdateFromPacket", BindingFlags.Instance | BindingFlags.Public, [typeof(IWorldAccessor), typeof(Packet_InventoryUpdate)]),
+        harmony.Patch(typeof(InventoryNetworkUtil).GetMethod("UpdateFromPacket", BindingFlags.Instance | BindingFlags.Public, [typeof(IWorldAccessor), typeof(Packet_InventoryUpdate)]),
             prefix: new HarmonyMethod(InventorySafeguardsPatches.UpdateFromPacket2)
             );
-        new Harmony(harmonyId).Patch(typeof(InventoryNetworkUtil).GetMethod("UpdateFromPacket", BindingFlags.Instance | BindingFlags.Public, [typeof(IWorldAccessor), typeof(Packet_InventoryDoubleUpdate)]),
+        harmony.Patch(typeof(InventoryNetworkUtil).GetMethod("UpdateFromPacket", BindingFlags.Instance | BindingFlags.Public, [typeof(IWorldAccessor), typeof(Packet_InventoryDoubleUpdate)]),
             prefix: new HarmonyMethod(InventorySafeguardsPatches.UpdateFromPacketDouble)
             );
-        new Harmony(harmonyId).Patch(typeof(InventoryNetworkUtil).GetMethod("UpdateFromPacket", BindingFlags.Instance | BindingFlags.Public, [typeof(IWorldAccessor), typeof(Packet_InventoryContents)]),
+        harmony.Patch(typeof(InventoryNetworkUtil).GetMethod("UpdateFromPacket", BindingFlags.Instance | BindingFlags.Public, [typeof(IWorldAccessor), typeof(Packet_InventoryContents)]),
             prefix: new HarmonyMethod(InventorySafeguardsPatches.UpdateFromInventoryContents)
             );
     }
 
     public static void Unpatch(string harmonyId)
     {
-        new Harmony(harmonyId).Unpatch(typeof(PlayerInventoryNetworkUtil).GetMethod("UpdateFromPacket", BindingFlags.Instance | BindingFlags.Public, [typeof(IWorldAccessor), typeof(Packet_InventoryUpdate)]), HarmonyPatchType.Prefix);
-        new Harmony(harmonyId).Unpatch(typeof(InventoryNetworkUtil).GetMethod("UpdateFromPacket", BindingFlags.Instance | BindingFlags.Public, [typeof(IWorldAccessor), typeof(Packet_InventoryUpdate)]), HarmonyPatchType.Prefix);
-        new Harmony(harmonyId).Unpatch(typeof(InventoryNetworkUtil).GetMethod("UpdateFromPacket", BindingFlags.Instance | BindingFlags.Public, [typeof(IWorldAccessor), typeof(Packet_InventoryDoubleUpdate)]), HarmonyPatchType.Prefix);
-        new Harmony(harmonyId).Unpatch(typeof(InventoryNetworkUtil).GetMethod("UpdateFromPacket", BindingFlags.Instance | BindingFlags.Public, [typeof(IWorldAccessor), typeof(Packet_InventoryContents)]), HarmonyPatchType.Prefix);
+        Harmony harmony = new(harmonyId);
+
+        harmony.Unpatch(typeof(PlayerInventoryNetworkUtil).GetMethod("UpdateFromPacket", BindingFlags.Instance | BindingFlags.Public, [typeof(IWorldAccessor), typeof(Packet_InventoryUpdate)]), HarmonyPatchType.Prefix);
+        harmony.Unpatch(typeof(InventoryNetworkUtil).GetMethod("UpdateFromPacket", BindingFlags.Instance | BindingFlags.Public, [typeof(IWorldAccessor), typeof(Packet_InventoryUpdate)]), HarmonyPatchType.Prefix);
+        harmony.Unpatch(typeof(InventoryNetworkUtil).GetMethod("UpdateFromPacket", BindingFlags.Instance | BindingFlags.Public, [typeof(IWorldAccessor), typeof(Packet_InventoryDoubleUpdate)]), HarmonyPatchType.Prefix);
+        harmony.Unpatch(typeof(InventoryNetworkUtil).GetMethod("UpdateFromPacket", BindingFlags.Instance | BindingFlags.Public, [typeof(IWorldAccessor), typeof(Packet_InventoryContents)]), HarmonyPatchType.Prefix);
     }
 
     [ThreadStatic] private static bool _skipUpdateFromPacket;

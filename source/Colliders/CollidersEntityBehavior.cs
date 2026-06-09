@@ -81,7 +81,8 @@ public sealed class CollidersEntityBehavior : EntityBehavior
     public Dictionary<string, ShapeElementCollider> Colliders { get; private set; } = new();
     public override string PropertyName() => "CombatOverhaul:EntityColliders";
     internal ClientAnimator? Animator { get; set; }
-    static public bool RenderColliders { get; set; } = false;
+    // Global debug toggle controlled by DebugWindowManager.
+    public static bool RenderColliders { get; set; } = false;
     public float DefaultPenetrationResistance { get; set; } = 5f;
     public Dictionary<string, float> PenetrationResistances { get; set; } = new();
     public bool ResistantCollidersStopProjectiles { get; set; } = true;
@@ -150,24 +151,23 @@ public sealed class CollidersEntityBehavior : EntityBehavior
 
                 if (ShapeElementsToProcess.Any() && !_reportedMissingColliders)
                 {
-                    string missingColliders = ShapeElementsToProcess.Aggregate((first, second) => $"{first}, {second}");
-                    Utils.LoggerUtil.Warn(entity.Api, typeof(HarmonyPatches), $"({entity.Code}) Listed colliders that were not found in shape: {missingColliders}");
                     _reportedMissingColliders = true;
                 }
             }
             catch (Exception exception)
             {
-                if (_reportedMissingColliders)
+                if (!_reportedColliderCreationError)
                 {
                     Utils.LoggerUtil.Error(entity.Api, typeof(HarmonyPatches), $"({entity.Code}) Error during creating colliders: \n{exception}");
-                    _reportedMissingColliders = true;
                 }
+
+                _reportedColliderCreationError = true;
             }
         }
 
         ProcessCollidersForCustomModel();
 
-        if (entity.IsRendered)
+        if (entity.IsRendered && ShouldRecalculateColliders(Animator, clientApi))
         {
             RecalculateColliders(Animator, clientApi);
         }
@@ -202,7 +202,15 @@ public sealed class CollidersEntityBehavior : EntityBehavior
     {
         intersections = new();
         CuboidAABBCollider AABBCollider = new(entity);
-        return AABBCollider.Collide(thisTickOrigin, previousTickOrigin, radius, out Vector3d intersection);
+        double effectiveRadius = radius + Math.Max(0, penetrationDistance);
+
+        if (!AABBCollider.Collide(thisTickOrigin, previousTickOrigin, effectiveRadius, out Vector3d intersection))
+        {
+            return false;
+        }
+
+        intersections.Add(("", Vector3d.Distance(previousTickOrigin, intersection), intersection));
+        return true;
     }
     public bool Collide(Vector3d segmentStart, Vector3d segmentDirection, out string collider, out double parameter, out Vector3d intersection)
     {
@@ -292,7 +300,7 @@ public sealed class CollidersEntityBehavior : EntityBehavior
             }
         }
 
-        intersections.Sort((first, second) => (int)(first.Item2 - second.Item2));
+        intersections.Sort((first, second) => first.Item2.CompareTo(second.Item2));
 
         return foundIntersection;
     }
@@ -353,7 +361,7 @@ public sealed class CollidersEntityBehavior : EntityBehavior
             }
         }
 
-        intersections.Sort((first, second) => (int)(first.Item2 - second.Item2));
+        intersections.Sort((first, second) => first.Item2.CompareTo(second.Item2));
 
         return foundIntersection;
     }
@@ -486,7 +494,7 @@ public sealed class CollidersEntityBehavior : EntityBehavior
 
         if (intersections.Any())
         {
-            intersections.Sort((first, second) => (int)(first.Item2 - second.Item2));
+            intersections.Sort((first, second) => first.Item2.CompareTo(second.Item2));
 
             double smallestParameter = 1;
             foreach ((string firstCollider, double firstParameter, Vector3d firstIntersection) in intersections)
@@ -531,6 +539,7 @@ public sealed class CollidersEntityBehavior : EntityBehavior
         { ColliderTypes.Resistant, ColorUtil.ColorFromRgba(255, 0, 255, 255 ) } // Magenta
     };
     private bool _reportedMissingColliders = false;
+    private bool _reportedColliderCreationError = false;
     private ICoreAPI? Api => entity?.Api;
     private CollidersConfig _defaultConfig = new();
     private const int _updateFps = 30;
@@ -538,6 +547,8 @@ public sealed class CollidersEntityBehavior : EntityBehavior
     private float _timeSinceLastUpdate = 0;
     private readonly Settings _settings;
     private bool _subscribed = false;
+    private int _lastColliderSignature = 0;
+    private bool _collidersTransformed = false;
 
     private void SetColliderElement(ShapeElement element)
     {
@@ -566,6 +577,52 @@ public sealed class CollidersEntityBehavior : EntityBehavior
             collider.Transform(animator.TransformationMatrices, clientApi);
         }
         CalculateBoundingBox();
+        _collidersTransformed = true;
+    }
+
+    private bool ShouldRecalculateColliders(ClientAnimator animator, ICoreClientAPI clientApi)
+    {
+        int signature = GetColliderTransformSignature(animator, clientApi);
+        if (!_collidersTransformed)
+        {
+            _lastColliderSignature = signature;
+            return true;
+        }
+
+        if (signature == _lastColliderSignature) return false;
+
+        _lastColliderSignature = signature;
+        return true;
+    }
+
+    private int GetColliderTransformSignature(ClientAnimator animator, ICoreClientAPI clientApi)
+    {
+        HashCode hash = new();
+        hash.Add(Colliders.Count);
+        hash.Add(entity.Pos.X);
+        hash.Add(entity.Pos.Y);
+        hash.Add(entity.Pos.Z);
+        hash.Add(entity.Pos.Yaw);
+        hash.Add(entity.Pos.Pitch);
+        hash.Add(entity.Pos.Roll);
+
+        EntityPos playerPos = clientApi.World.Player.Entity.Pos;
+        hash.Add(playerPos.X);
+        hash.Add(playerPos.Y);
+        hash.Add(playerPos.Z);
+
+        float[] transformMatrices = animator.TransformationMatrices;
+        foreach (ShapeElementCollider collider in Colliders.Values)
+        {
+            hash.Add(collider.JointId);
+            int offset = collider.JointId * 16;
+            for (int index = 0; index < 16 && offset + index < transformMatrices.Length; index++)
+            {
+                hash.Add(transformMatrices[offset + index]);
+            }
+        }
+
+        return hash.ToHashCode();
     }
     private void CalculateBoundingBox()
     {
@@ -724,18 +781,17 @@ public sealed class CollidersEntityBehavior : EntityBehavior
 
             if (ShapeElementsToProcess.Any() && !_reportedMissingColliders)
             {
-                string missingColliders = ShapeElementsToProcess.Aggregate((first, second) => $"{first}, {second}");
-                Utils.LoggerUtil.Warn(entity.Api, typeof(HarmonyPatches), $"({entity.Code}) Listed colliders that were not found in shape: {missingColliders}");
                 _reportedMissingColliders = true;
             }
         }
         catch (Exception exception)
         {
-            if (_reportedMissingColliders)
+            if (!_reportedColliderCreationError)
             {
                 Utils.LoggerUtil.Error(entity.Api, typeof(HarmonyPatches), $"({entity.Code}) Error during creating colliders: \n{exception}");
-                _reportedMissingColliders = true;
             }
+
+            _reportedColliderCreationError = true;
         }
 
         UnprocessedElementsLeftCustom = false;

@@ -26,7 +26,7 @@ public class ToolSelectionGuiDialog : GuiDialog
         }
         catch (Exception exception)
         {
-            Debug.WriteLine(exception);
+            Utils.LoggerUtil.Error(Api, this, $"Error while composing tool selection dialog:\n{exception}");
             successful = false;
         }
 

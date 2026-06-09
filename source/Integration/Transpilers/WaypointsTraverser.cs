@@ -1,4 +1,3 @@
-﻿using CombatOverhaul.Entities;
 using HarmonyLib;
 using System.Reflection;
 using System.Reflection.Emit;
@@ -39,4 +38,3 @@ public static class EntityBehaviorTaskAIInitializePatch
         }
     }
 }*/
-

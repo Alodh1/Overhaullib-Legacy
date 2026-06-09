@@ -16,7 +16,7 @@ public sealed class Composer
 
     public PlayerItemFrame Compose(TimeSpan delta)
     {
-        while (_requestsQueue.Any())
+        while (_requestsQueue.Count > 0)
         {
             AnimationRequest request = _requestsQueue.Dequeue();
             ProcessRequest(request);
@@ -31,87 +31,77 @@ public sealed class Composer
             }
         }
 
-        if (!_requests.Any() || !_animators.Any()) return PlayerItemFrame.Empty;
+        if (_states.Count == 0) return PlayerItemFrame.Empty;
 
-        foreach ((string category, AnimatorWeightState state) in _weightState)
+        foreach (AnimatorState state in _states.Values)
         {
-            _currentTimes[category] += delta;
-            ProcessWeight(category, state);
+            state.CurrentTime += delta;
+            ProcessWeight(state);
         }
 
-        List<(PlayerItemFrame, float)> frames = [];
-        foreach ((string category, Animator animator) in _animators)
+        _frameScratch.Clear();
+        foreach (AnimatorState state in _states.Values)
         {
-            PlayerItemFrame frame = animator.Animate(delta, out IEnumerable<string> callbacks);
-            frames.Add((frame, _currentWeight[category]));
+            PlayerItemFrame frame = state.Animator.Animate(delta, out IEnumerable<string> callbacks);
+            _frameScratch.Add((frame, state.CurrentWeight));
 
             foreach (string callbackId in callbacks)
             {
-                _requests[category].CallbackHandler?.Invoke(callbackId);
+                state.Request.CallbackHandler?.Invoke(callbackId);
             }
 
-            if (animator.Finished())
+            if (state.Animator.Finished())
             {
-                IEnumerable<string> unfiredCallbacks = animator.GetUnfiredCallbacks();
+                IEnumerable<string> unfiredCallbacks = state.Animator.GetUnfiredCallbacks();
                 foreach (string callbackId in unfiredCallbacks)
                 {
-                    _requests[category].CallbackHandler?.Invoke(callbackId);
+                    state.Request.CallbackHandler?.Invoke(callbackId);
                 }
-                animator.ClearUnfiredCallbacks();
+                state.Animator.ClearUnfiredCallbacks();
             }
         }
 
-        PlayerItemFrame result = PlayerItemFrame.Compose(frames);
+        PlayerItemFrame result = PlayerItemFrame.Compose(_frameScratch);
 
-        foreach (string category in _requests.Select(entry => entry.Key).ToArray())
+        _categoriesToRemove.Clear();
+        foreach ((string category, AnimatorState state) in _states)
         {
-            if (_animators[category].Finished() && _weightState[category] == AnimatorWeightState.Finished)
+            if (state.Animator.Finished() && state.WeightState == AnimatorWeightState.Finished)
             {
-                Func<bool>? callback = _requests[category].FinishCallback;
+                Func<bool>? callback = state.Request.FinishCallback;
                 bool removeCategory = true;
-                if (callback != null && !_callbacksCalled[category])
+                if (callback != null && !state.CallbacksCalled)
                 {
                     removeCategory = !callback.Invoke();
-                    _callbacksCalled[category] = true;
+                    state.CallbacksCalled = true;
                 }
 
                 if (removeCategory)
                 {
-                    _animators.Remove(category);
-                    _currentTimes.Remove(category);
-                    _previousWeight.Remove(category);
-                    _currentWeight.Remove(category);
-                    _weightState.Remove(category);
-                    _requests.Remove(category);
-                    _callbacksCalled.Remove(category);
-
-                    continue;
+                    _categoriesToRemove.Add(category);
                 }
             }
 
-            if (_animators[category].Stopped() && _requests[category].FinishCallback != null)
+            if (state.Animator.Stopped() && state.Request.FinishCallback != null)
             {
-                Func<bool>? callback = _requests[category].FinishCallback;
+                Func<bool>? callback = state.Request.FinishCallback;
                 bool removeCategory = false;
-                if (callback != null && !_callbacksCalled[category])
+                if (callback != null && !state.CallbacksCalled)
                 {
                     removeCategory = !callback.Invoke();
-                    _callbacksCalled[category] = true;
+                    state.CallbacksCalled = true;
                 }
 
                 if (removeCategory)
                 {
-                    _animators.Remove(category);
-                    _currentTimes.Remove(category);
-                    _previousWeight.Remove(category);
-                    _currentWeight.Remove(category);
-                    _weightState.Remove(category);
-                    _requests.Remove(category);
-                    _callbacksCalled.Remove(category);
-
-                    continue;
+                    _categoriesToRemove.Add(category);
                 }
             }
+        }
+
+        foreach (string category in _categoriesToRemove)
+        {
+            _states.Remove(category);
         }
 
         return result;
@@ -124,27 +114,15 @@ public sealed class Composer
 
     public void Stop(string category)
     {
-        _animators.Remove(category);
-        _currentTimes.Remove(category);
-        _previousWeight.Remove(category);
-        _currentWeight.Remove(category);
-        _weightState.Remove(category);
-        _requests.Remove(category);
-        _callbacksCalled.Remove(category);
+        _states.Remove(category);
     }
 
     public void StopAll()
     {
-        _animators.Clear();
-        _currentTimes.Clear();
-        _previousWeight.Clear();
-        _currentWeight.Clear();
-        _weightState.Clear();
-        _requests.Clear();
-        _callbacksCalled.Clear();
+        _states.Clear();
     }
 
-    public bool AnyActiveAnimations() => _animators.Any();
+    public bool AnyActiveAnimations() => _states.Count > 0;
 
     public void SetSpeedModifier(AnimationSpeedModifierDelegate modifier)
     {
@@ -167,13 +145,26 @@ public sealed class Composer
         Finished
     }
 
-    private readonly Dictionary<string, Animator> _animators = new();
-    private readonly Dictionary<string, AnimationRequest> _requests = new();
-    private readonly Dictionary<string, float> _previousWeight = new();
-    private readonly Dictionary<string, float> _currentWeight = new();
-    private readonly Dictionary<string, AnimatorWeightState> _weightState = new();
-    private readonly Dictionary<string, TimeSpan> _currentTimes = new();
-    private readonly Dictionary<string, bool> _callbacksCalled = new();
+    private sealed class AnimatorState
+    {
+        public AnimatorState(AnimationRequest request, Animator animator)
+        {
+            Request = request;
+            Animator = animator;
+        }
+
+        public Animator Animator { get; }
+        public AnimationRequest Request { get; set; }
+        public float PreviousWeight { get; set; }
+        public float CurrentWeight { get; set; }
+        public AnimatorWeightState WeightState { get; set; } = AnimatorWeightState.EaseIn;
+        public TimeSpan CurrentTime { get; set; }
+        public bool CallbacksCalled { get; set; }
+    }
+
+    private readonly Dictionary<string, AnimatorState> _states = new();
+    private readonly List<(PlayerItemFrame frame, float weight)> _frameScratch = new();
+    private readonly List<string> _categoriesToRemove = new();
     private readonly Queue<AnimationRequest> _requestsQueue = new();
     private readonly SoundsSynchronizerClient? _soundsManager;
     private readonly ParticleEffectsManager? _particleEffectsManager;
@@ -181,58 +172,51 @@ public sealed class Composer
     private TimeSpan _speedModifierDuration = TimeSpan.Zero;
     private AnimationSpeedModifierDelegate? _speedModifierDelegate;
 
-    private void ProcessWeight(string category, AnimatorWeightState state)
+    private void ProcessWeight(AnimatorState state)
     {
-        switch (state)
+        switch (state.WeightState)
         {
             case AnimatorWeightState.EaseIn:
-                float progress = Math.Clamp((float)(_currentTimes[category] / _requests[category].EaseInDuration), 0, 1);
-                _currentWeight[category] = _previousWeight[category] + (_requests[category].Weight - _previousWeight[category]) * progress;
+                float progress = Math.Clamp((float)(state.CurrentTime / state.Request.EaseInDuration), 0, 1);
+                state.CurrentWeight = state.PreviousWeight + (state.Request.Weight - state.PreviousWeight) * progress;
                 if (progress >= 1)
                 {
-                    _currentWeight[category] = _requests[category].Weight;
-                    _weightState[category] = AnimatorWeightState.Stay;
+                    state.CurrentWeight = state.Request.Weight;
+                    state.WeightState = AnimatorWeightState.Stay;
                 }
                 break;
             case AnimatorWeightState.Stay:
-                if (_requests[category].EaseOut && _animators[category].Finished()/*_requests[category].Animation.TotalDuration / _requests[category].AnimationSpeed >= _currentTimes[category]*/)
+                if (state.Request.EaseOut && state.Animator.Finished())
                 {
-                    _weightState[category] = AnimatorWeightState.EaseOut;
+                    state.WeightState = AnimatorWeightState.EaseOut;
                 }
                 break;
             case AnimatorWeightState.EaseOut:
-                float progress2 = Math.Clamp((float)((_currentTimes[category] - _requests[category].Animation.TotalDuration / _requests[category].AnimationSpeed) / _requests[category].EaseOutDuration), 0, 1);
-                _currentWeight[category] = _requests[category].Weight * (1f - progress2);
+                float progress2 = Math.Clamp((float)((state.CurrentTime - state.Request.Animation.TotalDuration / state.Request.AnimationSpeed) / state.Request.EaseOutDuration), 0, 1);
+                state.CurrentWeight = state.Request.Weight * (1f - progress2);
                 if (progress2 >= 1)
                 {
-                    _currentWeight[category] = 0;
-                    _weightState[category] = AnimatorWeightState.Finished;
+                    state.CurrentWeight = 0;
+                    state.WeightState = AnimatorWeightState.Finished;
                 }
                 break;
         }
     }
     private void ProcessRequest(AnimationRequest request)
     {
-        if (_animators.ContainsKey(request.Category))
+        if (_states.TryGetValue(request.Category, out AnimatorState? state))
         {
-            string category = request.Category;
-            _animators[category].Play(request.Animation, request.AnimationSpeed);
-            _requests[category] = request;
-            _previousWeight[category] = _currentWeight[category];
-            _weightState[category] = AnimatorWeightState.EaseIn;
-            _currentTimes[category] = TimeSpan.Zero;
-            _callbacksCalled[category] = false;
+            state.Animator.Play(request.Animation, request.AnimationSpeed);
+            state.Request = request;
+            state.PreviousWeight = state.CurrentWeight;
+            state.WeightState = AnimatorWeightState.EaseIn;
+            state.CurrentTime = TimeSpan.Zero;
+            state.CallbacksCalled = false;
         }
         else
         {
-            string category = request.Category;
-            _animators.Add(category, new Animator(request.Animation, _soundsManager, _particleEffectsManager, _player, request.AnimationSpeed));
-            _requests.Add(category, request);
-            _previousWeight[category] = 0;
-            _currentWeight[category] = 0;
-            _weightState[category] = AnimatorWeightState.EaseIn;
-            _currentTimes[category] = TimeSpan.Zero;
-            _callbacksCalled[category] = false;
+            Animator animator = new(request.Animation, _soundsManager, _particleEffectsManager, _player, request.AnimationSpeed);
+            _states.Add(request.Category, new(request, animator));
         }
     }
 }

@@ -30,28 +30,29 @@ internal static class GuiDialogPatches
     public static void Patch(string harmonyId, ICoreClientAPI api)
     {
         Api = api;
+        Harmony harmony = new(harmonyId);
 
-        new Harmony(harmonyId).Patch(
+        harmony.Patch(
                 typeof(GuiDialogCharacter).GetMethod("ComposeCharacterTab", AccessTools.all),
                 prefix: new HarmonyMethod(AccessTools.Method(typeof(CharacterTabPatch), nameof(CharacterTabPatch.GuiDialogCharacter_ComposeCharacterTab)))
             );
 
-        new Harmony(harmonyId).Patch(
+        harmony.Patch(
                 typeof(GuiDialogCharacter).GetMethod("OnRenderGUI", AccessTools.all),
                 postfix: new HarmonyMethod(AccessTools.Method(typeof(GuiDialogPatches), nameof(OnRenderGUI)))
             );
 
-        new Harmony(harmonyId).Patch(
+        harmony.Patch(
                 typeof(GuiDialogInventory).GetMethod("ComposeSurvivalInvDialog", AccessTools.all),
                 prefix: new HarmonyMethod(AccessTools.Method(typeof(GuiDialogPatches), nameof(GuiDialogInventory_ComposeSurvivalInvDialog)))
             );
 
-        new Harmony(harmonyId).Patch(
+        harmony.Patch(
                 typeof(GuiDialogInventory).GetMethod("OnNewScrollbarvalue", AccessTools.all),
                 prefix: new HarmonyMethod(AccessTools.Method(typeof(GuiDialogPatches), nameof(GuiDialogInventory_OnNewScrollbarvalue_Patch)))
             );
 
-        new Harmony(harmonyId).Patch(
+        harmony.Patch(
                 typeof(CharacterSystem).GetMethod("StartClientSide", AccessTools.all),
                 postfix: new HarmonyMethod(AccessTools.Method(typeof(GuiDialogPatches), nameof(CharacterSystem_StartClientSide)))
             );
@@ -59,11 +60,13 @@ internal static class GuiDialogPatches
 
     public static void Unpatch(string harmonyId)
     {
-        new Harmony(harmonyId).Unpatch(typeof(GuiDialogCharacter).GetMethod("ComposeCharacterTab", AccessTools.all), HarmonyPatchType.Prefix, harmonyId);
-        new Harmony(harmonyId).Unpatch(typeof(GuiDialogCharacter).GetMethod("OnRenderGUI", AccessTools.all), HarmonyPatchType.Postfix, harmonyId);
-        new Harmony(harmonyId).Unpatch(typeof(GuiDialogInventory).GetMethod("ComposeSurvivalInvDialog", AccessTools.all), HarmonyPatchType.Prefix, harmonyId);
-        new Harmony(harmonyId).Unpatch(typeof(GuiDialogInventory).GetMethod("OnNewScrollbarvalue", AccessTools.all), HarmonyPatchType.Prefix, harmonyId);
-        new Harmony(harmonyId).Unpatch(typeof(CharacterSystem).GetMethod("StartClientSide", AccessTools.all), HarmonyPatchType.Postfix, harmonyId);
+        Harmony harmony = new(harmonyId);
+
+        harmony.Unpatch(typeof(GuiDialogCharacter).GetMethod("ComposeCharacterTab", AccessTools.all), HarmonyPatchType.Prefix, harmonyId);
+        harmony.Unpatch(typeof(GuiDialogCharacter).GetMethod("OnRenderGUI", AccessTools.all), HarmonyPatchType.Postfix, harmonyId);
+        harmony.Unpatch(typeof(GuiDialogInventory).GetMethod("ComposeSurvivalInvDialog", AccessTools.all), HarmonyPatchType.Prefix, harmonyId);
+        harmony.Unpatch(typeof(GuiDialogInventory).GetMethod("OnNewScrollbarvalue", AccessTools.all), HarmonyPatchType.Prefix, harmonyId);
+        harmony.Unpatch(typeof(CharacterSystem).GetMethod("StartClientSide", AccessTools.all), HarmonyPatchType.Postfix, harmonyId);
 
         Api = null;
     }
@@ -76,7 +79,7 @@ internal static class GuiDialogPatches
         }
         catch (Exception exception)
         {
-            Debug.WriteLine(exception);
+            LoggerUtil.Warn(Api, typeof(GuiDialogPatches), $"Error while recalculating armor stats for GUI:\n{exception}");
         }
     }
 
@@ -86,6 +89,8 @@ internal static class GuiDialogPatches
     private static bool _anySlotsHighlighted = false;
     private static List<int> _rows = [];
     private static int _totalScrollableRows = 0;
+    private static bool _reportedInventoryLayoutError;
+    private static bool _reportedMemberAccessError;
     private static ElementBounds? _childBounds;
     private static int _currentAttackTier = 1;
     private static readonly Dictionary<DamageZone, string> _zonesStatsTextIds = new()
@@ -214,7 +219,7 @@ internal static class GuiDialogPatches
         }
         catch (Exception ex)
         {
-            Debug.WriteLine(ex);
+            LoggerUtil.Warn(Api, typeof(GuiDialogPatches), $"Error while composing survival inventory dialog:\n{ex}");
             return true;
         }
 
@@ -260,8 +265,9 @@ internal static class GuiDialogPatches
                     bounds = bounds2;
                     index++;
                 }
-                catch
+                catch (Exception exception)
                 {
+                    LogInventoryLayoutError(exception);
                     break;
                 }
             }
@@ -775,14 +781,14 @@ internal static class GuiDialogPatches
         if (property != null)
         {
             try { return property.GetValue(instance); }
-            catch { }
+            catch (Exception exception) { LogMemberAccessError(type, memberName, exception); }
         }
 
         FieldInfo? field = type.GetField(memberName, flags);
         if (field != null)
         {
             try { return field.GetValue(instance); }
-            catch { }
+            catch (Exception exception) { LogMemberAccessError(type, memberName, exception); }
         }
 
         // Fallback for compiler-generated/private backing fields or near-name members.
@@ -790,7 +796,7 @@ internal static class GuiDialogPatches
         {
             if (!string.Equals(candidate.Name, memberName, StringComparison.OrdinalIgnoreCase)) continue;
             try { return candidate.GetValue(instance); }
-            catch { }
+            catch (Exception exception) { LogMemberAccessError(type, memberName, exception); }
         }
 
         foreach (FieldInfo candidate in type.GetFields(flags))
@@ -800,11 +806,27 @@ internal static class GuiDialogPatches
                 || candidate.Name.IndexOf(memberName, StringComparison.OrdinalIgnoreCase) >= 0)
             {
                 try { return candidate.GetValue(instance); }
-                catch { }
+                catch (Exception exception) { LogMemberAccessError(type, memberName, exception); }
             }
         }
 
         return null;
+    }
+
+    private static void LogInventoryLayoutError(Exception exception)
+    {
+        if (_reportedInventoryLayoutError) return;
+
+        _reportedInventoryLayoutError = true;
+        LoggerUtil.Warn(Api, typeof(GuiDialogPatches), $"Error while repositioning survival inventory rows:\n{exception}");
+    }
+
+    private static void LogMemberAccessError(Type type, string memberName, Exception exception)
+    {
+        if (_reportedMemberAccessError) return;
+
+        _reportedMemberAccessError = true;
+        LoggerUtil.Warn(Api, typeof(GuiDialogPatches), $"Error while reading member '{memberName}' from '{type.FullName}':\n{exception}");
     }
 
     private static string? AsNonEmptyString(object? value)

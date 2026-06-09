@@ -1,5 +1,4 @@
 ﻿using CombatOverhaul.Utils;
-using System.Diagnostics;
 using Vintagestory.API.Client;
 using Vintagestory.API.Common;
 using Vintagestory.API.Common.Entities;
@@ -67,8 +66,6 @@ public sealed class InInventoryPlayerBehavior : EntityBehavior
                         _timeSinceReport = 0;
                         LoggerUtil.Error(_player.Api, this, $"Error for inventory: '{inventory.ClassName}', item: '{slot?.Itemstack?.Collectible?.Code}':\n{exception}");
                     }
-                    
-                    Debug.WriteLine(exception);
                 }
             }
         }

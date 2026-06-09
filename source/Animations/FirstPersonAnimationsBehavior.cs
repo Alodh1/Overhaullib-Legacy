@@ -28,8 +28,8 @@ public sealed class FirstPersonAnimationsBehavior : EntityBehavior, IDisposable
         ParticleEffectsManager particleEffectsManager = player.Api.ModLoader.GetModSystem<CombatOverhaulAnimationsSystem>().ParticleEffectsManager ?? throw new Exception();
         _composer = new(soundsManager, particleEffectsManager, player);
 
-        _MainHandIdleAnimationsController = new(player, request => PlayImpl(request, mainHand: true), () => Stop("main"), () => _player.RightHandItemSlot, mainHand: true);
-        _OffHandIdleAnimationsController = new(player, request => PlayImpl(request, mainHand: false), () => Stop("mainOffhand"), () => _player.LeftHandItemSlot, mainHand: false);
+        _mainHandIdleAnimationsController = new(player, request => PlayImpl(request, mainHand: true), () => Stop("main"), () => _player.RightHandItemSlot, mainHand: true);
+        _offHandIdleAnimationsController = new(player, request => PlayImpl(request, mainHand: false), () => Stop("mainOffhand"), () => _player.LeftHandItemSlot, mainHand: false);
 
         TryActivateMainPlayer();
     }
@@ -52,8 +52,8 @@ public sealed class FirstPersonAnimationsBehavior : EntityBehavior, IDisposable
 #if DEBUG
         if (DebugWindowManager.DebugPoseFreezeActive)
         {
-            _MainHandIdleAnimationsController.Pause();
-            _OffHandIdleAnimationsController.Pause();
+            _mainHandIdleAnimationsController.Pause();
+            _offHandIdleAnimationsController.Pause();
             _playRequests.Clear();
             _composer.StopAll();
             _lastFrame = FrameOverride ?? PlayerItemFrame.Zero;
@@ -76,8 +76,8 @@ public sealed class FirstPersonAnimationsBehavior : EntityBehavior, IDisposable
             InHandItemChanged(mainHand: false);
         }
 
-        _MainHandIdleAnimationsController.Update();
-        _OffHandIdleAnimationsController.Update();
+        _mainHandIdleAnimationsController.Update();
+        _offHandIdleAnimationsController.Update();
 
         foreach ((AnimationRequest request, bool mainHand, bool skip, int itemId) in _playRequests)
         {
@@ -149,7 +149,7 @@ public sealed class FirstPersonAnimationsBehavior : EntityBehavior, IDisposable
         TryActivateMainPlayer();
         if (request.Category == GetIdleAnimationCategory(mainHand))
         {
-            (mainHand ? _MainHandIdleAnimationsController : _OffHandIdleAnimationsController).Pause();
+            (mainHand ? _mainHandIdleAnimationsController : _offHandIdleAnimationsController).Pause();
         }
         _playRequests.Add((request, mainHand, false, CurrentItemId(mainHand)));
     }
@@ -173,7 +173,7 @@ public sealed class FirstPersonAnimationsBehavior : EntityBehavior, IDisposable
     public void PlayReadyAnimation(bool mainHand = true)
     {
         TryActivateMainPlayer();
-        (mainHand ? _MainHandIdleAnimationsController : _OffHandIdleAnimationsController).Start();
+        (mainHand ? _mainHandIdleAnimationsController : _offHandIdleAnimationsController).Start();
     }
     public void Stop(string category)
     {
@@ -251,7 +251,7 @@ public sealed class FirstPersonAnimationsBehavior : EntityBehavior, IDisposable
     }
     public void PlayReadyAnimationFpAndTp(bool mainHand = true)
     {
-        (mainHand ? _MainHandIdleAnimationsController : _OffHandIdleAnimationsController).Start();
+        (mainHand ? _mainHandIdleAnimationsController : _offHandIdleAnimationsController).Start();
         _thirdPersonAnimations?.PlayReadyAnimation(mainHand);
     }
     public void StopFpAndTp(string category)
@@ -282,8 +282,8 @@ public sealed class FirstPersonAnimationsBehavior : EntityBehavior, IDisposable
     private bool _registeredDisposeHook = false;
     private bool _reportedMainPlayerActivation = false;
     private readonly Settings _settings;
-    private readonly IdleAnimationsController _MainHandIdleAnimationsController;
-    private readonly IdleAnimationsController _OffHandIdleAnimationsController;
+    private readonly IdleAnimationsController _mainHandIdleAnimationsController;
+    private readonly IdleAnimationsController _offHandIdleAnimationsController;
     private ThirdPersonAnimationsBehavior? _thirdPersonAnimations;
     private bool _frameApplied = false;
     private int _offHandItemId = 0;
@@ -581,7 +581,7 @@ public sealed class FirstPersonAnimationsBehavior : EntityBehavior, IDisposable
 
     private void InHandItemChanged(bool mainHand)
     {
-        (mainHand ? _MainHandIdleAnimationsController : _OffHandIdleAnimationsController).Stop();
+        (mainHand ? _mainHandIdleAnimationsController : _offHandIdleAnimationsController).Stop();
 
         string readyCategory = GetIdleAnimationCategory(mainHand);
 
@@ -593,7 +593,7 @@ public sealed class FirstPersonAnimationsBehavior : EntityBehavior, IDisposable
         StopRequestFromPreviousItem(mainHand);
         categories.Clear();
 
-        (mainHand ? _MainHandIdleAnimationsController : _OffHandIdleAnimationsController).Start();
+        (mainHand ? _mainHandIdleAnimationsController : _offHandIdleAnimationsController).Start();
     }
 
     private int CurrentItemId(bool mainHand)

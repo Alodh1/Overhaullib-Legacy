@@ -128,7 +128,7 @@ public class BowClient : RangeWeaponClient
         AnimationBehavior?.Play(mainHand, Stats.LoadAnimation, animationSpeed: GetAnimationSpeed(player, Stats) * stackStats.ReloadSpeed * Stats.ReloadAnimationSpeed, callback: () => LoadAnimationCallback(player, mainHand));
         TpAnimationBehavior?.Play(mainHand, Stats.LoadAnimation, animationSpeed: GetAnimationSpeed(player, Stats) * stackStats.ReloadSpeed * Stats.ReloadAnimationSpeed);
 
-        AimingStats.CursorType = Enum.Parse<AimingCursorType>(Settings.BowsAimingCursorType);
+        AimingStats.CursorType = Enum.Parse<AimingCursorType>(Settings.BowsAimingCursorType, ignoreCase: true);
         AimingStats.VerticalLimit = Settings.BowsAimingVerticalLimit * Stats.Aiming.VerticalLimit;
         AimingStats.HorizontalLimit = Settings.BowsAimingHorizontalLimit * Stats.Aiming.HorizontalLimit;
         AimingSystem.ResetAim();
@@ -219,7 +219,7 @@ public class BowClient : RangeWeaponClient
             AimingStats aimingStats = AimingStats.Clone();
             aimingStats.AimDifficulty *= stackStats.AimingDifficulty;
 
-            AimingStats.CursorType = Enum.Parse<AimingCursorType>(Settings.BowsAimingCursorType);
+            AimingStats.CursorType = Enum.Parse<AimingCursorType>(Settings.BowsAimingCursorType, ignoreCase: true);
             AimingStats.VerticalLimit = Settings.BowsAimingVerticalLimit * Stats.Aiming.VerticalLimit;
             AimingStats.HorizontalLimit = Settings.BowsAimingHorizontalLimit * Stats.Aiming.HorizontalLimit;
             AimingSystem.StartAiming(aimingStats);

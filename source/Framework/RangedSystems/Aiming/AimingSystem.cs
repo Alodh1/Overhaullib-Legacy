@@ -53,7 +53,7 @@ public class AimingStatsJson
         return new AimingStats()
         {
             AimDifficulty = AimDifficulty,
-            CursorType = Enum.Parse<AimingCursorType>(CursorType),
+            CursorType = Enum.Parse<AimingCursorType>(CursorType, ignoreCase: true),
             InvertMouseYAxis = InvertMouseYAxis,
             VerticalAccuracyMultiplier = VerticalAccuracyMultiplier,
             HorizontalAccuracyMultiplier = HorizontalAccuracyMultiplier,

@@ -27,10 +27,11 @@ public sealed partial class DebugWindowManager
     public static bool PlayAnimationsInThirdPerson { get; set; } = false;
     public static bool RenderDebugColliders { get; set; } = false;
 
-    public DebugWindowManager(ICoreClientAPI api, ParticleEffectsManager particleEffectsManager)
+    public DebugWindowManager(ICoreClientAPI api, ParticleEffectsManager particleEffectsManager, AnimationsManager animationsManager)
     {
         _api = api;
         _particleEffectsManager = particleEffectsManager;
+        _animationsManager = animationsManager;
 #if DEBUG
         bool standaloneDevToolsLoaded = api.ModLoader.Mods.Any(mod => mod.Info.ModID == "overhauldevtools");
         _editorInputRouter = new EditorInputRouter();
@@ -320,7 +321,7 @@ public sealed partial class DebugWindowManager
 
     private static SourceSaveResult TrySaveAnimationToSource(string animationCode, Animation animation)
     {
-        if (!AnimationsManager._instance.AnimationSources.TryGetValue(animationCode, out AnimationSource? source))
+        if (!_instance._animationsManager.AnimationSources.TryGetValue(animationCode, out AnimationSource? source))
         {
             return SourceSaveResult.Fail($"Source not tracked for {animationCode}.");
         }
@@ -458,7 +459,7 @@ public sealed partial class DebugWindowManager
 
     private static string GetAnimationSourceText(string animationCode)
     {
-        if (!AnimationsManager._instance.AnimationSources.TryGetValue(animationCode, out AnimationSource? source))
+        if (!_instance._animationsManager.AnimationSources.TryGetValue(animationCode, out AnimationSource? source))
         {
             return "Source: not tracked";
         }
@@ -511,6 +512,7 @@ public sealed partial class DebugWindowManager
     private string _playerAnimationKey = "";
     private float _animationSpeed = 1;
     private ParticleEffectsManager _particleEffectsManager;
+    private readonly AnimationsManager _animationsManager;
     private AnimationJson _animationBuffer;
     internal static DebugWindowManager _instance;
 
@@ -972,7 +974,7 @@ public sealed partial class DebugWindowManager
 
     private void AnimationsTab(float deltaSeconds)
     {
-        string[] codes = AnimationsManager._instance.Animations.Keys.ToArray();
+        string[] codes = _animationsManager.Animations.Keys.ToArray();
         if (codes.Length == 0)
         {
             ImGui.TextDisabled("No animations loaded.");
@@ -1001,7 +1003,7 @@ public sealed partial class DebugWindowManager
         ImGui.BeginChild("##animation-left-panel", new NVector2(leftWidth, topHeight), true);
         ImGui.SeparatorText("Animations");
         ImGui.InputTextWithHint("##animations-filter", "supports wildcards", ref _animationsFilter, 200);
-        EditorsUtils.FilterElements(_animationsFilter, AnimationsManager._instance.Animations.Keys, out IEnumerable<string> filteredEnumerable, out _);
+        EditorsUtils.FilterElements(_animationsFilter, _animationsManager.Animations.Keys, out IEnumerable<string> filteredEnumerable, out _);
         string[] filtered = filteredEnumerable.ToArray();
         if (filtered.Length > 0)
         {
@@ -1020,16 +1022,16 @@ public sealed partial class DebugWindowManager
         ImGui.SeparatorText("Buffer");
         if (ImGui.Button("Save to buffer", new NVector2(-1, 0)))
         {
-            _animationBuffer = AnimationJson.FromAnimation(AnimationsManager._instance.Animations[codes[_selectedAnimationIndex]]);
+            _animationBuffer = AnimationJson.FromAnimation(_animationsManager.Animations[codes[_selectedAnimationIndex]]);
         }
 
         if (ImGui.Button("Load from buffer", new NVector2(-1, 0)) && _animationBuffer != null)
         {
             string animationCode = codes[_selectedAnimationIndex];
-            Animation currentAnimation = AnimationsManager._instance.Animations[animationCode];
+            Animation currentAnimation = _animationsManager.Animations[animationCode];
             _animationHistory.BeginEdit(animationCode, currentAnimation, "Load from buffer");
-            AnimationsManager._instance.Animations[animationCode] = _animationBuffer.ToAnimation();
-            _animationHistory.CommitEdit(animationCode, AnimationsManager._instance.Animations[animationCode]);
+            _animationsManager.Animations[animationCode] = _animationBuffer.ToAnimation();
+            _animationHistory.CommitEdit(animationCode, _animationsManager.Animations[animationCode]);
         }
 
         if (ImGui.Button("Save buffer to file", new NVector2(-1, 0)))
@@ -1073,7 +1075,7 @@ public sealed partial class DebugWindowManager
         ImGui.SameLine();
 
         string selectedAnimationCode = codes[_selectedAnimationIndex];
-        Animation selectedAnimation = AnimationsManager._instance.Animations[selectedAnimationCode];
+        Animation selectedAnimation = _animationsManager.Animations[selectedAnimationCode];
 
         ImGui.BeginChild("##animation-center-panel", new NVector2(centerWidth, topHeight), true);
         ImGui.TextWrapped(selectedAnimationCode);
@@ -1088,14 +1090,14 @@ public sealed partial class DebugWindowManager
         ImGui.SeparatorText("Tools");
         ImGui.TextWrapped(GetAnimationSourceText(selectedAnimationCode));
         DrawAnimationHistoryControls(selectedAnimationCode);
-        if (ImGui.Button("Export to clipboard") && AnimationsManager._instance.Animations.Count > 0)
+        if (ImGui.Button("Export to clipboard") && _animationsManager.Animations.Count > 0)
         {
-            ImGui.SetClipboardText(AnimationsManager._instance.Animations[selectedAnimationCode].ToString());
+            ImGui.SetClipboardText(_animationsManager.Animations[selectedAnimationCode].ToString());
         }
         ImGui.SameLine();
-        if (ImGui.Button("Save to source##animation") && AnimationsManager._instance.Animations.Count > 0)
+        if (ImGui.Button("Save to source##animation") && _animationsManager.Animations.Count > 0)
         {
-            QueueSourceSave(TrySaveAnimationToSource(selectedAnimationCode, AnimationsManager._instance.Animations[selectedAnimationCode]), status => _transformSaveStatus = status);
+            QueueSourceSave(TrySaveAnimationToSource(selectedAnimationCode, _animationsManager.Animations[selectedAnimationCode]), status => _transformSaveStatus = status);
         }
         if (!string.IsNullOrEmpty(_transformSaveStatus))
         {
@@ -1107,7 +1109,7 @@ public sealed partial class DebugWindowManager
 
         DrawAnimationValidationPanel(selectedAnimationCode, selectedAnimation);
 
-        selectedAnimation = AnimationsManager._instance.Animations[selectedAnimationCode];
+        selectedAnimation = _animationsManager.Animations[selectedAnimationCode];
         _animationHistoryExplicitEditThisFrame = false;
         Animation beforeEdit = selectedAnimation.Clone();
         string beforeEditSerialized = AnimationEditorHistory.Serialize(selectedAnimation);
@@ -1117,11 +1119,11 @@ public sealed partial class DebugWindowManager
         ImGui.EndChild();
 
         ImGui.BeginChild("##animation-bottom-panel", new NVector2(available.X, bottomHeight), true);
-        selectedAnimation = AnimationsManager._instance.Animations[selectedAnimationCode];
+        selectedAnimation = _animationsManager.Animations[selectedAnimationCode];
         DrawAnimationTimeline(selectedAnimationCode, selectedAnimation);
         ImGui.EndChild();
 
-        selectedAnimation = AnimationsManager._instance.Animations[selectedAnimationCode];
+        selectedAnimation = _animationsManager.Animations[selectedAnimationCode];
         if (_showAnimationEditor)
         {
             SetEditorFrameOverride(selectedAnimation.StillPlayerFrame(selectedAnimation._playerFrameIndex, selectedAnimation._frameProgress));
@@ -2607,7 +2609,7 @@ public sealed partial class DebugWindowManager
         if (ImGui.Button("Undo##animation"))
         {
             CommitPendingAnimationEdit(animationCode);
-            if (_animationHistory.Undo(animationCode, AnimationsManager._instance.Animations, out string status))
+            if (_animationHistory.Undo(animationCode, _animationsManager.Animations, out string status))
             {
                 _transformSaveStatus = status;
             }
@@ -2623,7 +2625,7 @@ public sealed partial class DebugWindowManager
         if (ImGui.Button("Redo##animation"))
         {
             CommitPendingAnimationEdit(animationCode);
-            if (_animationHistory.Redo(animationCode, AnimationsManager._instance.Animations, out string status))
+            if (_animationHistory.Redo(animationCode, _animationsManager.Animations, out string status))
             {
                 _transformSaveStatus = status;
             }
@@ -2653,12 +2655,12 @@ public sealed partial class DebugWindowManager
         if (ImGui.IsKeyPressed(ImGuiKey.Z))
         {
             CommitPendingAnimationEdit(animationCode);
-            _animationHistory.Undo(animationCode, AnimationsManager._instance.Animations, out _transformSaveStatus);
+            _animationHistory.Undo(animationCode, _animationsManager.Animations, out _transformSaveStatus);
         }
         else if (ImGui.IsKeyPressed(ImGuiKey.Y))
         {
             CommitPendingAnimationEdit(animationCode);
-            _animationHistory.Redo(animationCode, AnimationsManager._instance.Animations, out _transformSaveStatus);
+            _animationHistory.Redo(animationCode, _animationsManager.Animations, out _transformSaveStatus);
         }
     }
 
@@ -2693,7 +2695,7 @@ public sealed partial class DebugWindowManager
 
     private void CommitPendingAnimationEdit(string animationCode)
     {
-        if (!AnimationsManager._instance.Animations.TryGetValue(animationCode, out Animation? animation)) return;
+        if (!_animationsManager.Animations.TryGetValue(animationCode, out Animation? animation)) return;
 
         _animationHistory.CommitEdit(animationCode, animation);
     }
@@ -3162,11 +3164,11 @@ public sealed partial class DebugWindowManager
 
         ImGui.InputText("Animation code##playeranimation", ref _playerAnimationKey, 300);
 
-        bool canAddAnimation = !AnimationsManager._instance.Animations.ContainsKey(_playerAnimationKey) && _playerAnimationKey != "";
+        bool canAddAnimation = !_animationsManager.Animations.ContainsKey(_playerAnimationKey) && _playerAnimationKey != "";
         if (!canAddAnimation) ImGui.BeginDisabled();
         if (ImGui.Button($"Create##playeranimation"))
         {
-            AnimationsManager._instance.Animations.Add(_playerAnimationKey, new Animation(new PLayerKeyFrame[] { PLayerKeyFrame.Zero }));
+            _animationsManager.Animations.Add(_playerAnimationKey, new Animation(new PLayerKeyFrame[] { PLayerKeyFrame.Zero }));
         }
         if (!canAddAnimation) ImGui.EndDisabled();
 
@@ -3200,14 +3202,14 @@ public sealed partial class DebugWindowManager
         ImGui.InputText($"Item animation code", ref _itemAnimation, 300);
         ImGui.InputText($"New animation code", ref _animationKey, 300);
 
-        bool canCreate = !AnimationsManager._instance.Animations.ContainsKey(_animationKey);
+        bool canCreate = !_animationsManager.Animations.ContainsKey(_animationKey);
 
         if (!canCreate) ImGui.BeginDisabled();
         if (ImGui.Button("Create##itemanimation"))
         {
             try
             {
-                AnimationsManager._instance.Animations.Add(_animationKey, new Animation(new PLayerKeyFrame[] { PLayerKeyFrame.Zero }, _itemAnimation, shape));
+                _animationsManager.Animations.Add(_animationKey, new Animation(new PLayerKeyFrame[] { PLayerKeyFrame.Zero }, _itemAnimation, shape));
             }
             catch (Exception exception)
             {

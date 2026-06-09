@@ -367,6 +367,7 @@ public class ToolBag : GearEquipableBag
     public GlKeys HotKeyKey { get; protected set; } = GlKeys.R;
     public int RegularSlotsNumber { get; protected set; } = 0;
     public int ToolSlotNumber { get; protected set; } = 0;
+    public int TakeOutSlotNumber { get; protected set; } = 0;
     public string? TakeOutSlotIcon { get; protected set; } = null;
 
     public ToolBag(CollectibleObject collObj) : base(collObj)
@@ -413,7 +414,9 @@ public class ToolBag : GearEquipableBag
         if (mainHandSlotConfigJson != null) ToolSlotNumber += 1;
         if (offHandSlotConfigJson != null) ToolSlotNumber += 1;
 
-        SlotsNumber += ToolSlotNumber * 2;
+        TakeOutSlotNumber = Math.Clamp(properties["takeOutSlotsNumber"].AsInt(ToolSlotNumber), 0, ToolSlotNumber);
+
+        SlotsNumber += ToolSlotNumber + TakeOutSlotNumber;
     }
 
     public override void OnLoaded(ICoreAPI api)
@@ -519,7 +522,7 @@ public class ToolBag : GearEquipableBag
                 }
             }
 
-            if (MainHandSlotConfig != null)
+            if (HasMainHandTakeOutSlot)
             {
                 ItemSlotTakeOutOnly takeOutSLot = new(parentinv, bagIndex, slotIndex, flags, bagstack, TakeOutSlotColor);
                 takeOutSLot.MainHand = true;
@@ -532,7 +535,7 @@ public class ToolBag : GearEquipableBag
                 slotIndex += 1;
             }
 
-            if (OffHandSlotConfig != null)
+            if (HasOffHandTakeOutSlot)
             {
                 ItemSlotTakeOutOnly takeOutSLot = new(parentinv, bagIndex, slotIndex, flags, bagstack, TakeOutSlotColor);
                 takeOutSLot.MainHand = false;
@@ -551,7 +554,7 @@ public class ToolBag : GearEquipableBag
         {
             ITreeAttribute slotsTree = stackBackPackTree.GetTreeAttribute("slots");
 
-            foreach (KeyValuePair<string, IAttribute> val in slotsTree)
+            foreach (KeyValuePair<string, IAttribute> val in slotsTree.SortedCopy())
             {
                 int slotIndex = int.Parse(val.Key.Split("-")[1]);
 
@@ -651,7 +654,7 @@ public class ToolBag : GearEquipableBag
                     while (bagContents.Count <= slotIndex) bagContents.Add(null);
                     bagContents[slotIndex] = slot;
                 }
-                else if (slotIndex == RegularSlotsNumber + ToolSlotNumber + (ToolSlotNumber == 2 ? 1 : 0) - (ToolSlotNumber == 2 ? 1 : 0) && MainHandSlotConfig != null)
+                else if (slotIndex == MainHandTakeOutSlotIndex && HasMainHandTakeOutSlot)
                 {
                     ItemSlotTakeOutOnly takeOutSLot = new(parentinv, bagIndex, slotIndex, flags, bagstack, TakeOutSlotColor);
                     takeOutSLot.MainHand = true;
@@ -671,7 +674,7 @@ public class ToolBag : GearEquipableBag
                     while (bagContents.Count <= slotIndex) bagContents.Add(null);
                     bagContents[slotIndex] = takeOutSLot;
                 }
-                else if (slotIndex == RegularSlotsNumber + ToolSlotNumber + (ToolSlotNumber == 2 ? 1 : 0) + (ToolSlotNumber == 2 ? 1 : 0) && OffHandSlotConfig != null)
+                else if (slotIndex == OffHandTakeOutSlotIndex && HasOffHandTakeOutSlot)
                 {
                     ItemSlotTakeOutOnly takeOutSLot = new(parentinv, bagIndex, slotIndex, flags, bagstack, TakeOutSlotColor);
                     takeOutSLot.MainHand = false;
@@ -691,7 +694,7 @@ public class ToolBag : GearEquipableBag
                     while (bagContents.Count <= slotIndex) bagContents.Add(null);
                     bagContents[slotIndex] = takeOutSLot;
                 }
-                else
+                else if (!IsSurplusTakeOutSlotIndex(slotIndex))
                 {
                     SlotConfig config = GetSlotConfig(slotIndex - ToolSlotNumber);
 
@@ -719,6 +722,17 @@ public class ToolBag : GearEquipableBag
         }
 
         return bagContents;
+    }
+
+    protected bool HasMainHandTakeOutSlot => MainHandSlotConfig != null && TakeOutSlotNumber > 0;
+    protected bool HasOffHandTakeOutSlot => OffHandSlotConfig != null && TakeOutSlotNumber > (MainHandSlotConfig != null ? 1 : 0);
+    protected int MainHandTakeOutSlotIndex => RegularSlotsNumber + ToolSlotNumber;
+    protected int OffHandTakeOutSlotIndex => MainHandTakeOutSlotIndex + (HasMainHandTakeOutSlot ? 1 : 0);
+
+    protected bool IsSurplusTakeOutSlotIndex(int slotIndex)
+    {
+        int takeOutStartIndex = RegularSlotsNumber + ToolSlotNumber;
+        return slotIndex >= takeOutStartIndex + TakeOutSlotNumber && slotIndex < takeOutStartIndex + ToolSlotNumber;
     }
 
     public override void GetHeldItemInfo(ItemSlot inSlot, StringBuilder dsc, IWorldAccessor world, bool withDebugInfo)

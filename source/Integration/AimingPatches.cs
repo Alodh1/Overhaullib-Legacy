@@ -14,21 +14,25 @@ internal static class AimingPatches
 
     public static void Patch(string harmonyId)
     {
-        new Harmony(harmonyId).Patch(typeof(ClientMain).GetMethod("UpdateCameraYawPitch", BindingFlags.Instance | BindingFlags.Public),
+        Harmony harmony = new(harmonyId);
+
+        harmony.Patch(typeof(ClientMain).GetMethod("UpdateCameraYawPitch", BindingFlags.Instance | BindingFlags.Public),
             prefix: new HarmonyMethod(AimingPatches.UpdateCameraYawPitchPatch),
             postfix: new HarmonyMethod(AimingPatches.UpdateCameraYawPitchPostfix)
             );
 
-        new Harmony(harmonyId).Patch(typeof(SystemRenderAim).GetMethod("DrawAim", BindingFlags.Instance | BindingFlags.NonPublic),
+        harmony.Patch(typeof(SystemRenderAim).GetMethod("DrawAim", BindingFlags.Instance | BindingFlags.NonPublic),
             prefix: new HarmonyMethod(AimingPatches.DrawAim)
             );
     }
 
     public static void Unpatch(string harmonyId)
     {
-        new Harmony(harmonyId).Unpatch(typeof(ClientMain).GetMethod("UpdateCameraYawPitch", BindingFlags.Instance | BindingFlags.Public), HarmonyPatchType.Prefix);
-        new Harmony(harmonyId).Unpatch(typeof(ClientMain).GetMethod("UpdateCameraYawPitch", BindingFlags.Instance | BindingFlags.Public), HarmonyPatchType.Postfix);
-        new Harmony(harmonyId).Unpatch(typeof(SystemRenderAim).GetMethod("DrawAim", BindingFlags.Instance | BindingFlags.NonPublic), HarmonyPatchType.Prefix);
+        Harmony harmony = new(harmonyId);
+
+        harmony.Unpatch(typeof(ClientMain).GetMethod("UpdateCameraYawPitch", BindingFlags.Instance | BindingFlags.Public), HarmonyPatchType.Prefix);
+        harmony.Unpatch(typeof(ClientMain).GetMethod("UpdateCameraYawPitch", BindingFlags.Instance | BindingFlags.Public), HarmonyPatchType.Postfix);
+        harmony.Unpatch(typeof(SystemRenderAim).GetMethod("DrawAim", BindingFlags.Instance | BindingFlags.NonPublic), HarmonyPatchType.Prefix);
     }
 
     private static bool DrawAim()

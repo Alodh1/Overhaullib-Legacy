@@ -125,7 +125,7 @@ public abstract class GenericDisplayProto : BlockEntityContainer, ITexPositionSo
         }
         catch (Exception exception)
         {
-            Debug.WriteLine(exception);
+            LoggerUtil.Warn(Api, this, $"Error while refreshing displayed item mesh in slot {index}:\n{exception}");
         }
     }
     protected void OnEventBusEvent(string eventname, ref EnumHandling handling, IAttribute data)
