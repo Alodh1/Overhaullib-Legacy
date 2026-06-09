@@ -16,6 +16,8 @@ namespace CombatOverhaul.Compatibility;
 
 internal sealed class ArcheringBowCompat
 {
+    // Keep the Archering bridge in source, but fully disable it until its behavior matches the desired CO integration.
+    private const bool CompatibilityEnabled = false;
     private const string ModId = "archering";
     private const string ModSystemTypeName = "Archering.ArcheringModSystem";
     private const float VanillaDrawTime = 0.65f;
@@ -40,7 +42,7 @@ internal sealed class ArcheringBowCompat
     public ArcheringBowCompat(ICoreAPI api)
     {
         _api = api;
-        Enabled = api.ModLoader.IsModEnabled(ModId);
+        Enabled = CompatibilityEnabled && api.ModLoader.IsModEnabled(ModId);
     }
 
     public bool Enabled { get; }
