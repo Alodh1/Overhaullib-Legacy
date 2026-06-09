@@ -63,7 +63,7 @@ public sealed class Settings
 
     public float EntityProtectionMultiplier { get; set; } = 0.5f;
 
-    public float WeaponQuenchDamageBonusPerQuench { get; set; } = 0.10f;
+    public float WeaponQuenchDamageMultiplier { get; set; } = 1.0f;
 
     public bool RangedWeaponsDamageSupport { get; set; } = true;
 

@@ -548,7 +548,7 @@ public partial class CombatOverhaulSystem : ModSystem
     private static void ApplyRuntimeSettings(Settings settings)
     {
         DamageResistData.EntityProtectionFactor = settings.EntityProtectionMultiplier;
-        QuenchableStatUtil.WeaponDamageBonusPerQuench = Math.Max(0f, settings.WeaponQuenchDamageBonusPerQuench);
+        QuenchableStatUtil.WeaponDamageMultiplier = Math.Max(0f, settings.WeaponQuenchDamageMultiplier);
     }
 
     private void EnsureOwnPlayerAnimationBehaviors(IClientPlayer player)

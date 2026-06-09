@@ -12,9 +12,11 @@ public static class QuenchableStatUtil
     private const float ArmorFlatReductionPerQuench = 0.20f;
     public const float TemperShatterChanceMultiplier = 0.80f;
     public const float TemperPowerMultiplier = 0.92f;
-    public const float DefaultWeaponDamageBonusPerQuench = 0.10f;
+    private const float VanillaWeaponPowerPerFirstQuench = 0.10f;
+    private const float VanillaWeaponPowerDiminishingFactor = 0.20f;
+    private const float VanillaTemperDiminishingFactor = 0.05f;
 
-    public static float WeaponDamageBonusPerQuench { get; set; } = DefaultWeaponDamageBonusPerQuench;
+    public static float WeaponDamageMultiplier { get; set; } = 1.0f;
 
     public static float GetAttackPowerMultiplier(ItemStack? stack)
     {
@@ -28,6 +30,11 @@ public static class QuenchableStatUtil
         // the final crafted weapon to still have CollectibleBehaviorQuenchable here:
         // some crafted Armory/CO weapons inherit the quench attributes from parts,
         // show the buff tooltip, but no longer have the Quenchable behavior itself.
+        if (GetWeaponQuenchIteration(stack) > 0)
+        {
+            return GetVanillaStateAttackPowerMultiplier(stack);
+        }
+
         float buffMultiplier = GetBuffMultiplier(stack, "attackpower");
         float powerValueMultiplier = 1f + Math.Max(0f, stack.Attributes.GetFloat("powervalue", 0f));
         float vanillaStateMultiplier = GetVanillaStateAttackPowerMultiplier(stack);
@@ -180,21 +187,73 @@ public static class QuenchableStatUtil
 
     private static float GetVanillaStateAttackPowerMultiplier(ItemStack stack)
     {
-        int quenchIteration = Math.Max(0, stack.Attributes.GetInt("quenchIteration", 0));
+        int quenchIteration = GetWeaponQuenchIteration(stack);
         if (quenchIteration <= 0)
         {
             return 1f;
         }
 
         int temperIteration = Math.Max(0, stack.Attributes.GetInt("temperIteration", 0));
-        float powerPerQuench = GetPowerPerQuench(stack);
-        float effectivePower = quenchIteration * MathF.Pow(TemperPowerMultiplier, temperIteration) * powerPerQuench;
+        float effectivePower = GetWeaponQuenchDamageBonus(quenchIteration, temperIteration);
 
         return 1f + Math.Max(0f, effectivePower);
     }
 
-    private static float GetPowerPerQuench(ItemStack stack)
+    public static int GetWeaponQuenchIteration(ItemStack? stack)
     {
-        return Math.Max(0f, WeaponDamageBonusPerQuench);
+        if (stack?.Attributes == null)
+        {
+            return 0;
+        }
+
+        int quenchIteration = Math.Max(0, stack.Attributes.GetInt("quenchIteration", 0));
+        return quenchIteration > 0 ? quenchIteration : InferLegacyWeaponQuenchIteration(stack);
+    }
+
+    private static int InferLegacyWeaponQuenchIteration(ItemStack stack)
+    {
+        float storedPower = Math.Max(0f, stack.Attributes.GetFloat("powervalue", 0f));
+        if (storedPower <= 0f)
+        {
+            return 0;
+        }
+
+        int temperIteration = Math.Max(0, stack.Attributes.GetInt("temperIteration", 0));
+        float oldTemperFactor = MathF.Pow(TemperPowerMultiplier, temperIteration);
+        if (oldTemperFactor <= 0f)
+        {
+            return 0;
+        }
+
+        // Older crafted stacks used a flat +10% per quench. If a stack somehow
+        // lost quenchIteration but kept powervalue, recover the old count so it
+        // can be recalculated onto the vanilla diminishing curve.
+        int inferred = (int)MathF.Round(storedPower / (VanillaWeaponPowerPerFirstQuench * oldTemperFactor));
+        return Math.Clamp(inferred, 0, 100);
+    }
+
+    public static float GetWeaponQuenchDamageBonus(int quenchIteration, int temperIteration)
+    {
+        int quenches = Math.Max(0, quenchIteration);
+        if (quenches <= 0)
+        {
+            return 0f;
+        }
+
+        float power = 0f;
+        for (int i = 0; i < quenches; i++)
+        {
+            power += VanillaWeaponPowerPerFirstQuench / (1f + (i * VanillaWeaponPowerDiminishingFactor));
+        }
+
+        int tempers = Math.Clamp(temperIteration, 0, quenches);
+        for (int i = 0; i < tempers; i++)
+        {
+            float temperWeight = 1f / (1f + (i * VanillaTemperDiminishingFactor));
+            float temperFactor = 1f + ((TemperPowerMultiplier - 1f) * temperWeight);
+            power *= temperFactor;
+        }
+
+        return power * Math.Max(0f, WeaponDamageMultiplier);
     }
 }

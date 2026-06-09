@@ -373,9 +373,8 @@ internal static class CraftedArmorQuenchStatePatch
 
         int finalQuenchIteration = bestQuenchIteration;
         int finalTemperIteration = Math.Clamp(bestTemperIteration, 0, bestQuenchIteration);
-        float powerPerQuench = GetPowerPerQuench(output);
         float normalizedPowerValue = finalQuenchIteration > 0
-            ? finalQuenchIteration * MathF.Pow(QuenchableStatUtil.TemperPowerMultiplier, finalTemperIteration) * powerPerQuench
+            ? QuenchableStatUtil.GetWeaponQuenchDamageBonus(finalQuenchIteration, finalTemperIteration)
             : bestPowerValue;
 
         output.Attributes.SetInt("quenchIteration", finalQuenchIteration);
@@ -394,9 +393,34 @@ internal static class CraftedArmorQuenchStatePatch
         NormalizeCraftedWeaponDurability(output);
     }
 
-    private static float GetPowerPerQuench(ItemStack stack)
+    internal static bool NormalizeWeaponQuenchDamageBuff(ItemStack output)
     {
-        return Math.Max(0f, QuenchableStatUtil.WeaponDamageBonusPerQuench);
+        if (output?.Collectible == null || QuenchableStateUtil.GetKind(output) != QuenchableStateUtil.WeaponKind)
+        {
+            return false;
+        }
+
+        int storedQuenchIteration = Math.Max(0, output.Attributes.GetInt("quenchIteration", 0));
+        int quenchIteration = QuenchableStatUtil.GetWeaponQuenchIteration(output);
+        if (quenchIteration <= 0)
+        {
+            return false;
+        }
+
+        int temperIteration = Math.Clamp(output.Attributes.GetInt("temperIteration", 0), 0, quenchIteration);
+        float powerValue = QuenchableStatUtil.GetWeaponQuenchDamageBonus(quenchIteration, temperIteration);
+        float durationBonus = Math.Max(0f, output.Attributes.GetFloat("durationbonus", 0f));
+
+        bool changed = storedQuenchIteration != quenchIteration
+            || Math.Abs(output.Attributes.GetFloat("powervalue", 0f) - powerValue) > 0.0001f
+            || output.Attributes.GetInt("temperIteration", 0) != temperIteration;
+
+        output.Attributes.SetInt("quenchIteration", quenchIteration);
+        output.Attributes.SetInt("temperIteration", temperIteration);
+        output.Attributes.SetFloat("powervalue", Math.Max(0f, powerValue));
+        NormalizeVisibleWeaponQuenchBuffs(output, powerValue, durationBonus);
+
+        return changed;
     }
 
     private static void NormalizeVisibleWeaponQuenchBuffs(ItemStack output, float powerValue, float durationBonus)
@@ -546,20 +570,26 @@ internal static class WeaponQuenchTooltipPatch
             return;
         }
 
-        float damageMultiplier = QuenchableStatUtil.GetAttackPowerMultiplier(stack);
-        if (damageMultiplier <= 1.0001f)
+        float previousStoredDamageMultiplier = 1f + Math.Max(0f, stack.Attributes.GetFloat("powervalue", 0f));
+        if (CraftedArmorQuenchStatePatch.NormalizeWeaponQuenchDamageBuff(stack))
         {
-            return;
+            inSlot.MarkDirty();
         }
 
+        float damageMultiplier = QuenchableStatUtil.GetAttackPowerMultiplier(stack);
         List<string> linesToRemove = new()
         {
             Lang.Get("Attack power: {0} damage", stack.Collectible.GetAttackPower(stack).ToString("0.#", CultureInfo.CurrentCulture)),
             Lang.Get("Attack tier: {0}", stack.Collectible.GetToolTier(inSlot)),
-            Lang.Get("mulbuff-hardened-attackpower", damageMultiplier - 1f, 0)
+            Lang.Get("mulbuff-hardened-attackpower", damageMultiplier - 1f, 0),
+            Lang.Get("mulbuff-hardened-attackpower", previousStoredDamageMultiplier - 1f, 0)
         };
 
         RemoveTooltipLines(dsc, linesToRemove);
+        if (damageMultiplier <= 1.0001f)
+        {
+            return;
+        }
 
         float bonusPercent = (damageMultiplier - 1f) * 100f;
         string bonusText = bonusPercent.ToString("0.#", CultureInfo.CurrentCulture);
