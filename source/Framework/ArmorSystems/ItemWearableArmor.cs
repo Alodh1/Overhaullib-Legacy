@@ -159,6 +159,8 @@ public class ItemWearableArmor : Item
         CollectibleObject? collectible = slot.Itemstack?.Collectible;
         if (collectible == null) return false;
 
+        if (collectible.GetCollectibleBehavior<ArmorBehavior>(true) != null) return true;
+
         // VS 1.22 moved wearability from the obsolete ItemWearable class to the Wearable behavior.
         // Avoid referencing ItemWearable here so the patched item class can be plain Item.
         return collectible.CollectibleBehaviors?.Any(behavior => behavior.GetType().Name == "CollectibleBehaviorWearable") == true;
@@ -264,13 +266,18 @@ public class ItemWearableArmor : Item
     }
     protected virtual void CalculateRepairValueProperly(ItemSlot[] inSlots, ItemSlot outputSlot, out float repairValue, out int matCostPerMatType)
     {
+        repairValue = 0;
+        matCostPerMatType = 0;
+
+        ItemSlot? armorSlot = inSlots.FirstOrDefault(slot => IsWearableStack(slot));
+        if (armorSlot?.Itemstack == null || outputSlot.Itemstack == null) return;
+
         int origMatCount = GetOrigMatCount(inSlots, outputSlot);
         if (origMatCount == 0)
         {
             origMatCount = Attributes["materialCount"].AsInt(1);
         }
 
-        ItemSlot? armorSlot = inSlots.FirstOrDefault(slot => IsWearableStack(slot));
         int curDur = outputSlot.Itemstack.Collectible.GetRemainingDurability(armorSlot.Itemstack);
         int maxDur = GetMaxDurability(outputSlot.Itemstack);
 
