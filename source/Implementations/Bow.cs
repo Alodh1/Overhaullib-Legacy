@@ -1,4 +1,5 @@
-﻿using CombatOverhaul.Animations;
+using CombatOverhaul.Animations;
+using CombatOverhaul.Compatibility;
 using CombatOverhaul.Inputs;
 using CombatOverhaul.RangedSystems;
 using CombatOverhaul.RangedSystems.Aiming;
@@ -53,6 +54,7 @@ public class BowClient : RangeWeaponClient
         AimingSystem = api.ModLoader.GetModSystem<CombatOverhaulSystem>().AimingSystem ?? throw new Exception();
 
         Stats = item.Attributes.AsObject<BowStats>();
+        ArcheringCompat = new(api);
         AimingStats = Stats.Aiming.ToStats();
         AmmoSelector = ammoSelector;
         TwoHanded = Stats.TwoHanded;
@@ -86,6 +88,7 @@ public class BowClient : RangeWeaponClient
         AttachmentSystem.SendClearPacket(player.EntityId);
         PlayerBehavior?.SetState((int)BowState.Unloaded);
         AimingSystem.StopAiming();
+        StopArcheringAiming();
 
         AnimationBehavior?.StopVanillaAnimation(Stats.TpAimAnimation, mainHand);
     }
@@ -104,7 +107,14 @@ public class BowClient : RangeWeaponClient
     protected readonly AimingStats AimingStats;
     protected readonly AmmoSelector AmmoSelector;
     protected readonly Settings Settings;
+    private readonly ArcheringBowCompat ArcheringCompat;
     protected AimingAnimationController? AimingAnimationController;
+    private ArcheringBowAimingController? ArcheringController;
+    private ArcheringBowAimingSettings? ActiveArcheringSettings;
+    private long ArcheringDrawStartMs;
+    private long ArcheringDrawTickListenerId;
+    private EntityPlayer? ArcheringDrawPlayer;
+    private bool ArcheringDrawMainHand;
     protected bool AfterLoad = false;
 
     [ActionEventHandler(EnumEntityAction.RightMouseDown, ActionState.Active)]
@@ -128,11 +138,10 @@ public class BowClient : RangeWeaponClient
         AnimationBehavior?.Play(mainHand, Stats.LoadAnimation, animationSpeed: GetAnimationSpeed(player, Stats) * stackStats.ReloadSpeed * Stats.ReloadAnimationSpeed, callback: () => LoadAnimationCallback(player, mainHand));
         TpAnimationBehavior?.Play(mainHand, Stats.LoadAnimation, animationSpeed: GetAnimationSpeed(player, Stats) * stackStats.ReloadSpeed * Stats.ReloadAnimationSpeed);
 
-        AimingStats.CursorType = Enum.Parse<AimingCursorType>(Settings.BowsAimingCursorType, ignoreCase: true);
-        AimingStats.VerticalLimit = Settings.BowsAimingVerticalLimit * Stats.Aiming.VerticalLimit;
-        AimingStats.HorizontalLimit = Settings.BowsAimingHorizontalLimit * Stats.Aiming.HorizontalLimit;
+        ArcheringBowAimingSettings? archeringSettings = ArcheringCompat.GetSettings(slot.Itemstack.Item);
+        AimingStats aimingStats = CreateAimingStats(stackStats, applyStackDifficulty: false, archeringSettings);
         AimingSystem.ResetAim();
-        AimingSystem.StartAiming(AimingStats);
+        AimingSystem.StartAiming(aimingStats);
         AimingSystem.AimingState = WeaponAimingState.Blocked;
 
         AimingAnimationController?.Play(mainHand);
@@ -193,6 +202,8 @@ public class BowClient : RangeWeaponClient
         if (state != (int)BowState.Loaded || !CheckForOtherHandEmpty(mainHand, player)) return false;
 
         ItemStackRangedStats stackStats = ItemStackRangedStats.FromItemStack(slot.Itemstack);
+        ArcheringBowAimingSettings? archeringSettings = ArcheringCompat.GetSettings(slot.Itemstack.Item);
+        bool useArcheringDrawTime = archeringSettings?.EnableDrawTimeTweaks == true;
 
         AnimationRequestByCode request = new(
             AfterLoad ? Stats.DrawAfterLoadAnimation : Stats.DrawAnimation,
@@ -202,7 +213,7 @@ public class BowClient : RangeWeaponClient
             TimeSpan.FromSeconds(0.2),
             TimeSpan.FromSeconds(0.2),
             true,
-            () => FullLoadCallback(player, mainHand));
+            useArcheringDrawTime ? () => true : () => FullLoadCallback(player, mainHand));
         AnimationBehavior?.Play(request, mainHand);
         TpAnimationBehavior?.Play(request, mainHand);
 
@@ -216,12 +227,7 @@ public class BowClient : RangeWeaponClient
 
         if (!AimingSystem.Aiming)
         {
-            AimingStats aimingStats = AimingStats.Clone();
-            aimingStats.AimDifficulty *= stackStats.AimingDifficulty;
-
-            AimingStats.CursorType = Enum.Parse<AimingCursorType>(Settings.BowsAimingCursorType, ignoreCase: true);
-            AimingStats.VerticalLimit = Settings.BowsAimingVerticalLimit * Stats.Aiming.VerticalLimit;
-            AimingStats.HorizontalLimit = Settings.BowsAimingHorizontalLimit * Stats.Aiming.HorizontalLimit;
+            AimingStats aimingStats = CreateAimingStats(stackStats, applyStackDifficulty: true, archeringSettings);
             AimingSystem.StartAiming(aimingStats);
             AimingSystem.AimingState = WeaponAimingState.Blocked;
 
@@ -230,6 +236,11 @@ public class BowClient : RangeWeaponClient
 
         if (TpAnimationBehavior == null) AnimationBehavior?.PlayVanillaAnimation(Stats.TpAimAnimation, mainHand);
 
+        if (archeringSettings != null)
+        {
+            StartArcheringAiming(player, mainHand, archeringSettings);
+        }
+
         return true;
     }
 
@@ -237,6 +248,7 @@ public class BowClient : RangeWeaponClient
     protected virtual bool Shoot(ItemSlot slot, EntityPlayer player, ref int state, ActionEventData eventData, bool mainHand, AttackDirection direction)
     {
         AimingSystem.StopAiming();
+        StopArcheringAiming();
         LogMountedAimState(player, "release");
 
         AnimationBehavior?.StopVanillaAnimation(Stats.TpAimAnimation, mainHand);
@@ -273,6 +285,89 @@ public class BowClient : RangeWeaponClient
         return true;
     }
 
+    private AimingStats CreateAimingStats(ItemStackRangedStats stackStats, bool applyStackDifficulty, ArcheringBowAimingSettings? archeringSettings)
+    {
+        AimingStats aimingStats = AimingStats.Clone();
+
+        if (applyStackDifficulty)
+        {
+            aimingStats.AimDifficulty *= stackStats.AimingDifficulty;
+        }
+
+        aimingStats.CursorType = Enum.Parse<AimingCursorType>(Settings.BowsAimingCursorType, ignoreCase: true);
+        aimingStats.VerticalLimit = Settings.BowsAimingVerticalLimit * Stats.Aiming.VerticalLimit;
+        aimingStats.HorizontalLimit = Settings.BowsAimingHorizontalLimit * Stats.Aiming.HorizontalLimit;
+
+        if (archeringSettings != null)
+        {
+            aimingStats.CursorType = AimingCursorType.None;
+            aimingStats.AimDifficulty = 0;
+            aimingStats.AimDrift = 0;
+            aimingStats.AimTwitch = 0;
+            aimingStats.AnimationFollowX = 0;
+            aimingStats.AnimationFollowY = 0;
+            aimingStats.AnimationOffsetX = 0;
+            aimingStats.AnimationOffsetY = 0;
+        }
+
+        return aimingStats;
+    }
+
+    private void StartArcheringAiming(EntityPlayer player, bool mainHand, ArcheringBowAimingSettings settings)
+    {
+        ActiveArcheringSettings = settings;
+        ArcheringDrawPlayer = player;
+        ArcheringDrawMainHand = mainHand;
+        ArcheringDrawStartMs = Api.World.ElapsedMilliseconds;
+
+        ArcheringController ??= new(Api);
+        ArcheringController.Start(settings, player);
+
+        StopArcheringDrawTimer();
+
+        if (settings.EnableDrawTimeTweaks)
+        {
+            ArcheringDrawTickListenerId = Api.World.RegisterGameTickListener(_ => TickArcheringDraw(), 20);
+        }
+    }
+
+    private void TickArcheringDraw()
+    {
+        if (ActiveArcheringSettings == null || ArcheringDrawPlayer == null)
+        {
+            StopArcheringDrawTimer();
+            return;
+        }
+
+        if (GetState<BowState>(ArcheringDrawMainHand) != BowState.Draw)
+        {
+            StopArcheringDrawTimer();
+            return;
+        }
+
+        long elapsedMs = Api.World.ElapsedMilliseconds - ArcheringDrawStartMs;
+        if (elapsedMs < ActiveArcheringSettings.DrawTime * 1000f) return;
+
+        FullLoadCallback(ArcheringDrawPlayer, ArcheringDrawMainHand);
+        ArcheringController?.SetCharged();
+        StopArcheringDrawTimer();
+    }
+
+    private void StopArcheringAiming()
+    {
+        StopArcheringDrawTimer();
+        ArcheringController?.Stop();
+        ActiveArcheringSettings = null;
+        ArcheringDrawPlayer = null;
+    }
+
+    private void StopArcheringDrawTimer()
+    {
+        if (ArcheringDrawTickListenerId == 0) return;
+
+        Api.World.UnregisterGameTickListener(ArcheringDrawTickListenerId);
+        ArcheringDrawTickListenerId = 0;
+    }
     protected virtual bool ShootCallback(ItemSlot slot, EntityPlayer player, bool mainHand)
     {
         RangedWeaponSystem.SendStatusChange(player, RangedWeaponStatus.SpawnedProjectile, mainHand);
@@ -301,6 +396,7 @@ public class BowClient : RangeWeaponClient
     {
         PlayerBehavior?.SetState((int)BowState.Drawn);
         AimingSystem.AimingState = WeaponAimingState.FullCharge;
+        ArcheringController?.SetCharged();
         LogMountedAimState(player, "full-draw");
         return true;
     }
@@ -358,6 +454,7 @@ public class BowServer : RangeWeaponServer
     {
         ProjectileSystem = api.ModLoader.GetModSystem<CombatOverhaulSystem>().ServerProjectileSystem ?? throw new Exception();
         Stats = item.Attributes.AsObject<BowStats>();
+        ArcheringCompat = new(api);
     }
 
     public override bool Reload(IServerPlayer player, ItemSlot slot, ItemSlot? ammoSlot, ReloadPacket packet)
@@ -411,7 +508,7 @@ public class BowServer : RangeWeaponServer
             DamageMultiplier = Stats.ArrowDamageMultiplier * stackStats.DamageMultiplier,
             DamageTier = Stats.ArrowDamageTier + stackStats.DamageTierBonus,
             Position = new Vector3d(packet.Position[0], packet.Position[1], packet.Position[2]),
-            Velocity = GetDirectionWithDispersion(packet.Velocity, [Stats.DispersionMOA[0] * stackStats.DispersionMultiplier, Stats.DispersionMOA[1] * stackStats.DispersionMultiplier]) * Stats.ArrowVelocity * stackStats.ProjectileSpeed + playerVelocity
+            Velocity = GetDirectionWithDispersion(packet.Velocity, [Stats.DispersionMOA[0] * stackStats.DispersionMultiplier, Stats.DispersionMOA[1] * stackStats.DispersionMultiplier]) * Stats.ArrowVelocity * stackStats.ProjectileSpeed * ArcheringCompat.GetVelocityMultiplier(slot.Itemstack.Item) + playerVelocity
         };
 
         ProjectileSystem.Spawn(packet.ProjectileId[0], stats, spawnStats, arrowSlot.TakeOut(1), slot.Itemstack, shooter);
@@ -426,6 +523,7 @@ public class BowServer : RangeWeaponServer
 
     protected readonly Dictionary<long, (InventoryBase, int)> ArrowSlots = new();
     protected readonly BowStats Stats;
+    private readonly ArcheringBowCompat ArcheringCompat;
 }
 
 public class BowItem : Item, IHasWeaponLogic, IHasRangedWeaponLogic, IHasMoveAnimations

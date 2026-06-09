@@ -3,7 +3,7 @@
   <PropertyGroup>
     <ModName>Overhaul lib legacy compat</ModName>
     <ModType>code</ModType>
-    <ModVersion>1.1.16</ModVersion>
+    <ModVersion>1.1.17</ModVersion>
     <ModId>overhaulliblegacycompat</ModId>
     <Description></Description>
     <Side>universal</Side>
