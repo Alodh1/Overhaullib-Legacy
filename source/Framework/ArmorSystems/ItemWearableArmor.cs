@@ -9,7 +9,7 @@ using Vintagestory.GameContent;
 
 namespace CombatOverhaul.Armor;
 
-public class ItemWearableArmor : Item
+public class ItemWearableArmor : Item, IWearableStatsSupplier
 {
     protected bool AttachableToEntity;
     protected Shape? NowTesselatingShape;
@@ -152,6 +152,41 @@ public class ItemWearableArmor : Item
         }
 
         return false;
+    }
+
+    public bool IsArmorType(ItemSlot slot)
+    {
+        return GetVanillaWearableBehavior()?.IsArmorType(slot) ?? GetCollectibleBehavior<ArmorBehavior>(true) != null;
+    }
+
+    public EnumCharacterDressType GetDressType(ItemSlot slot)
+    {
+        return GetVanillaWearableBehavior()?.GetDressType(slot) ?? EnumCharacterDressType.Unknown;
+    }
+
+    public StatModifiers? GetStatModifiers(ItemSlot slot)
+    {
+        return GetVanillaWearableBehavior()?.GetStatModifiers(slot);
+    }
+
+    public ProtectionModifiers? GetProtectionModifiers(ItemSlot slot)
+    {
+        return GetVanillaWearableBehavior()?.GetProtectionModifiers(slot);
+    }
+
+    public AssetLocation[] GetFootStepSounds(ItemSlot slot)
+    {
+        return ArmorFootStepSoundUtil.GetFootStepSounds(api, slot, this, GetVanillaWearableBehavior());
+    }
+
+    public float GetMaxWarmth(ItemSlot slot)
+    {
+        return GetVanillaWearableBehavior()?.GetMaxWarmth(slot) ?? 0f;
+    }
+
+    private CollectibleBehaviorWearable? GetVanillaWearableBehavior()
+    {
+        return GetBehavior<CollectibleBehaviorWearable>();
     }
 
     protected static bool IsWearableStack(ItemSlot slot)
