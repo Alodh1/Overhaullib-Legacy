@@ -1,3 +1,4 @@
+using CombatOverhaul.DamageSystems;
 using CombatOverhaul.Utils;
 using Vintagestory.API.Common;
 using Vintagestory.API.Common.Entities;
@@ -12,7 +13,7 @@ namespace CombatOverhaul.Armor;
 /// 1.22+/1.23-safe replacement for the old ItemWearable-derived CombatOverhaul:WearableArmor item class.
 /// Put this behavior on a normal Item together with the vanilla Wearable behavior.
 /// </summary>
-public class WearableArmorBehavior : CollectibleBehavior
+public class WearableArmorBehavior : CollectibleBehavior, IWearableStatsSupplier
 {
     protected ICoreAPI? api;
 
@@ -142,6 +143,117 @@ public class WearableArmorBehavior : CollectibleBehavior
     private static bool IsRepairRecipe(IRecipeBase? recipe)
     {
         return recipe?.Name?.Path?.Contains("repair", StringComparison.OrdinalIgnoreCase) == true;
+    }
+
+    public bool IsArmorType(ItemSlot slot)
+    {
+        return GetVanillaWearableBehavior()?.IsArmorType(slot) ?? collObj.GetCollectibleBehavior<ArmorBehavior>(true) != null;
+    }
+
+    public EnumCharacterDressType GetDressType(ItemSlot slot)
+    {
+        return GetVanillaWearableBehavior()?.GetDressType(slot) ?? EnumCharacterDressType.Unknown;
+    }
+
+    public StatModifiers? GetStatModifiers(ItemSlot slot)
+    {
+        return GetVanillaWearableBehavior()?.GetStatModifiers(slot);
+    }
+
+    public ProtectionModifiers? GetProtectionModifiers(ItemSlot slot)
+    {
+        return GetVanillaWearableBehavior()?.GetProtectionModifiers(slot);
+    }
+
+    public AssetLocation[] GetFootStepSounds(ItemSlot slot)
+    {
+        AssetLocation[]? sounds = GetVanillaWearableBehavior()?.GetFootStepSounds(slot);
+        if (sounds == null || sounds.Length == 0) return Array.Empty<AssetLocation>();
+
+        return IsSelectedFootStepArmor(slot) ? sounds : Array.Empty<AssetLocation>();
+    }
+
+    public float GetMaxWarmth(ItemSlot slot)
+    {
+        return GetVanillaWearableBehavior()?.GetMaxWarmth(slot) ?? 0f;
+    }
+
+    private CollectibleBehaviorWearable? GetVanillaWearableBehavior()
+    {
+        return collObj.GetBehavior<CollectibleBehaviorWearable>();
+    }
+
+    private static bool IsSelectedFootStepArmor(ItemSlot slot)
+    {
+        if (slot.Inventory == null || slot.Itemstack == null) return true;
+
+        (int soundPriority, int zonePriority, int slotId) current = GetFootStepArmorPriority(slot);
+        if (current.soundPriority <= 0) return true;
+
+        foreach (ItemSlot candidate in slot.Inventory)
+        {
+            if (ReferenceEquals(candidate, slot) || candidate.Empty) continue;
+
+            (int soundPriority, int zonePriority, int slotId) other = GetFootStepArmorPriority(candidate);
+            if (other.soundPriority <= 0) continue;
+
+            if (other.soundPriority > current.soundPriority) return false;
+            if (other.soundPriority < current.soundPriority) continue;
+
+            if (other.zonePriority > current.zonePriority) return false;
+            if (other.zonePriority < current.zonePriority) continue;
+
+            if (other.slotId >= 0 && (current.slotId < 0 || other.slotId < current.slotId)) return false;
+        }
+
+        return true;
+    }
+
+    private static (int soundPriority, int zonePriority, int slotId) GetFootStepArmorPriority(ItemSlot slot)
+    {
+        ItemStack? stack = slot.Itemstack;
+        CollectibleObject? collectible = stack?.Collectible;
+        if (collectible == null) return (0, 0, -1);
+
+        if (collectible.GetCollectibleBehavior<ArmorBehavior>(true) == null) return (0, 0, -1);
+
+        AssetLocation[]? sounds = collectible.GetBehavior<CollectibleBehaviorWearable>()?.GetFootStepSounds(slot);
+        if (sounds == null || sounds.Length == 0) return (0, 0, -1);
+
+        int slotId = slot.Inventory?.GetSlotId(slot) ?? -1;
+        return (GetSoundPriority(collectible), GetZonePriority(collectible), slotId);
+    }
+
+    private static int GetSoundPriority(CollectibleObject collectible)
+    {
+        string code = collectible.Code?.Path?.ToLowerInvariant() ?? "";
+        string sound = collectible.Attributes?["footStepSound"].AsString("")?.ToLowerInvariant() ?? "";
+        string value = $"{code} {sound}";
+
+        if (value.Contains("plate")) return 60;
+        if (value.Contains("scale")) return 50;
+        if (value.Contains("chain")) return 45;
+        if (value.Contains("brigandine")) return 40;
+        if (value.Contains("lamellar")) return 30;
+        if (value.Contains("leather") || value.Contains("jerkin") || value.Contains("hide")) return 20;
+
+        return 10;
+    }
+
+    private static int GetZonePriority(CollectibleObject collectible)
+    {
+        ArmorType armorType = collectible.GetCollectibleBehavior<ArmorBehavior>(true)?.ArmorType ?? ArmorType.Empty;
+
+        if ((armorType.Slots & DamageZone.Torso) != 0) return 700;
+        if ((armorType.Slots & DamageZone.Legs) != 0) return 600;
+        if ((armorType.Slots & DamageZone.Feet) != 0) return 500;
+        if ((armorType.Slots & DamageZone.Arms) != 0) return 400;
+        if ((armorType.Slots & DamageZone.Hands) != 0) return 300;
+        if ((armorType.Slots & DamageZone.Head) != 0) return 200;
+        if ((armorType.Slots & DamageZone.Neck) != 0) return 100;
+        if ((armorType.Slots & DamageZone.Face) != 0) return 90;
+
+        return 0;
     }
 
     protected static InventoryBase? GetGearInventory(Entity entity)
