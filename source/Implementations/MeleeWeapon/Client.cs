@@ -2558,8 +2558,10 @@ public class MeleeWeaponClient : IClientWeaponLogic, IHasDynamicMoveAnimations, 
 
         string damageType = damageTypes.Select(element => Lang.Get($"combatoverhaul:damage-type-{element}")).Aggregate((first, second) => $"{first}, {second}");
 
-        string damageString = minDamage == maxDamage ? $"{maxDamage:F0}" : $"{minDamage:F0}-{maxDamage:F0}";
-        string tierString = minTier == maxTier ? $"{maxTier:F0}" : $"{minTier:F0}-{maxTier:F0}";
+        // A stance can contain helper/secondary damage entries. Tooltips should show
+        // the practical attack value, not internal min-max ranges such as 0-8.
+        string damageString = $"{maxDamage:F0}";
+        string tierString = $"{maxTier:F0}";
 
         return Lang.Get(descriptionLangCode, damageString, tierString, damageType) + (armorPiercingTier > 0 ? "\n" + Lang.Get("combatoverhaul:iteminfo-melee-weapon-armorpiercing", armorPiercingTier) : "");
     }
