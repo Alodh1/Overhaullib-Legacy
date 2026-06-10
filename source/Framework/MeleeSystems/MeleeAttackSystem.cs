@@ -380,6 +380,22 @@ public sealed class MeleeSystemServer : MeleeSystem
             // Not every melee weapon uses stance-based stats.
         }
 
+        try
+        {
+            MeleeWeaponModeCollectionStats? modeStats = slot.Itemstack.ItemAttributes?.AsObject<MeleeWeaponModeCollectionStats>();
+            if (modeStats != null)
+            {
+                foreach (MeleeWeaponModeStats mode in modeStats.Modes.Values)
+                {
+                    AddMeleeWeaponStats(builder, mode);
+                }
+            }
+        }
+        catch
+        {
+            // Spears and similar modal weapons use Modes; non-modal weapons do not.
+        }
+
         return builder.TryBuild(out limits);
     }
 
