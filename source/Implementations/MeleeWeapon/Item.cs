@@ -145,8 +145,78 @@ public class MeleeWeapon : Item, IHasMultipleWeaponLogicModes, IHasWeaponLogic, 
     {
         base.OnCreatedByCrafting(allInputslots, outputSlot, byRecipe);
 
+        PreserveHandleTexture(allInputslots, outputSlot);
         GeneralUtils.MarkItemStack(outputSlot);
         outputSlot.MarkDirty();
+    }
+
+    private static void PreserveHandleTexture(ItemSlot[] allInputslots, ItemSlot outputSlot)
+    {
+        if (outputSlot.Empty || outputSlot.Itemstack?.Collectible?.Code == null)
+        {
+            return;
+        }
+
+        string? handleTexture = null;
+        string? leatherTexture = null;
+
+        foreach (ItemSlot inputSlot in allInputslots)
+        {
+            ItemStack? inputStack = inputSlot.Itemstack;
+            if (inputSlot.Empty || inputStack?.Collectible?.Code == null)
+            {
+                continue;
+            }
+
+            string? inputHandleTexture = inputStack.Attributes.GetString("handleTexture");
+            if (!string.IsNullOrWhiteSpace(inputHandleTexture))
+            {
+                if (IsLeatherTexture(inputHandleTexture))
+                {
+                    leatherTexture ??= inputHandleTexture;
+                }
+                else
+                {
+                    handleTexture ??= inputHandleTexture;
+                }
+            }
+
+            leatherTexture ??= GetLeatherTexture(inputStack);
+        }
+
+        string? texture = IsSteelLike(outputSlot.Itemstack)
+            ? leatherTexture ?? handleTexture
+            : handleTexture ?? leatherTexture;
+
+        if (!string.IsNullOrWhiteSpace(texture))
+        {
+            outputSlot.Itemstack.Attributes.SetString("handleTexture", texture);
+        }
+    }
+
+    private static bool IsSteelLike(ItemStack stack)
+    {
+        string path = stack.Collectible?.Code?.Path ?? "";
+        return path.Contains("-steel", StringComparison.Ordinal)
+            || path.Contains("-meteoricsteel", StringComparison.Ordinal);
+    }
+
+    private static bool IsLeatherTexture(string texture)
+    {
+        return texture.StartsWith("game:block/leather/", StringComparison.Ordinal)
+            || texture.StartsWith("block/leather/", StringComparison.Ordinal);
+    }
+
+    private static string? GetLeatherTexture(ItemStack stack)
+    {
+        AssetLocation? code = stack.Collectible?.Code;
+        if (code?.Domain != "game" || !code.Path.StartsWith("leather-normal-", StringComparison.Ordinal))
+        {
+            return null;
+        }
+
+        string color = code.Path["leather-normal-".Length..];
+        return string.IsNullOrWhiteSpace(color) ? null : $"game:block/leather/{color}";
     }
 
 
