@@ -2,6 +2,7 @@
 using CombatOverhaul.MeleeSystems;
 using CombatOverhaul.RangedSystems.Aiming;
 using CombatOverhaul.Utils;
+using CombatOverhaul.WeaponBuffs;
 using Vintagestory.API.Common;
 
 namespace CombatOverhaul.Implementations;
@@ -157,7 +158,21 @@ public readonly struct ItemStackMeleeWeaponStats
         float knockbackMultiplier = stack.Attributes.GetFloat("knockbackMultiplier", 1);
         int armorPiercingBonus = stack.Attributes.GetInt("armorPiercingBonus", 0);
 
-        return new ItemStackMeleeWeaponStats(damageMultiplier, damageBonus, damageTierBonus, attackSpeed, blockTierBonus, parryTierBonus, thrownDamageMultiplier, thrownDamageTierBonus, thrownAimingDifficulty, thrownProjectileSpeedMultiplier, knockbackMultiplier, armorPiercingBonus);
+        return WeaponBuffSystem.ComposeMeleeStats(stack, new()
+        {
+            DamageMultiplier = damageMultiplier,
+            DamageBonus = damageBonus,
+            DamageTierBonus = damageTierBonus,
+            AttackSpeed = attackSpeed,
+            BlockTierBonus = blockTierBonus,
+            ParryTierBonus = parryTierBonus,
+            ThrownDamageMultiplier = thrownDamageMultiplier,
+            ThrownDamageTierBonus = thrownDamageTierBonus,
+            ThrownAimingDifficulty = thrownAimingDifficulty,
+            ThrownProjectileSpeedMultiplier = thrownProjectileSpeedMultiplier,
+            KnockbackMultiplier = knockbackMultiplier,
+            ArmorPiercingBonus = armorPiercingBonus
+        });
     }
-    public static float GetAttackSpeed(ItemStack stack) => stack.Attributes.GetFloat("attackSpeed", 1);
+    public static float GetAttackSpeed(ItemStack stack) => FromItemStack(stack).AttackSpeed;
 }

@@ -1,4 +1,5 @@
-﻿using Vintagestory.API.Common;
+using CombatOverhaul.WeaponBuffs;
+using Vintagestory.API.Common;
 
 namespace CombatOverhaul.Implementations;
 
@@ -40,6 +41,14 @@ public readonly struct ItemStackRangedStats
         float dispersionMultiplier = stack.Attributes.GetFloat("dispersionMultiplier", 1);
         float aimingDifficulty = stack.Attributes.GetFloat("aimingDifficulty", 1);
 
-        return new ItemStackRangedStats(reloadSpeed, damageMultiplier, damageTierBonus, projectileSpeed, dispersionMultiplier, aimingDifficulty);
+        return WeaponBuffSystem.ComposeRangedStats(stack, new()
+        {
+            ReloadSpeed = reloadSpeed,
+            DamageMultiplier = damageMultiplier,
+            DamageTierBonus = damageTierBonus,
+            ProjectileSpeed = projectileSpeed,
+            DispersionMultiplier = dispersionMultiplier,
+            AimingDifficulty = aimingDifficulty
+        });
     }
 }

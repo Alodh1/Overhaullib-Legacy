@@ -1,4 +1,5 @@
 ﻿using CombatOverhaul.MeleeSystems;
+using CombatOverhaul.WeaponBuffs;
 using OpenTK.Mathematics;
 using ProtoBuf;
 using Vintagestory.API.Client;
@@ -286,6 +287,7 @@ public class RangedWeaponSystemServer
 
         if (rangedWeapon.ServerWeaponLogic?.Shoot(player, weaponSlot, packet, player.Entity) == true)
         {
+            WeaponBuffSystem.Current?.Consume(weaponSlot, WeaponBuffConsumptionTrigger.RangedShot);
             OnSuccessfulShot(player, packet);
         }
         else

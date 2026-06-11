@@ -3,6 +3,7 @@ using CombatOverhaul.DamageSystems;
 using CombatOverhaul.Inputs;
 using CombatOverhaul.Integration;
 using CombatOverhaul.RangedSystems;
+using CombatOverhaul.WeaponBuffs;
 using System.Text;
 using Vintagestory.API.Client;
 using Vintagestory.API.Common;
@@ -93,6 +94,7 @@ public class MeleeWeaponBehavior : CollectibleBehavior, IHasMultipleWeaponLogicM
     public override void GetHeldItemInfo(ItemSlot inSlot, StringBuilder dsc, IWorldAccessor world, bool withDebugInfo)
     {
         ClientLogic?.GetHeldItemInfo(inSlot, dsc, world, withDebugInfo);
+        WeaponBuffSystem.AppendTooltip(inSlot.Itemstack, dsc, world, withDebugInfo);
         dsc.AppendLine("");
 
         base.GetHeldItemInfo(inSlot, dsc, world, withDebugInfo);

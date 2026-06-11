@@ -4,6 +4,7 @@ using CombatOverhaul.Inputs;
 using CombatOverhaul.Integration;
 using CombatOverhaul.RangedSystems;
 using CombatOverhaul.Utils;
+using CombatOverhaul.WeaponBuffs;
 using Newtonsoft.Json.Linq;
 using System.Text;
 using Vintagestory.API.Client;
@@ -90,6 +91,7 @@ public class MeleeWeapon : Item, IHasMultipleWeaponLogicModes, IHasWeaponLogic, 
     public override void GetHeldItemInfo(ItemSlot inSlot, StringBuilder dsc, IWorldAccessor world, bool withDebugInfo)
     {
         ClientLogic?.GetHeldItemInfo(inSlot, dsc, world, withDebugInfo);
+        WeaponBuffSystem.AppendTooltip(inSlot.Itemstack, dsc, world, withDebugInfo);
         dsc.AppendLine("");
 
         base.GetHeldItemInfo(inSlot, dsc, world, withDebugInfo);

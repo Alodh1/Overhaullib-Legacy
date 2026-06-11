@@ -2,6 +2,7 @@ using CombatOverhaul.Colliders;
 using CombatOverhaul.DamageSystems;
 using CombatOverhaul.Integration;
 using CombatOverhaul.Utils;
+using CombatOverhaul.WeaponBuffs;
 using OpenTK.Mathematics;
 using ProtoBuf;
 using Vintagestory.API.Client;
@@ -95,7 +96,15 @@ public readonly struct ItemStackProjectileStats
         float penetrationBonus = stack.Attributes.GetFloat("penetrationBonus", 0);
         int additionalDurabilityCost = stack.Attributes.GetInt("additionalDurabilityCost", 0);
 
-        return new ItemStackProjectileStats(damageMultiplier, damageTierBonus, knockbackMultiplier, dropChanceMultiplier, penetrationBonus, additionalDurabilityCost);
+        return WeaponBuffSystem.ComposeProjectileStackStats(stack, new()
+        {
+            DamageMultiplier = damageMultiplier,
+            DamageTierBonus = damageTierBonus,
+            KnockbackMultiplier = knockbackMultiplier,
+            DropChanceMultiplier = dropChanceMultiplier,
+            PenetrationBonus = penetrationBonus,
+            AdditionalDurabilityCost = additionalDurabilityCost
+        });
     }
 }
 
@@ -599,12 +608,16 @@ public sealed class ProjectileSystemServer
             return;
         }
 
+        WeaponBuffSystem.ModifyProjectileSpawn(projectileStats, ref spawnStats, projectileStack, weaponStack, shooter, target);
+
         SpawnProjectile(id, projectileStack, weaponStack, projectileStats, spawnStats, _api, shooter, owner, out ProjectileEntity? projectile);
 
         if (projectile != null)
         {
             _projectiles.Add(id, new(projectile, projectileStats, spawnStats, _api, ClearId, projectileStack));
             projectile.ServerProjectile = _projectiles[id];
+            WeaponBuffSystem.ConsumeInternal(weaponStack, WeaponBuffConsumptionTrigger.ProjectileSpawn);
+            WeaponBuffSystem.ConsumeInternal(projectileStack, WeaponBuffConsumptionTrigger.ProjectileSpawn);
         }
     }
     public void TryCollide(ProjectileEntity projectile)
@@ -635,6 +648,7 @@ public sealed class ProjectileSystemServer
     public void OnDealDamage(Entity target, DamageSource damageSource, ItemStack? weaponStack, ref float damage)
     {
         OnDealRangedDamage?.Invoke(target, damageSource, weaponStack, ref damage);
+        WeaponBuffSystem.ModifyRangedDamage(target, damageSource, weaponStack, ref damage);
         damage = GrindingWheelCompat.ApplyBuffableDamage(weaponStack, target, damage);
     }
 

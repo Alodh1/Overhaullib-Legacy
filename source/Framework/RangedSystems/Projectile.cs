@@ -2,6 +2,7 @@ using CombatOverhaul.Colliders;
 using CombatOverhaul.DamageSystems;
 using CombatOverhaul.Implementations;
 using CombatOverhaul.Utils;
+using CombatOverhaul.WeaponBuffs;
 using OpenTK.Mathematics;
 using System.Reflection;
 using System.Runtime.CompilerServices;
@@ -150,6 +151,11 @@ public sealed class ProjectileServer
         _system.OnDealDamage(target, damageSource, _entity.WeaponStack, ref damage);
 
         bool damageReceived = target.ReceiveDamage(damageSource, damage);
+        if (damageReceived)
+        {
+            WeaponBuffSystem.ConsumeInternal(_entity.WeaponStack, WeaponBuffConsumptionTrigger.RangedHit);
+            WeaponBuffSystem.ConsumeInternal(_entity.ProjectileStack, WeaponBuffConsumptionTrigger.ProjectileHit);
+        }
 
         bool received = damageReceived || damage <= 0;
 
@@ -493,6 +499,7 @@ public class ProjectileBehavior : CollectibleBehavior
         stats.Knockback *= stackStats.KnockbackMultiplier;
         stats.PenetrationBonus = Math.Max(0, stackStats.PenetrationBonus + stats.PenetrationBonus);
         stats.AdditionalDurabilityCost = Math.Max(0, stackStats.AdditionalDurabilityCost + stats.AdditionalDurabilityCost);
+        WeaponBuffSystem.ModifyProjectileStats(stack, stats);
 
         return stats;
     }
@@ -521,6 +528,7 @@ public class ProjectileBehavior : CollectibleBehavior
             }
         }
 
+        WeaponBuffSystem.AppendTooltip(inSlot.Itemstack, dsc, world, withDebugInfo);
         base.GetHeldItemInfo(inSlot, dsc, world, withDebugInfo);
     }
 }

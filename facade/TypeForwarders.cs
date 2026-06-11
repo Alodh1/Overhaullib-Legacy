@@ -4,6 +4,7 @@ using CombatOverhaul.RangedSystems;
 using CombatOverhaul.Armor;
 using CombatOverhaul.Implementations;
 using CombatOverhaul.DamageSystems;
+using CombatOverhaul.WeaponBuffs;
 
 [assembly: TypeForwardedTo(typeof(ProjectileEntity))]
 [assembly: TypeForwardedTo(typeof(ArmorSlot))]
@@ -12,3 +13,19 @@ using CombatOverhaul.DamageSystems;
 [assembly: TypeForwardedTo(typeof(IWeaponDamageSource))]
 [assembly: TypeForwardedTo(typeof(ArmorBehavior))]
 [assembly: TypeForwardedTo(typeof(DamageResistData))]
+[assembly: TypeForwardedTo(typeof(WeaponBuffSystem))]
+[assembly: TypeForwardedTo(typeof(WeaponBuffConsumptionTrigger))]
+[assembly: TypeForwardedTo(typeof(WeaponBuffStatCodes))]
+[assembly: TypeForwardedTo(typeof(WeaponStatModifier))]
+[assembly: TypeForwardedTo(typeof(WeaponBuffDefinition))]
+[assembly: TypeForwardedTo(typeof(WeaponBuffApplyOptions))]
+[assembly: TypeForwardedTo(typeof(WeaponBuffInstance))]
+[assembly: TypeForwardedTo(typeof(WeaponBuffQueryContext))]
+[assembly: TypeForwardedTo(typeof(WeaponBuffDamageContext))]
+[assembly: TypeForwardedTo(typeof(WeaponBuffProjectileSpawnContext))]
+[assembly: TypeForwardedTo(typeof(WeaponBuffTooltipContext))]
+[assembly: TypeForwardedTo(typeof(WeaponBuffMeleeStats))]
+[assembly: TypeForwardedTo(typeof(WeaponBuffRangedStats))]
+[assembly: TypeForwardedTo(typeof(WeaponBuffProjectileStats))]
+[assembly: TypeForwardedTo(typeof(IWeaponBuffProvider))]
+[assembly: TypeForwardedTo(typeof(WeaponBuffProvider))]

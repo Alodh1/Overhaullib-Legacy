@@ -3,6 +3,7 @@ using CombatOverhaul.DamageSystems;
 using CombatOverhaul.Implementations;
 using CombatOverhaul.Integration;
 using CombatOverhaul.Utils;
+using CombatOverhaul.WeaponBuffs;
 using OpenTK.Mathematics;
 using ProtoBuf;
 using Vintagestory.API.Client;
@@ -211,6 +212,10 @@ public sealed class MeleeSystemServer : MeleeSystem
         };
 
         bool damageReceived = DealDamage(target, damageSource, slot, packet.Damage);
+        if (damageReceived)
+        {
+            WeaponBuffSystem.Current?.Consume(slot, WeaponBuffConsumptionTrigger.MeleeHit);
+        }
 
         _api.ModLoader.GetModSystem<CombatOverhaulSystem>().ServerImpaleSystem?.TryAttach(packet, attacker, target, slot, damageReceived);
 
@@ -616,6 +621,7 @@ public sealed class MeleeSystemServer : MeleeSystem
     private bool DealDamage(Entity target, DamageSource damageSource, ItemSlot? slot, float damage)
     {
         OnDealMeleeDamage?.Invoke(target, damageSource, slot, ref damage);
+        WeaponBuffSystem.ModifyMeleeDamage(target, damageSource, slot, ref damage);
         damage = GrindingWheelCompat.ApplyBuffableDamage(slot?.Itemstack, target, damage);
 
         return target.ReceiveDamage(damageSource, damage);

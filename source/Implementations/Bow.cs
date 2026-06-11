@@ -4,6 +4,7 @@ using CombatOverhaul.Inputs;
 using CombatOverhaul.RangedSystems;
 using CombatOverhaul.RangedSystems.Aiming;
 using CombatOverhaul.Utils;
+using CombatOverhaul.WeaponBuffs;
 using OpenTK.Mathematics;
 using System.Text;
 using Vintagestory.API.Client;
@@ -643,6 +644,7 @@ public class BowItem : Item, IHasWeaponLogic, IHasRangedWeaponLogic, IHasMoveAni
             }
         }
 
+        WeaponBuffSystem.AppendTooltip(inSlot.Itemstack, dsc, world, withDebugInfo);
         base.GetHeldItemInfo(inSlot, dsc, world, withDebugInfo);
 
         if (_stats == null) return;

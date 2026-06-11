@@ -3,6 +3,7 @@ using CombatOverhaul.DamageSystems;
 using CombatOverhaul.Inputs;
 using CombatOverhaul.Integration;
 using CombatOverhaul.MeleeSystems;
+using CombatOverhaul.WeaponBuffs;
 using OpenTK.Mathematics;
 using System.Text;
 using Vintagestory.API.Client;
@@ -759,6 +760,7 @@ public class StanceBasedMeleeWeapon : Item, IHasWeaponLogic, IHasDynamicIdleAnim
     public override void GetHeldItemInfo(ItemSlot inSlot, StringBuilder dsc, IWorldAccessor world, bool withDebugInfo)
     {
         ClientLogic?.GetHeldItemInfo(inSlot, dsc, world, withDebugInfo);
+        WeaponBuffSystem.AppendTooltip(inSlot.Itemstack, dsc, world, withDebugInfo);
         dsc.AppendLine("");
 
         base.GetHeldItemInfo(inSlot, dsc, world, withDebugInfo);
