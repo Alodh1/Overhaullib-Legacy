@@ -101,8 +101,6 @@
 
   <Compile Remove="source\Animations\ItemsAnimations\AnimatableShapeCompat.cs" />
   <Compile Remove="source\Animations\ItemsAnimations\ClientItemAnimatorCompat.cs" />
-  <Compile Remove="facade\**\*.cs" />
-  <None Include="facade\**\*" />
 </ItemGroup>
 
   <!-- Forces rebuild -->
