@@ -121,7 +121,8 @@ public class VanitySystemServer
 
         _listener = _api.World.RegisterGameTickListener(_ => Resync(), 1000 * 60 * 1, 3 * 1000);
 
-        _api.Event.PlayerNowPlaying += _ => Resync();
+        _playerNowPlayingHandler = _ => Resync();
+        _api.Event.PlayerNowPlaying += _playerNowPlayingHandler;
     }
 
     public const string HideBackpackAttribute = "combatoverhaul:hide-backpack";
@@ -137,13 +138,15 @@ public class VanitySystemServer
 
     public void Dispose()
     {
-        _api.World.UnregisterCallback(_listener);
+        _api.World.UnregisterGameTickListener(_listener);
+        _api.Event.PlayerNowPlaying -= _playerNowPlayingHandler;
     }
 
     private const string _networkChannelId = "CombatOverhaul:stats";
     private readonly IServerNetworkChannel _serverChannel;
     private readonly ICoreServerAPI _api;
     private readonly long _listener;
+    private readonly PlayerDelegate _playerNowPlayingHandler;
 
     private void HandlePacket(IServerPlayer player, BackpackVanityPacket packet)
     {

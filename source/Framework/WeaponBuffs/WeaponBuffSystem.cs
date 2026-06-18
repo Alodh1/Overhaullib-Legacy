@@ -113,12 +113,13 @@ public sealed class WeaponBuffQueryContext
 
 public sealed class WeaponBuffDamageContext
 {
-    public WeaponBuffDamageContext(Entity target, DamageSource damageSource, ItemSlot? slot, ItemStack? weaponStack, float damage)
+    public WeaponBuffDamageContext(Entity target, DamageSource damageSource, ItemSlot? slot, ItemStack? weaponStack, float damage, ItemStack? projectileStack = null)
     {
         Target = target;
         DamageSource = damageSource;
         Slot = slot;
         WeaponStack = weaponStack;
+        ProjectileStack = projectileStack;
         Damage = damage;
     }
 
@@ -126,6 +127,7 @@ public sealed class WeaponBuffDamageContext
     public DamageSource DamageSource { get; }
     public ItemSlot? Slot { get; }
     public ItemStack? WeaponStack { get; }
+    public ItemStack? ProjectileStack { get; }
     public float Damage { get; set; }
 }
 
@@ -290,6 +292,9 @@ public sealed class WeaponBuffSystem : ModSystem
         {
             Current = null;
         }
+
+        _providers.Clear();
+        _providerErrors.Clear();
     }
 
     public WeaponBuffInstance ApplyBuff(ItemSlot slot, WeaponBuffDefinition definition, WeaponBuffApplyOptions? options = null)
@@ -306,6 +311,30 @@ public sealed class WeaponBuffSystem : ModSystem
         }
 
         return instance;
+    }
+
+    public WeaponBuffInstance ApplyProjectileBuff(ItemSlot slot, WeaponBuffDefinition definition, WeaponBuffApplyOptions? options = null)
+    {
+        if (slot.Itemstack == null)
+        {
+            throw new ArgumentException("Cannot apply a projectile buff to an empty slot.", nameof(slot));
+        }
+
+        ValidateProjectileStack(slot.Itemstack, nameof(slot));
+
+        WeaponBuffInstance instance = ApplyBuff(slot.Itemstack, definition, options);
+        if (options?.MarkDirty != false)
+        {
+            slot.MarkDirty();
+        }
+
+        return instance;
+    }
+
+    public WeaponBuffInstance ApplyProjectileBuff(ItemStack stack, WeaponBuffDefinition definition, WeaponBuffApplyOptions? options = null)
+    {
+        ValidateProjectileStack(stack, nameof(stack));
+        return ApplyBuff(stack, definition, options);
     }
 
     public WeaponBuffInstance ApplyBuff(ItemStack stack, WeaponBuffDefinition definition, WeaponBuffApplyOptions? options = null)
@@ -341,6 +370,26 @@ public sealed class WeaponBuffSystem : ModSystem
         return removed;
     }
 
+    public int RemoveProjectileBuff(ItemSlot slot, string code, string? sourceModId = null)
+    {
+        if (slot.Itemstack != null)
+        {
+            ValidateProjectileStack(slot.Itemstack, nameof(slot));
+        }
+
+        return RemoveBuff(slot, code, sourceModId);
+    }
+
+    public int RemoveProjectileBuff(ItemStack? stack, string code, string? sourceModId = null)
+    {
+        if (stack != null)
+        {
+            ValidateProjectileStack(stack, nameof(stack));
+        }
+
+        return RemoveBuff(stack, code, sourceModId);
+    }
+
     public int RemoveBuff(ItemStack? stack, string code, string? sourceModId = null)
     {
         if (stack?.Attributes == null) return 0;
@@ -369,6 +418,11 @@ public sealed class WeaponBuffSystem : ModSystem
     public IReadOnlyList<WeaponBuffInstance> GetBuffs(ItemStack? stack, bool activeOnly = true)
     {
         return OrderBuffs(GetBuffsInternal(stack, activeOnly)).ToArray();
+    }
+
+    public bool IsProjectileBuffTarget(ItemStack? stack)
+    {
+        return IsProjectileStack(stack);
     }
 
     public void RegisterProvider(IWeaponBuffProvider provider)
@@ -484,11 +538,23 @@ public sealed class WeaponBuffSystem : ModSystem
 
     internal static void ModifyRangedDamage(Entity target, DamageSource damageSource, ItemStack? weaponStack, ref float damage)
     {
-        WeaponBuffDamageContext damageContext = new(target, damageSource, null, weaponStack, damage);
-        WeaponBuffQueryContext queryContext = new(weaponStack!, "ranged-damage", actor: damageSource.CauseEntity ?? damageSource.SourceEntity, target: target);
+        ModifyRangedDamage(target, damageSource, weaponStack, null, ref damage);
+    }
+
+    internal static void ModifyRangedDamage(Entity target, DamageSource damageSource, ItemStack? weaponStack, ItemStack? projectileStack, ref float damage)
+    {
+        WeaponBuffDamageContext damageContext = new(target, damageSource, null, weaponStack, damage, projectileStack);
+        Entity? actor = damageSource.CauseEntity ?? damageSource.SourceEntity;
 
         foreach (WeaponBuffInstance buff in GetActiveBuffs(weaponStack))
         {
+            WeaponBuffQueryContext queryContext = new(weaponStack!, "ranged-damage", actor: actor, target: target);
+            ApplyProvider(queryContext, buff, provider => provider.ModifyRangedDamage(damageContext, buff));
+        }
+
+        foreach (WeaponBuffInstance buff in GetActiveBuffs(projectileStack))
+        {
+            WeaponBuffQueryContext queryContext = new(projectileStack!, "projectile-ranged-damage", actor: actor, target: target);
             ApplyProvider(queryContext, buff, provider => provider.ModifyRangedDamage(damageContext, buff));
         }
 
@@ -560,6 +626,20 @@ public sealed class WeaponBuffSystem : ModSystem
     private static readonly List<IWeaponBuffProvider> _providers = [];
     private static readonly HashSet<string> _providerErrors = [];
     private ICoreAPI? _api;
+
+    private static void ValidateProjectileStack(ItemStack stack, string paramName)
+    {
+        if (!IsProjectileStack(stack))
+        {
+            string code = stack.Collectible?.Code?.ToString() ?? "unknown";
+            throw new ArgumentException($"Item stack '{code}' is not a Combat Overhaul projectile stack.", paramName);
+        }
+    }
+
+    private static bool IsProjectileStack(ItemStack? stack)
+    {
+        return stack?.Collectible?.GetCollectibleBehavior<ProjectileBehavior>(true) != null;
+    }
 
     private static WeaponBuffInstance CreateInstance(WeaponBuffDefinition definition, WeaponBuffApplyOptions options)
     {

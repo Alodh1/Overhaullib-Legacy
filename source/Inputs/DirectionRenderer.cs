@@ -58,14 +58,20 @@ public sealed class DirectionCursorRenderer : IRenderer
 
     public void Dispose()
     {
+        if (_disposed) return;
+        _disposed = true;
+
         foreach (LoadedTexture texture in _directionCursorTextures)
         {
             texture.Dispose();
         }
+
+        _directionCursorTextures.Clear();
     }
 
     private readonly List<LoadedTexture> _directionCursorTextures = new();
     private readonly Settings _settings;
     private readonly ICoreClientAPI _clientApi;
     private int _currentDirection = 0;
+    private bool _disposed = false;
 }

@@ -47,7 +47,27 @@ public sealed class FueledItemSystem : ModSystem, IRenderer
     {
         base.StartServerSide(api);
         _serverApi = api;
-        api.Event.RegisterGameTickListener(OnServerTick, 1000, 200);
+        _serverTickListener = api.Event.RegisterGameTickListener(OnServerTick, 1000, 200);
+    }
+
+    public override void Dispose()
+    {
+        if (_clientApi != null)
+        {
+            _clientApi.Event.UnregisterRenderer(this, EnumRenderStage.Before);
+            _clientApi.Event.LevelFinalize -= OnLevelFinalize;
+            _clientApi.Render.ShaderUniforms.NightVisionStrength = 0;
+        }
+
+        if (_serverApi != null && _serverTickListener != 0)
+        {
+            _serverApi.Event.UnregisterGameTickListener(_serverTickListener);
+            _serverTickListener = 0;
+        }
+
+        _playerInventoryBehavior = null;
+        _clientApi = null;
+        _serverApi = null;
     }
 
     public void OnRenderFrame(float deltaTime, EnumRenderStage stage)
@@ -72,6 +92,7 @@ public sealed class FueledItemSystem : ModSystem, IRenderer
     private ICoreClientAPI? _clientApi;
     private ICoreServerAPI? _serverApi;
     private EntityBehaviorPlayerInventory? _playerInventoryBehavior;
+    private long _serverTickListener;
     private Settings _settings = new();
     private bool _reportedSleepingStateError;
     private bool _reportedInventoryLookupError;

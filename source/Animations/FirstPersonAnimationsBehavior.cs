@@ -22,9 +22,10 @@ public sealed class FirstPersonAnimationsBehavior : EntityBehavior, IDisposable
         _api = player.Api as ICoreClientAPI ?? throw new ArgumentException("Only client side");
         _animationsManager = player.Api.ModLoader.GetModSystem<CombatOverhaulAnimationsSystem>().PlayerAnimationsManager ?? throw new Exception();
         _vanillaAnimationsManager = player.Api.ModLoader.GetModSystem<CombatOverhaulAnimationsSystem>().ClientVanillaAnimations ?? throw new Exception();
-        _settings = player.Api.ModLoader.GetModSystem<CombatOverhaulSystem>().Settings;
+        _system = player.Api.ModLoader.GetModSystem<CombatOverhaulSystem>();
+        _settings = _system.Settings;
 
-        SoundsSynchronizerClient soundsManager = player.Api.ModLoader.GetModSystem<CombatOverhaulSystem>().ClientSoundsSynchronizer ?? throw new Exception();
+        SoundsSynchronizerClient soundsManager = _system.ClientSoundsSynchronizer ?? throw new Exception();
         ParticleEffectsManager particleEffectsManager = player.Api.ModLoader.GetModSystem<CombatOverhaulAnimationsSystem>().ParticleEffectsManager ?? throw new Exception();
         _composer = new(soundsManager, particleEffectsManager, player);
 
@@ -35,6 +36,12 @@ public sealed class FirstPersonAnimationsBehavior : EntityBehavior, IDisposable
     }
 
     public override string PropertyName() => "CombatOverhaul:FirstPersonAnimations";
+
+    public override void OnEntityDespawn(EntityDespawnData despawn)
+    {
+        Dispose();
+        base.OnEntityDespawn(despawn);
+    }
 
     public override void AfterInitialized(bool onFirstSpawn)
     {
@@ -272,6 +279,7 @@ public sealed class FirstPersonAnimationsBehavior : EntityBehavior, IDisposable
     private readonly EntityPlayer _player;
     private readonly AnimationsManager _animationsManager;
     private readonly VanillaAnimationsSystemClient _vanillaAnimationsManager;
+    private readonly CombatOverhaulSystem _system;
     private PlayerItemFrame _lastFrame = PlayerItemFrame.Zero;
     private readonly List<string> _offhandCategories = new();
     private readonly List<string> _mainHandCategories = new();
@@ -280,6 +288,7 @@ public sealed class FirstPersonAnimationsBehavior : EntityBehavior, IDisposable
     private bool _mainPlayer = false;
     private bool _registeredFrameHook = false;
     private bool _registeredDisposeHook = false;
+    private bool _disposed = false;
     private bool _reportedMainPlayerActivation = false;
     private readonly Settings _settings;
     private readonly IdleAnimationsController _mainHandIdleAnimationsController;
@@ -307,6 +316,11 @@ public sealed class FirstPersonAnimationsBehavior : EntityBehavior, IDisposable
 
     private bool TryActivateMainPlayer()
     {
+        if (_disposed)
+        {
+            return false;
+        }
+
         if (_mainPlayer)
         {
             return true;
@@ -330,7 +344,7 @@ public sealed class FirstPersonAnimationsBehavior : EntityBehavior, IDisposable
 
         if (!_registeredDisposeHook)
         {
-            _player.Api.ModLoader.GetModSystem<CombatOverhaulSystem>().OnDispose += Dispose;
+            _system.OnDispose += Dispose;
             _registeredDisposeHook = true;
         }
 
@@ -624,15 +638,34 @@ public sealed class FirstPersonAnimationsBehavior : EntityBehavior, IDisposable
 
     public void Dispose()
     {
+        if (_disposed) return;
+        _disposed = true;
+
         if (_registeredFrameHook)
         {
             AnimationPatches.OnBeforeFrame -= OnBeforeFrame;
             _registeredFrameHook = false;
         }
 
+        if (_registeredDisposeHook)
+        {
+            _system.OnDispose -= Dispose;
+            _registeredDisposeHook = false;
+        }
+
+        _mainHandIdleAnimationsController.Stop();
+        _offHandIdleAnimationsController.Stop();
+        _composer.StopAll();
+        _playRequests.Clear();
+
         if (AnimationPatches.FirstPersonAnimationBehavior == this)
         {
             AnimationPatches.FirstPersonAnimationBehavior = null;
+        }
+
+        if (AnimationPatches.OwnerEntityId == _player.EntityId)
+        {
+            AnimationPatches.OwnerEntityId = 0;
         }
     }
 }

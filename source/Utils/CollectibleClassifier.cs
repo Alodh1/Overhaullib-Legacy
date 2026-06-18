@@ -25,6 +25,14 @@ public static class CollectibleClassifier
             || path.Contains("tongsmetal", StringComparison.OrdinalIgnoreCase);
     }
 
+    public static bool IsBow(ItemStack? stack) => IsBow(stack, stack?.Collectible);
+
+    public static bool IsBow(CollectibleObject? collectible) => IsBow(null, collectible);
+
+    public static bool IsCrossbow(ItemStack? stack) => IsCrossbow(stack, stack?.Collectible);
+
+    public static bool IsCrossbow(CollectibleObject? collectible) => IsCrossbow(null, collectible);
+
     public static bool IsFirearm(CollectibleObject? collectible)
     {
         if (collectible == null) return false;
@@ -38,6 +46,57 @@ public static class CollectibleClassifier
 
         string? assemblyName = collectibleType.Assembly.GetName().Name;
         return assemblyName?.Contains("Firearms", StringComparison.OrdinalIgnoreCase) == true;
+    }
+
+    private static bool IsBow(ItemStack? stack, CollectibleObject? collectible)
+    {
+        if (collectible == null) return false;
+        if (IsFirearm(collectible) || IsCrossbow(stack, collectible)) return false;
+        if (HasClassification(stack, collectible, "isBow", "bow")) return true;
+
+        Type collectibleType = collectible.GetType();
+        string typeName = collectibleType.FullName ?? "";
+        if (typeName.EndsWith(".BowItem", StringComparison.Ordinal) || typeName.EndsWith(".ItemBow", StringComparison.Ordinal))
+        {
+            return true;
+        }
+
+        return IsBowCode(collectible.Code);
+    }
+
+    private static bool IsCrossbow(ItemStack? stack, CollectibleObject? collectible)
+    {
+        if (collectible == null) return false;
+        if (HasClassification(stack, collectible, "isCrossbow", "crossbow")) return true;
+
+        Type collectibleType = collectible.GetType();
+        string typeName = collectibleType.FullName ?? "";
+        if (typeName.Contains("Crossbow", StringComparison.Ordinal))
+        {
+            return true;
+        }
+
+        string? assemblyName = collectibleType.Assembly.GetName().Name;
+        if (assemblyName?.Contains("Crossbows", StringComparison.OrdinalIgnoreCase) == true && IsCrossbowCode(collectible.Code))
+        {
+            return true;
+        }
+
+        return IsCrossbowCode(collectible.Code);
+    }
+
+    private static bool IsBowCode(AssetLocation? code)
+    {
+        string path = code?.Path ?? "";
+        return path.Equals("bow", StringComparison.OrdinalIgnoreCase)
+            || path.StartsWith("bow-", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool IsCrossbowCode(AssetLocation? code)
+    {
+        string path = code?.Path ?? "";
+        return path.Equals("crossbow", StringComparison.OrdinalIgnoreCase)
+            || path.StartsWith("crossbow-", StringComparison.OrdinalIgnoreCase);
     }
 
     public static bool IsVanillaItemShield(Item? item)

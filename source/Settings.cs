@@ -29,6 +29,8 @@ public sealed class Settings
 
     public bool VanillaActionsWhileBlocking { get; set; } = true;
 
+    public bool VanillaArmorGridRecipes { get; set; } = true;
+
     public float CollisionRadius { get; set; } = 16f;
 
     public float DefaultColliderPenetrationResistance { get; set; } = 5f;

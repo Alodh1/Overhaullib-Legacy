@@ -538,12 +538,14 @@ public sealed class ShapeElementCollider
         Matrixd elementMatrix = new(elementMatrixValues);
         if (element.ParentElement != null) GetElementTransformMatrix(elementMatrix, element.ParentElement);
 
+        double[] rotationOrigin = GetRotationOrigin(element);
+
         elementMatrix
-            .Translate(element.RotationOrigin[0], element.RotationOrigin[1], element.RotationOrigin[2])
+            .Translate(rotationOrigin[0], rotationOrigin[1], rotationOrigin[2])
             .RotateX((float)element.RotationX * GameMath.DEG2RAD)
             .RotateY((float)element.RotationY * GameMath.DEG2RAD)
             .RotateZ((float)element.RotationZ * GameMath.DEG2RAD)
-            .Translate(0f - element.RotationOrigin[0], 0f - element.RotationOrigin[1], 0f - element.RotationOrigin[2]);
+            .Translate(0f - rotationOrigin[0], 0f - rotationOrigin[1], 0f - rotationOrigin[2]);
 
         for (int vertex = 0; vertex < VertexCount; vertex++)
         {
@@ -560,18 +562,29 @@ public sealed class ShapeElementCollider
             GetElementTransformMatrix(matrix, element.ParentElement);
         }
 
-        if (element.RotationOrigin == null)
-        {
-            element.RotationOrigin = new double[3] { 0, 0, 0 };
-        }
+        double[] rotationOrigin = GetRotationOrigin(element);
 
         matrix
-            .Translate(element.RotationOrigin[0], element.RotationOrigin[1], element.RotationOrigin[2])
+            .Translate(rotationOrigin[0], rotationOrigin[1], rotationOrigin[2])
             .RotateX((float)element.RotationX * GameMath.DEG2RAD)
             .RotateY((float)element.RotationY * GameMath.DEG2RAD)
             .RotateZ((float)element.RotationZ * GameMath.DEG2RAD)
-            .Translate(0f - element.RotationOrigin[0], 0f - element.RotationOrigin[1], 0f - element.RotationOrigin[2])
-            .Translate(element.From[0], element.From[1], element.From[2]);
+            .Translate(0f - rotationOrigin[0], 0f - rotationOrigin[1], 0f - rotationOrigin[2]);
+
+        if (HasVector3(element.From))
+        {
+            matrix.Translate(element.From[0], element.From[1], element.From[2]);
+        }
+    }
+
+    private static double[] GetRotationOrigin(ShapeElement element)
+    {
+        return HasVector3(element.RotationOrigin) ? element.RotationOrigin : [0, 0, 0];
+    }
+
+    private static bool HasVector3(double[]? vector)
+    {
+        return vector != null && vector.Length >= 3;
     }
     private static int? GetIndex(int jointId, int matrixElementIndex)
     {

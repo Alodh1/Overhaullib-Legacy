@@ -2560,7 +2560,7 @@ public class MeleeWeaponClient : IClientWeaponLogic, IHasDynamicMoveAnimations, 
 
         // A stance can contain helper/secondary damage entries. Tooltips should show
         // the practical attack value, not internal min-max ranges such as 0-8.
-        string damageString = $"{maxDamage:F0}";
+        string damageString = $"{maxDamage:F1}";
         string tierString = $"{maxTier:F0}";
 
         return Lang.Get(descriptionLangCode, damageString, tierString, damageType) + (armorPiercingTier > 0 ? "\n" + Lang.Get("combatoverhaul:iteminfo-melee-weapon-armorpiercing", armorPiercingTier) : "");

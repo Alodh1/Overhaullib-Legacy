@@ -274,6 +274,9 @@ public sealed class ClientAimingSystem : IDisposable
 
     public void Dispose()
     {
+        if (_disposed) return;
+        _disposed = true;
+
         AimingPatches.UpdateCameraYawPitch -= UpdateAimPoint;
         AimingPatches.AfterUpdateCameraYawPitch -= RefreshAimAfterCameraUpdate;
     }
@@ -319,6 +322,7 @@ public sealed class ClientAimingSystem : IDisposable
     private float _currentFovRatio;
     private float _difficultyMultiplier = 1;
     private const float _noCursorDifficultyMultiplier = 0.75f;
+    private bool _disposed = false;
 
 
     private void ResetAimOffset()

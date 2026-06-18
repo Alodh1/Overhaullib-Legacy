@@ -16,6 +16,7 @@ public class SlotConfigJson
     public string[][] CanHoldItemTagsCondition { get; set; } = [];
     public string[][] CanHoldBlockTagsCondition { get; set; } = [];
     public string[] CanHoldWildcards { get; set; } = [];
+    public string[] CanHoldItemAttributes { get; set; } = [];
     public string? SlotColor { get; set; } = null;
     public string? SlotsIcon { get; set; } = null;
     public string SlotBackpackCategory { get; set; } = "";
@@ -51,6 +52,7 @@ public class SlotConfigJson
         return new SlotConfig(CanHoldItemTagsCondition, CanHoldBlockTagsCondition)
         {
             CanHoldWildcards = CanHoldWildcards,
+            CanHoldItemAttributes = CanHoldItemAttributes,
             SlotColor = SlotColor,
             SlotsIcon = SlotsIcon,
             BackpackCategoryCode = SlotBackpackCategory,
@@ -76,6 +78,7 @@ public class SlotConfig : IHasSlotBackpackCategory
     public ItemTagRule[] CanHoldItemTags { get; set; } = [];
     public BlockTagRule[] CanHoldBlockTags { get; set; } = [];
     public string[] CanHoldWildcards { get; set; } = [];
+    public string[] CanHoldItemAttributes { get; set; } = [];
     public string? SlotColor { get; set; } = null;
     public string? SlotsIcon { get; set; } = null;
     public string BackpackCategoryCode { get; set; } = "";
@@ -122,5 +125,12 @@ public class SlotConfig : IHasSlotBackpackCategory
 
         CanHoldItemTagsNames = [];
         CanHoldBlockTagsNames = [];
+    }
+
+    public bool MatchesItemAttributes(ItemStack? stack)
+    {
+        if (CanHoldItemAttributes.Length == 0 || stack?.Item?.Attributes == null) return false;
+
+        return CanHoldItemAttributes.Any(attribute => stack.Item.Attributes?[attribute].AsBool(false) == true);
     }
 }

@@ -135,7 +135,6 @@ internal static class HarmonyPatches
         }
 
         harmony.Patch(method, prefix: new HarmonyMethod(AccessTools.Method(typeof(HarmonyPatches), nameof(VanillaArmorStand_OnInteract_Prefix))));
-        api.Logger.Notification("[OverhaullibLegacyCompat] Patched vanilla armor stand interaction fallback for CO inventory behavior.");
     }
 
     private static void TryUnpatchVanillaArmorStandInteract(Harmony harmony, string harmonyId)
@@ -213,7 +212,6 @@ internal static class HarmonyPatches
             harmony.Patch(canHold, prefix: new HarmonyMethod(AccessTools.Method(typeof(HarmonyPatches), nameof(OffhandDaggerSlot_CanHold_Prefix))));
         }
 
-        api.Logger.Notification($"[OverhaullibLegacyCompat] Patched base ItemSlot validation for {_offhandSlotType.FullName} to allow daggers in offhand.");
     }
 
     private static void TryUnpatchOffhandDaggerSlot(Harmony harmony, string harmonyId)
@@ -461,7 +459,6 @@ internal static class HarmonyPatches
         MethodInfo? method = type?.GetMethod("OnGameTick", AccessTools.all, null, new[] { typeof(float) }, null);
         if (method == null)
         {
-            api.Logger.Warning("[OverhaullibLegacyCompat] Could not patch ModSystemStopRaiseShieldAnim.OnGameTick(float).");
             return;
         }
 

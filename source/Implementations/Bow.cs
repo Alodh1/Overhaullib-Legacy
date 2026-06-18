@@ -554,7 +554,7 @@ public class BowServer : RangeWeaponServer
             GravityFactorMultiplier = ArcheringCompat.GetGravityFactorMultiplier(slot.Itemstack.Item)
         };
 
-        ProjectileSystem.Spawn(packet.ProjectileId[0], stats, spawnStats, arrowSlot.TakeOut(1), slot.Itemstack, shooter);
+        ProjectileSystem.SpawnFromWeaponSlot(packet.ProjectileId[0], stats, spawnStats, arrowSlot.TakeOut(1), slot, shooter);
 
         slot.Itemstack.Item.DamageItem(player.Entity.World, player.Entity, slot, 1 + stats.AdditionalDurabilityCost);
 

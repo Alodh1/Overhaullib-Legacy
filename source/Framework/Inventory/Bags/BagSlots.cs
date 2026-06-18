@@ -48,7 +48,9 @@ public class ItemSlotBagContentWithWildcardMatch : ItemSlotBagContent, IHasSlotB
                 matchWithTags = BlockTagRule.ContainsAllFromAtLeastOne(sourceSlot.Itemstack.Block.Tags, Config.CanHoldBlockTags);
             }
 
-            return matchWithoutDomain || matchWithDomain || matchWithTags;
+            bool matchWithAttributes = Config.MatchesItemAttributes(sourceSlot.Itemstack);
+
+            return matchWithoutDomain || matchWithDomain || matchWithTags || matchWithAttributes;
         }
 
         return false;

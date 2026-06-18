@@ -280,6 +280,8 @@ public class ArmorInventory : InventoryCharacter
                 LoggerUtil.Error(Api, this, $"Error while calling 'IGearSlotModifiedListener.OnSlotModified' on slot modified for '{slot?.Itemstack?.Collectible?.Code}':\n{exception}");
             }
         }
+
+        RefreshWearableStats();
     }
     public override object ActivateSlot(int slotId, ItemSlot sourceSlot, ref ItemStackMoveOperation op)
     {
@@ -720,5 +722,11 @@ public class ArmorInventory : InventoryCharacter
 
             _clearedArmorSlots = true;
         }
+    }
+
+    private void RefreshWearableStats()
+    {
+        EntityPlayer? player = Owner as EntityPlayer ?? Player?.Entity;
+        player?.GetBehavior<WearableStatsBehavior>()?.RefreshStatsNow();
     }
 }

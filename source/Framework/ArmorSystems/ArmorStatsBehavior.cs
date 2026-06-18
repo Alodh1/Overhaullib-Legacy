@@ -17,7 +17,8 @@ public sealed class WearableStatsBehavior : EntityBehavior, IDisposable
     {
         _player = entity as EntityPlayer ?? throw new InvalidDataException("This is player behavior");
 
-        _player.Api.ModLoader.GetModSystem<CombatOverhaulSystem>().OnDispose += Dispose;
+        _system = _player.Api.ModLoader.GetModSystem<CombatOverhaulSystem>();
+        _system.OnDispose += Dispose;
 
         if (_player.Api.Side == EnumAppSide.Client)
         {
@@ -33,31 +34,64 @@ public sealed class WearableStatsBehavior : EntityBehavior, IDisposable
     public override string PropertyName() => "CombatOverhaul:WearableStats";
     public Dictionary<string, float> Stats { get; } = new();
 
+    public override void AfterInitialized(bool onFirstSpawn)
+    {
+        TryInitialize();
+    }
+
+    public override void OnEntityDespawn(EntityDespawnData despawn)
+    {
+        DisposeCore(clearExisting: false);
+        base.OnEntityDespawn(despawn);
+    }
+
     public override void OnGameTick(float deltaTime)
     {
-        if (_initialized) return;
+        TryInitialize();
+    }
+
+    public void RefreshStatsNow()
+    {
+        if (_disposed) return;
+
+        TryInitialize();
+        UpdateStatsValuesConditional(true, true, true);
+    }
+
+    private bool TryInitialize()
+    {
+        if (_initialized || _disposed) return _initialized;
 
         InventoryBase? inventory = GetGearInventory(_player);
 
-        if (inventory == null) return;
+        if (inventory == null) return false;
 
         if (inventory is ArmorInventory armorInventory)
         {
             armorInventory.OnSlotModified += UpdateStatsValuesConditional;
+            _subscribedInventory = armorInventory;
+            _subscribedArmorInventory = true;
         }
         else
         {
             inventory.SlotModified += UpdateStatsValues;
+            _subscribedInventory = inventory;
+            _subscribedArmorInventory = false;
         }
 
         UpdateStatsValues(0);
 
         _initialized = true;
+        return true;
     }
 
     private readonly EntityPlayer _player;
+    private readonly CombatOverhaulSystem _system;
     private const string _statsCategory = "CombatOverhaul:Armor";
     private bool _initialized = false;
+    private bool _disposed = false;
+    private InventoryBase? _subscribedInventory;
+    private bool _subscribedArmorInventory;
     private static readonly Dictionary<string, WearableStatsBehavior> _existingBehaviors = [];
 
     private static InventoryBase? GetGearInventory(Entity entity)
@@ -192,20 +226,46 @@ public sealed class WearableStatsBehavior : EntityBehavior, IDisposable
 
     private void PartialDispose()
     {
-        InventoryBase? inventory = GetGearInventory(_player);
-        if (inventory != null)
-        {
-            inventory.SlotModified -= UpdateStatsValues;
-        }
+        DisposeCore(clearExisting: false);
     }
 
     public void Dispose()
     {
-        InventoryBase? inventory = GetGearInventory(_player);
-        if (inventory != null)
+        DisposeCore(clearExisting: true);
+    }
+
+    private void DisposeCore(bool clearExisting)
+    {
+        if (_disposed) return;
+        _disposed = true;
+
+        UnsubscribeInventory();
+        _system.OnDispose -= Dispose;
+
+        if (clearExisting)
+        {
+            _existingBehaviors.Clear();
+        }
+        else if (_existingBehaviors.TryGetValue(_player.PlayerUID, out WearableStatsBehavior? behavior) && behavior == this)
+        {
+            _existingBehaviors.Remove(_player.PlayerUID);
+        }
+    }
+
+    private void UnsubscribeInventory()
+    {
+        InventoryBase? inventory = _subscribedInventory ?? GetGearInventory(_player);
+        if (inventory == null) return;
+
+        if (_subscribedArmorInventory && inventory is ArmorInventory armorInventory)
+        {
+            armorInventory.OnSlotModified -= UpdateStatsValuesConditional;
+        }
+        else
         {
             inventory.SlotModified -= UpdateStatsValues;
         }
-        _existingBehaviors.Clear();
+
+        _subscribedInventory = null;
     }
 }

@@ -18,14 +18,15 @@ public sealed class ThirdPersonAnimationsBehavior : EntityBehavior, IDisposable
         _api = player.Api as ICoreClientAPI;
         _animationsManager = player.Api.ModLoader.GetModSystem<CombatOverhaulAnimationsSystem>().PlayerAnimationsManager;
         _animationSystem = player.Api.ModLoader.GetModSystem<CombatOverhaulAnimationsSystem>().ClientTpAnimationSystem ?? throw new Exception();
-        _settings = player.Api.ModLoader.GetModSystem<CombatOverhaulSystem>().Settings;
+        _system = player.Api.ModLoader.GetModSystem<CombatOverhaulSystem>();
+        _settings = _system.Settings;
 
         _composer = new(null, null, player);
 
         AnimationPatches.OnBeforeFrame += OnBeforeFrame;
         AnimationPatches.AnimationBehaviors[player.EntityId] = this;
         AnimationPatches.ActiveEntities.Add(player.EntityId);
-        player.Api.ModLoader.GetModSystem<CombatOverhaulSystem>().OnDispose += Dispose;
+        _system.OnDispose += Dispose;
 
         _mainPlayer = (entity as EntityPlayer)?.PlayerUID == _api?.Settings.String["playeruid"];
 
@@ -88,26 +89,8 @@ public sealed class ThirdPersonAnimationsBehavior : EntityBehavior, IDisposable
     }
     public override void OnEntityDespawn(EntityDespawnData despawn)
     {
-        switch (despawn.Reason)
-        {
-            case EnumDespawnReason.Death:
-                break;
-            case EnumDespawnReason.Combusted:
-                break;
-            case EnumDespawnReason.OutOfRange:
-                break;
-            case EnumDespawnReason.PickedUp:
-                break;
-            case EnumDespawnReason.Unload:
-                break;
-            case EnumDespawnReason.Disconnect:
-                PartialDispose();
-                break;
-            case EnumDespawnReason.Expire:
-                break;
-            case EnumDespawnReason.Removed:
-                break;
-        }
+        PartialDispose();
+        base.OnEntityDespawn(despawn);
     }
 
     public PlayerItemFrame? FrameOverride { get; set; } = null;
@@ -221,6 +204,7 @@ public sealed class ThirdPersonAnimationsBehavior : EntityBehavior, IDisposable
     private readonly EntityPlayer _player;
     private readonly AnimationsManager? _animationsManager;
     private readonly AnimationSystemClient _animationSystem;
+    private readonly CombatOverhaulSystem _system;
 
     private PlayerItemFrame _lastFrame = PlayerItemFrame.Zero;
     private readonly List<string> _offhandCategories = new();
@@ -471,6 +455,8 @@ public sealed class ThirdPersonAnimationsBehavior : EntityBehavior, IDisposable
     {
         if (_api?.IsGamePaused == true || !_mainPlayer) return;
 
+        StopIdleTimer(mainHand);
+
         long timer = _api?.World.RegisterCallback(_ => PlayIdleAnimation(request, mainHand), (int)_readyTimeout.TotalMilliseconds) ?? -1;
         if (mainHand)
         {
@@ -532,34 +518,40 @@ public sealed class ThirdPersonAnimationsBehavior : EntityBehavior, IDisposable
 
     private void PartialDispose()
     {
-        if (!_disposed)
-        {
-            _disposed = true;
-            _offhandCategories.Clear();
-            _mainHandCategories.Clear();
-            AnimationPatches.OnBeforeFrame -= OnBeforeFrame;
-            if (AnimationPatches.AnimationBehaviors[_player.EntityId] == this)
-            {
-                AnimationPatches.AnimationBehaviors.Remove(_player.EntityId);
-                AnimationPatches.ActiveEntities.Remove(_player.EntityId);
-            }
-            _existingBehaviors.Remove(_player.PlayerUID);
-        }
+        DisposeCore(clearExisting: false);
     }
     public void Dispose()
     {
-        if (!_disposed)
+        DisposeCore(clearExisting: true);
+    }
+
+    private void DisposeCore(bool clearExisting)
+    {
+        if (_disposed) return;
+        _disposed = true;
+
+        StopIdleTimer(mainHand: true);
+        StopIdleTimer(mainHand: false);
+        _composer.StopAll();
+        _offhandCategories.Clear();
+        _mainHandCategories.Clear();
+        AnimationPatches.OnBeforeFrame -= OnBeforeFrame;
+
+        if (AnimationPatches.AnimationBehaviors.TryGetValue(_player.EntityId, out ThirdPersonAnimationsBehavior? behavior) && behavior == this)
         {
-            _disposed = true;
-            _offhandCategories.Clear();
-            _mainHandCategories.Clear();
-            AnimationPatches.OnBeforeFrame -= OnBeforeFrame;
-            if (AnimationPatches.AnimationBehaviors[_player.EntityId] == this)
-            {
-                AnimationPatches.AnimationBehaviors.Remove(_player.EntityId);
-                AnimationPatches.ActiveEntities.Remove(_player.EntityId);
-            }
+            AnimationPatches.AnimationBehaviors.Remove(_player.EntityId);
+            AnimationPatches.ActiveEntities.Remove(_player.EntityId);
         }
-        _existingBehaviors.Clear();
+
+        _system.OnDispose -= Dispose;
+
+        if (clearExisting)
+        {
+            _existingBehaviors.Clear();
+        }
+        else if (_existingBehaviors.TryGetValue(_player.PlayerUID, out ThirdPersonAnimationsBehavior? existing) && existing == this)
+        {
+            _existingBehaviors.Remove(_player.PlayerUID);
+        }
     }
 }

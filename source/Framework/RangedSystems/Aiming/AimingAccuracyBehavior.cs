@@ -26,6 +26,7 @@ public sealed class AimingAccuracyBehavior : EntityBehavior
 
         if (!_mainPlayer) return;
 
+        _clientApi = clientApi;
         clientApi.Input.InWorldAction += InWorldAction;
         _modifiers.Add(new BaseAimingAccuracy(_player, _clientAimingSystem));
         _modifiers.Add(new MovingAimingAccuracy(_player, _clientAimingSystem));
@@ -75,6 +76,12 @@ public sealed class AimingAccuracyBehavior : EntityBehavior
     }
     public override string PropertyName() => "CombatOverhaul:aimingAccuracy";
 
+    public override void OnEntityDespawn(EntityDespawnData despawn)
+    {
+        Dispose();
+        base.OnEntityDespawn(despawn);
+    }
+
     public void StartAim(AimingStats stats)
     {
         _stats = stats;
@@ -102,13 +109,31 @@ public sealed class AimingAccuracyBehavior : EntityBehavior
         }
     }
 
+    private void Dispose()
+    {
+        if (_disposed) return;
+        _disposed = true;
+
+        if (_mainPlayer && _clientApi != null)
+        {
+            _clientApi.Input.InWorldAction -= InWorldAction;
+        }
+
+        if (_isAiming)
+        {
+            StopAim();
+        }
+    }
+
     private readonly List<AccuracyModifier> _modifiers = new();
     private readonly EntityAgent _player;
     private readonly bool _mainPlayer = false;
-    private ClientAimingSystem _clientAimingSystem;
+    private readonly ClientAimingSystem _clientAimingSystem;
+    private ICoreClientAPI? _clientApi;
 
     private AimingStats _stats = new();
     private bool _isAiming = false;
+    private bool _disposed = false;
 
     private void InWorldAction(EnumEntityAction action, bool on, ref EnumHandling handled)
     {

@@ -11,7 +11,10 @@ namespace CombatOverhaul;
 
 public class TextureFromAttributes : CollectibleBehavior, IContainedMeshSource
 {
-    private Dictionary<int, MultiTextureMeshRef> Meshrefs => ObjectCacheUtil.GetOrCreate(_api, "CombatOverhaul:TextureFromAttributesMeshrefs", () => new Dictionary<int, MultiTextureMeshRef>());
+    private const string MeshrefsCacheKey = "CombatOverhaul:TextureFromAttributesMeshrefs";
+    private const string MeshUploadFailedKey = "CombatOverhaul:TextureFromAttributesMeshUploadFailed";
+
+    private Dictionary<int, MultiTextureMeshRef> Meshrefs => ObjectCacheUtil.GetOrCreate(_api, MeshrefsCacheKey, () => new Dictionary<int, MultiTextureMeshRef>());
     private ICoreClientAPI? _clientAPI;
     private ICoreAPI? _api;
     private readonly Item _item;
@@ -36,6 +39,12 @@ public class TextureFromAttributes : CollectibleBehavior, IContainedMeshSource
         AddAllTypesToCreativeInventory();
     }
 
+    public override void OnUnloaded(ICoreAPI api)
+    {
+        DisposeMeshrefs(api);
+        base.OnUnloaded(api);
+    }
+
     public override void Initialize(JsonObject properties)
     {
         base.Initialize(properties);
@@ -49,18 +58,17 @@ public class TextureFromAttributes : CollectibleBehavior, IContainedMeshSource
 
     public override void OnBeforeRender(ICoreClientAPI capi, ItemStack itemstack, EnumItemRenderTarget target, ref ItemRenderInfo renderinfo)
     {
+        if (itemstack.TempAttributes.GetInt(MeshUploadFailedKey) != 0) return;
+
         int meshrefId = itemstack.TempAttributes.GetInt("meshRefId");
         if (meshrefId == 0 || !Meshrefs.TryGetValue(meshrefId, out renderinfo.ModelRef))
         {
             int id = Meshrefs.Count + 1;
-            MultiTextureMeshRef modelref = capi.Render.UploadMultiTextureMesh(GenMesh(itemstack, capi.ItemTextureAtlas));
-            renderinfo.ModelRef = Meshrefs[id] = modelref;
-
-            itemstack.TempAttributes.SetInt("meshRefId", id);
+            TryUploadMeshRef(capi, itemstack, GenMesh(itemstack, capi.ItemTextureAtlas), id, ref renderinfo);
         }
     }
 
-    public MeshData GenMesh(ItemStack itemstack, ITextureAtlasAPI targetAtlas)
+    public MeshData? GenMesh(ItemStack itemstack, ITextureAtlasAPI targetAtlas)
     {
         ContainedTextureSource textureSource = new(_api as ICoreClientAPI, targetAtlas, new Dictionary<string, AssetLocation>(), $"For render in '{_item.Code}'");
 
@@ -68,14 +76,14 @@ public class TextureFromAttributes : CollectibleBehavior, IContainedMeshSource
 
         string? textureName = itemstack.Attributes.GetString(_textureAttribute);
 
-        if (_clientAPI == null) return new MeshData();
+        if (_clientAPI == null) return null;
         if (textureName == null) textureName = "";
 
         textureSource.Textures[_textureCode] = new AssetLocation(_defaultTexture);
 
         Shape? shape = _clientAPI.TesselatorManager.GetCachedShape(_item.Shape.Base);
 
-        if (shape == null) return new MeshData();
+        if (shape == null) return null;
 
         foreach ((string textureCode, AssetLocation textureLocation) in shape.Textures)
         {
@@ -94,18 +102,25 @@ public class TextureFromAttributes : CollectibleBehavior, IContainedMeshSource
             textureSource.Textures[_textureCode] = new AssetLocation(textureName + ".png");
         }
 
-        _clientAPI.Tesselator.TesselateItem(_item, out MeshData mesh, textureSource);
-
-        return mesh;
+        try
+        {
+            _clientAPI.Tesselator.TesselateItem(_item, out MeshData mesh, textureSource);
+            return mesh;
+        }
+        catch (Exception exception)
+        {
+            LoggerUtil.Warn(_api, this, $"Error on tesselating shape for '{itemstack.Collectible?.Code}':\n{exception}");
+            return null;
+        }
     }
 
-    public MeshData GenMesh(ItemStack itemstack, ITextureAtlasAPI targetAtlas, BlockPos atBlockPos)
+    public MeshData? GenMesh(ItemStack itemstack, ITextureAtlasAPI targetAtlas, BlockPos atBlockPos)
     {
         return GenMesh(itemstack, targetAtlas);
     }
     MeshData IContainedMeshSource.GenMesh(ItemSlot inSlot, ITextureAtlasAPI targetAtlas, BlockPos atBlockPos)
     {
-        return GenMesh(inSlot.Itemstack, targetAtlas, atBlockPos);
+        return GenMesh(inSlot.Itemstack, targetAtlas, atBlockPos) ?? new MeshData();
     }
 
     public string GetMeshCacheKey(ItemStack itemstack)
@@ -157,6 +172,43 @@ public class TextureFromAttributes : CollectibleBehavior, IContainedMeshSource
 
         return stackJson;
     }
+
+    private bool TryUploadMeshRef(ICoreClientAPI capi, ItemStack itemstack, MeshData? mesh, int id, ref ItemRenderInfo renderinfo)
+    {
+        if (mesh == null)
+        {
+            itemstack.TempAttributes.SetInt(MeshUploadFailedKey, 1);
+            LoggerUtil.Warn(_api, this, $"Skipping texture-attributed render for '{itemstack.Collectible?.Code}': generated mesh was null.");
+            return false;
+        }
+
+        try
+        {
+            MultiTextureMeshRef modelref = capi.Render.UploadMultiTextureMesh(mesh);
+            renderinfo.ModelRef = Meshrefs[id] = modelref;
+            itemstack.TempAttributes.SetInt("meshRefId", id);
+            return true;
+        }
+        catch (Exception exception)
+        {
+            itemstack.TempAttributes.SetInt(MeshUploadFailedKey, 1);
+            LoggerUtil.Warn(_api, this, $"Error uploading texture-attributed mesh for '{itemstack.Collectible?.Code}':\n{exception}");
+            return false;
+        }
+    }
+
+    private static void DisposeMeshrefs(ICoreAPI api)
+    {
+        if (!api.ObjectCache.TryGetValue(MeshrefsCacheKey, out object? value) || value is not Dictionary<int, MultiTextureMeshRef> meshrefs) return;
+
+        foreach (MultiTextureMeshRef meshRef in meshrefs.Values)
+        {
+            meshRef.Dispose();
+        }
+
+        meshrefs.Clear();
+        ObjectCacheUtil.Delete(api, MeshrefsCacheKey);
+    }
 }
 
 
@@ -177,7 +229,10 @@ public class TexturesFromAttributesProperties
 
 public class TexturesFromAttributes : CollectibleBehavior, IContainedMeshSource
 {
-    private Dictionary<int, MultiTextureMeshRef> Meshrefs => ObjectCacheUtil.GetOrCreate(_api, "CombatOverhaul:TexturesFromAttributesMeshrefs", () => new Dictionary<int, MultiTextureMeshRef>());
+    private const string MeshrefsCacheKey = "CombatOverhaul:TexturesFromAttributesMeshrefs";
+    private const string MeshUploadFailedKey = "CombatOverhaul:TexturesFromAttributesMeshUploadFailed";
+
+    private Dictionary<int, MultiTextureMeshRef> Meshrefs => ObjectCacheUtil.GetOrCreate(_api, MeshrefsCacheKey, () => new Dictionary<int, MultiTextureMeshRef>());
     private ICoreClientAPI? _clientAPI;
     private ICoreAPI? _api;
     private readonly Item _item;
@@ -201,15 +256,7 @@ public class TexturesFromAttributes : CollectibleBehavior, IContainedMeshSource
 
     public override void OnUnloaded(ICoreAPI api)
     {
-        if (api.ObjectCache.ContainsKey("TextureFromAttributesMeshrefs") && Meshrefs.Count > 0)
-        {
-            foreach ((int _, MultiTextureMeshRef meshRef) in Meshrefs)
-            {
-                meshRef.Dispose();
-            }
-
-            ObjectCacheUtil.Delete(api, "TextureFromAttributesMeshrefs");
-        }
+        DisposeMeshrefs(api);
         base.OnUnloaded(api);
     }
 
@@ -222,29 +269,27 @@ public class TexturesFromAttributes : CollectibleBehavior, IContainedMeshSource
 
     public override void OnBeforeRender(ICoreClientAPI capi, ItemStack itemstack, EnumItemRenderTarget target, ref ItemRenderInfo renderinfo)
     {
+        if (itemstack.TempAttributes.GetInt(MeshUploadFailedKey) != 0) return;
+
         int meshrefId = itemstack.TempAttributes.GetInt("meshRefId");
         if (meshrefId == 0 || !Meshrefs.TryGetValue(meshrefId, out renderinfo.ModelRef))
         {
             int id = Meshrefs.Count + 1;
-            MultiTextureMeshRef modelref = capi.Render.UploadMultiTextureMesh(GenMesh(itemstack, capi.ItemTextureAtlas));
-            renderinfo.ModelRef = Meshrefs[id] = modelref;
-
-            itemstack.TempAttributes.SetInt("meshRefId", id);
+            TryUploadMeshRef(capi, itemstack, GenMesh(itemstack, capi.ItemTextureAtlas), id, ref renderinfo);
         }
     }
 
     public MultiTextureMeshRef GetMeshRef(ICoreClientAPI capi, ItemStack itemstack, EnumItemRenderTarget target, ref ItemRenderInfo renderinfo, Shape shape)
     {
+        if (itemstack.TempAttributes.GetInt(MeshUploadFailedKey) != 0) return renderinfo.ModelRef!;
+
         int meshrefId = itemstack.TempAttributes.GetInt("meshRefId");
         if (meshrefId == 0 || !Meshrefs.TryGetValue(meshrefId, out renderinfo.ModelRef))
         {
             int id = Meshrefs.Count + 1;
-            MultiTextureMeshRef modelref = capi.Render.UploadMultiTextureMesh(GenMesh(itemstack, capi.ItemTextureAtlas, shape));
-            renderinfo.ModelRef = Meshrefs[id] = modelref;
-
-            itemstack.TempAttributes.SetInt("meshRefId", id);
+            TryUploadMeshRef(capi, itemstack, GenMesh(itemstack, capi.ItemTextureAtlas, shape), id, ref renderinfo);
         }
-        return renderinfo.ModelRef;
+        return renderinfo.ModelRef!;
     }
 
     public MeshData? GenMesh(ItemStack itemstack, ITextureAtlasAPI targetAtlas, Shape? overrideShape = null)
@@ -382,5 +427,42 @@ public class TexturesFromAttributes : CollectibleBehavior, IContainedMeshSource
         stackJson.Resolve(_api?.World, "textures type");
 
         return stackJson;
+    }
+
+    private bool TryUploadMeshRef(ICoreClientAPI capi, ItemStack itemstack, MeshData? mesh, int id, ref ItemRenderInfo renderinfo)
+    {
+        if (mesh == null)
+        {
+            itemstack.TempAttributes.SetInt(MeshUploadFailedKey, 1);
+            LoggerUtil.Warn(_api, this, $"Skipping texture-attributed render for '{itemstack.Collectible?.Code}': generated mesh was null.");
+            return false;
+        }
+
+        try
+        {
+            MultiTextureMeshRef modelref = capi.Render.UploadMultiTextureMesh(mesh);
+            renderinfo.ModelRef = Meshrefs[id] = modelref;
+            itemstack.TempAttributes.SetInt("meshRefId", id);
+            return true;
+        }
+        catch (Exception exception)
+        {
+            itemstack.TempAttributes.SetInt(MeshUploadFailedKey, 1);
+            LoggerUtil.Warn(_api, this, $"Error uploading texture-attributed mesh for '{itemstack.Collectible?.Code}':\n{exception}");
+            return false;
+        }
+    }
+
+    private static void DisposeMeshrefs(ICoreAPI api)
+    {
+        if (!api.ObjectCache.TryGetValue(MeshrefsCacheKey, out object? value) || value is not Dictionary<int, MultiTextureMeshRef> meshrefs) return;
+
+        foreach (MultiTextureMeshRef meshRef in meshrefs.Values)
+        {
+            meshRef.Dispose();
+        }
+
+        meshrefs.Clear();
+        ObjectCacheUtil.Delete(api, MeshrefsCacheKey);
     }
 }

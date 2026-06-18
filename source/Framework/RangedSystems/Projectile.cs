@@ -20,12 +20,13 @@ namespace CombatOverhaul.RangedSystems;
 
 public sealed class ProjectileServer
 {
-    public ProjectileServer(ProjectileEntity projectile, ProjectileStats projectileStats, ProjectileSpawnStats spawnStats, ICoreAPI api, Action<Guid> clearCallback, ItemStack projectileStack)
+    public ProjectileServer(ProjectileEntity projectile, ProjectileStats projectileStats, ProjectileSpawnStats spawnStats, ICoreAPI api, Action<Guid> clearCallback, ItemStack projectileStack, ItemSlot? weaponSlot = null)
     {
         _stats = projectileStats;
         _spawnStats = spawnStats;
         _api = api;
         _shooter = _api.World.GetEntityById(spawnStats.ProducerEntityId);
+        _weaponSlot = weaponSlot;
 
         _system = _api.ModLoader.GetModSystem<CombatOverhaulSystem>().ServerProjectileSystem ?? throw new Exception();
         _settings = _api.ModLoader.GetModSystem<CombatOverhaulSystem>().Settings;
@@ -98,6 +99,7 @@ public sealed class ProjectileServer
     private readonly ICoreAPI _api;
     private readonly ProjectileSystemServer _system;
     private readonly Settings _settings;
+    private readonly ItemSlot? _weaponSlot;
 
     private void DealCollisionDamage(Entity receiver, Vector3d collisionPoint, string collider, double relativeSpeed)
     {
@@ -148,12 +150,15 @@ public sealed class ProjectileServer
             IgnoreInvFrames = _entity.IgnoreInvFrames,
         };
 
-        _system.OnDealDamage(target, damageSource, _entity.WeaponStack, ref damage);
+        _system.OnDealDamage(target, damageSource, _entity.WeaponStack, _entity.ProjectileStack, ref damage);
 
         bool damageReceived = target.ReceiveDamage(damageSource, damage);
         if (damageReceived)
         {
-            WeaponBuffSystem.ConsumeInternal(_entity.WeaponStack, WeaponBuffConsumptionTrigger.RangedHit);
+            if (WeaponBuffSystem.ConsumeInternal(_entity.WeaponStack, WeaponBuffConsumptionTrigger.RangedHit) > 0)
+            {
+                _weaponSlot?.MarkDirty();
+            }
             WeaponBuffSystem.ConsumeInternal(_entity.ProjectileStack, WeaponBuffConsumptionTrigger.ProjectileHit);
         }
 
@@ -478,6 +483,7 @@ public class ProjectileBehavior : CollectibleBehavior
     public ProjectileStats GetStats(ItemStack stack)
     {
         ItemStackProjectileStats stackStats = ItemStackProjectileStats.FromItemStack(stack);
+        ProjectileStats stats = Stats.Clone();
 
         if (Stats.DamageStatsByType != null && Stats.DamageStatsByType.Count > 0 && stack.Item?.Code != null)
         {
@@ -486,13 +492,16 @@ public class ProjectileBehavior : CollectibleBehavior
             {
                 if (WildcardUtil.Match(entry.Key, itemCode))
                 {
-                    Stats.DamageStats = entry.Value;
+                    stats.DamageStats = new()
+                    {
+                        Damage = entry.Value.Damage,
+                        DamageType = entry.Value.DamageType
+                    };
                     break;
                 }
             }
         }
 
-        ProjectileStats stats = Stats.Clone();
         stats.DamageStats.Damage *= stackStats.DamageMultiplier * QuenchableStatUtil.GetAttackPowerMultiplier(stack);
         stats.DamageTierBonus += stackStats.DamageTierBonus;
         stats.DropChance = Math.Max(0, Math.Min(1, stats.DropChance * stackStats.DropChanceMultiplier));
@@ -508,23 +517,22 @@ public class ProjectileBehavior : CollectibleBehavior
     {
         if (Stats != null)
         {
-            ItemStackMeleeWeaponStats weaponStackStats = ItemStackMeleeWeaponStats.FromItemStack(inSlot.Itemstack);
-            ItemStackProjectileStats projectileStackStats = ItemStackProjectileStats.FromItemStack(inSlot.Itemstack);
+            ProjectileStats stats = GetStats(inSlot.Itemstack);
 
             dsc.AppendLine(Lang.Get(
                 "combatoverhaul:iteminfo-projectile",
-                $"{Stats.DamageStats.Damage * weaponStackStats.DamageMultiplier * projectileStackStats.DamageMultiplier:F1}",
-                Lang.Get($"combatoverhaul:damage-type-{Stats.DamageStats.DamageType}"),
-                $"{(1 - Stats.DropChance * projectileStackStats.DropChanceMultiplier) * 100:F1}"));
+                $"{stats.DamageStats.Damage:F1}",
+                Lang.Get($"combatoverhaul:damage-type-{stats.DamageStats.DamageType}"),
+                $"{(1 - stats.DropChance) * 100:F1}"));
 
-            if (Stats.DamageTierBonus != 0)
+            if (stats.DamageTierBonus != 0)
             {
-                dsc.AppendLine(Lang.Get("combatoverhaul:iteminfo-projectile-bonus-damagetier", Stats.DamageTierBonus + weaponStackStats.DamageTierBonus + projectileStackStats.DamageTierBonus));
+                dsc.AppendLine(Lang.Get("combatoverhaul:iteminfo-projectile-bonus-damagetier", stats.DamageTierBonus));
             }
 
-            if (Stats.AdditionalDurabilityCost != 0)
+            if (stats.AdditionalDurabilityCost != 0)
             {
-                dsc.AppendLine(Lang.Get("combatoverhaul:iteminfo-projectile-durability-cost", Stats.AdditionalDurabilityCost));
+                dsc.AppendLine(Lang.Get("combatoverhaul:iteminfo-projectile-durability-cost", stats.AdditionalDurabilityCost));
             }
         }
 

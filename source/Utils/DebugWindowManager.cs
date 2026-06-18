@@ -22,7 +22,7 @@ using VSImGui.API;
 
 namespace CombatOverhaul.Animations;
 
-public sealed partial class DebugWindowManager
+public sealed partial class DebugWindowManager : IDisposable
 {
     public static bool PlayAnimationsInThirdPerson { get; set; } = false;
     public static bool RenderDebugColliders { get; set; } = false;
@@ -57,6 +57,32 @@ public sealed partial class DebugWindowManager
 #if DEBUG
         RegisterCollectibleTransformAttributes(api);
 #endif
+    }
+
+    public void Dispose()
+    {
+        if (_disposed) return;
+        _disposed = true;
+
+#if DEBUG
+        _api.ModLoader.GetModSystem<ImGuiModSystem>().Draw -= DrawEditor;
+        _devToolsDialog?.TryClose();
+        _transformGizmoRenderer?.Dispose();
+        _imguiAnimationViewportRenderer?.Dispose();
+        _detachedEditorCamera?.Dispose();
+        _transformGizmoRenderer = null;
+        _imguiAnimationViewportRenderer = null;
+        _detachedEditorCamera = null;
+        ClearActiveTransformGizmo();
+#endif
+
+        _behavior = null;
+        _transforms.Clear();
+        _colliders.Clear();
+        if (ReferenceEquals(_instance, this))
+        {
+            _instance = null!;
+        }
     }
 
     public static void RegisterTransformByCode(ModelTransform transform, string code)
@@ -515,6 +541,7 @@ public sealed partial class DebugWindowManager
     private readonly AnimationsManager _animationsManager;
     private AnimationJson _animationBuffer;
     internal static DebugWindowManager _instance;
+    private bool _disposed;
 
     private string _animationsFilter = "";
     private string _filter = "";

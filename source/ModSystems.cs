@@ -403,6 +403,7 @@ public partial class CombatOverhaulSystem : ModSystem
         if (Disposed) return;
 
         HarmonyPatchesManager.Unpatch();
+        UnsubscribeFromConfigChange();
 
         _clientApi?.Event.UnregisterRenderer(ReticleRenderer, EnumRenderStage.Ortho);
         _clientApi?.Event.UnregisterRenderer(DirectionCursorRenderer, EnumRenderStage.Ortho);
@@ -417,13 +418,20 @@ public partial class CombatOverhaulSystem : ModSystem
             }
         }
 
+        ActionListener?.Dispose();
+        AimingSystem?.Dispose();
+        ReticleRenderer?.Dispose();
+        DirectionCursorRenderer?.Dispose();
+
         OnDispose?.Invoke();
+        OnDispose = null;
 
         _clientApi?.World.UnregisterGameTickListener(_cacheMissesReportedListener);
 
         Disposed = true;
 
         ExtendedElementPose.NameHashCache?.Dispose();
+        ExtendedElementPose.NameHashCache = null;
 
         ServerImpaleSystem?.Dispose();
         ServerVanitySystem?.Dispose();
@@ -491,6 +499,9 @@ public partial class CombatOverhaulSystem : ModSystem
     private long _ensureAnimationBehaviorsListener = 0;
     private bool _reportedAnimationBehaviorFallback = false;
     private bool _reportedAnimationBehaviorFallbackError = false;
+    private ConfigLibModSystem? _configLibSystem;
+    private Action<string, IConfig, ISetting>? _configSettingChangedHandler;
+    private Action? _configLoadedHandler;
 
     private void RegisterCustomIcon(ICoreClientAPI api, string key, string path)
     {
@@ -524,8 +535,9 @@ public partial class CombatOverhaulSystem : ModSystem
     private void SubscribeToConfigChange(ICoreAPI api)
     {
         ConfigLibModSystem system = api.ModLoader.GetModSystem<ConfigLibModSystem>();
+        _configLibSystem = system;
 
-        system.SettingChanged += (domain, config, setting) =>
+        _configSettingChangedHandler = (domain, config, setting) =>
         {
             if (domain != "combatoverhaul" && domain != "combatoverhaulfork" && domain != "bullseyecontinued" && domain != "overhaullib") return;
 
@@ -534,7 +546,7 @@ public partial class CombatOverhaulSystem : ModSystem
             SettingsChanged?.Invoke(Settings);
         };
 
-        system.ConfigsLoaded += () =>
+        _configLoadedHandler = () =>
         {
             system.GetConfig("combatoverhaul")?.AssignSettingsValues(Settings);
             system.GetConfig("combatoverhaulfork")?.AssignSettingsValues(Settings);
@@ -543,6 +555,29 @@ public partial class CombatOverhaulSystem : ModSystem
             ApplyRuntimeSettings(Settings);
             SettingsLoaded?.Invoke(Settings);
         };
+
+        system.SettingChanged += _configSettingChangedHandler;
+        system.ConfigsLoaded += _configLoadedHandler;
+    }
+
+    private void UnsubscribeFromConfigChange()
+    {
+        if (_configLibSystem != null)
+        {
+            if (_configSettingChangedHandler != null)
+            {
+                _configLibSystem.SettingChanged -= _configSettingChangedHandler;
+            }
+
+            if (_configLoadedHandler != null)
+            {
+                _configLibSystem.ConfigsLoaded -= _configLoadedHandler;
+            }
+        }
+
+        _configLibSystem = null;
+        _configSettingChangedHandler = null;
+        _configLoadedHandler = null;
     }
 
     private static void ApplyRuntimeSettings(Settings settings)
@@ -587,10 +622,20 @@ public partial class CombatOverhaulSystem : ModSystem
                 added = true;
             }
 
+            if (playerEntity.GetBehavior<WearableStatsBehavior>() == null)
+            {
+                WearableStatsBehavior wearableStats = new(playerEntity);
+                playerEntity.AddBehavior(wearableStats);
+                wearableStats.Initialize(playerEntity.Properties, emptyAttributes);
+                wearableStats.AfterInitialized(false);
+                wearableStats.RefreshStatsNow();
+                added = true;
+            }
+
             if (added && !_reportedAnimationBehaviorFallback)
             {
                 _reportedAnimationBehaviorFallback = true;
-                LoggerUtil.Warn(_clientApi, this, "Attached missing OverhaulLib player animation behaviors at runtime.");
+                LoggerUtil.Warn(_clientApi, this, "Attached missing OverhaulLib player client behaviors at runtime.");
             }
         }
         catch (Exception exception)
@@ -696,6 +741,10 @@ public partial class CombatOverhaulAnimationsSystem : ModSystem
         {
             clientApi.Event.ReloadShader -= LoadAnimatedItemShaders;
         }
+
+        DisposeShaders();
+        DebugManager?.Dispose();
+        DebugManager = null;
     }
 
 
@@ -706,6 +755,8 @@ public partial class CombatOverhaulAnimationsSystem : ModSystem
     private bool LoadAnimatedItemShaders()
     {
         if (_api is not ICoreClientAPI clientApi) return false;
+
+        DisposeShaders();
 
         _shaderProgram = clientApi.Shader.NewShaderProgram() as ShaderProgram;
         _shaderProgramFirstPerson = clientApi.Shader.NewShaderProgram() as ShaderProgram;
@@ -721,5 +772,14 @@ public partial class CombatOverhaulAnimationsSystem : ModSystem
         _shaderProgramFirstPerson.Compile();
 
         return true;
+    }
+
+    private void DisposeShaders()
+    {
+        _shaderProgram?.Dispose();
+        _shaderProgram = null;
+
+        _shaderProgramFirstPerson?.Dispose();
+        _shaderProgramFirstPerson = null;
     }
 }

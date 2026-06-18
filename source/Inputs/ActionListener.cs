@@ -90,11 +90,12 @@ public partial class ActionListener : IDisposable
 
     public ActionListener(ICoreClientAPI api)
     {
-        api.ModLoader.GetModSystem<CombatOverhaulSystem>().OnDispose += Dispose;
+        _system = api.ModLoader.GetModSystem<CombatOverhaulSystem>();
+        _system.OnDispose += Dispose;
 
         _clientApi = api;
         api.Input.InWorldAction += OnEntityAction;
-        api.World.RegisterGameTickListener(dt => TickListener(), 1000 / 30);
+        _tickListener = api.World.RegisterGameTickListener(dt => TickListener(), 1000 / 30);
         api.Event.MouseDown += HandleMouseDownEvents;
         api.Event.MouseUp += HandleMouseUpEvents;
 
@@ -150,9 +151,27 @@ public partial class ActionListener : IDisposable
     /// </summary>
     public void Dispose()
     {
+        if (_disposed) return;
+        _disposed = true;
+
+        _system.OnDispose -= Dispose;
         _clientApi.Input.InWorldAction -= OnEntityAction;
+        _clientApi.World.UnregisterGameTickListener(_tickListener);
         _clientApi.Event.MouseDown -= HandleMouseDownEvents;
         _clientApi.Event.MouseUp -= HandleMouseUpEvents;
+
+        foreach (long timer in _timers.Values)
+        {
+            if (timer != 0)
+            {
+                _clientApi.World.UnregisterCallback(timer);
+            }
+        }
+
+        foreach (EnumEntityAction action in _allActions)
+        {
+            _timers[action] = 0;
+        }
     }
     public static bool AltPressed(ICoreClientAPI api) => (api?.Input.KeyboardKeyState[(int)GlKeys.AltLeft] ?? false) || (api?.Input.KeyboardKeyState[(int)GlKeys.AltRight] ?? false);
     public IEnumerable<EnumEntityAction> GetModifiers() => _modifiers.Where(IsActive);
@@ -176,9 +195,12 @@ public partial class ActionListener : IDisposable
         EnumEntityAction.ShiftKey,
         EnumEntityAction.CtrlKey,
     };
+    private readonly CombatOverhaulSystem _system;
     private readonly ICoreClientAPI _clientApi;
+    private readonly long _tickListener;
     private bool _suppressLMB = false;
     private bool _suppressRMB = false;
+    private bool _disposed = false;
 
     private void HandleMouseDownEvents(MouseEvent mouseEvent) => HandleMouseEvents(mouseEvent, true);
     private void HandleMouseUpEvents(MouseEvent mouseEvent) => HandleMouseEvents(mouseEvent, false);
@@ -267,11 +289,11 @@ public partial class ActionListener : IDisposable
         switch (_actionStates[action])
         {
             case ActionState.Pressed:
-                _clientApi.World.RegisterCallback(_ => OnHoldTimer(action), (int)HoldDuration.TotalMilliseconds);
+                StartHoldTimer(action);
                 break;
             case ActionState.Released:
             case ActionState.Inactive:
-                _clientApi.World.UnregisterCallback(_timers[action]);
+                StopHoldTimer(action);
                 break;
         }
 
@@ -311,11 +333,11 @@ public partial class ActionListener : IDisposable
         switch (_actionStates[action])
         {
             case ActionState.Pressed:
-                _clientApi.World.RegisterCallback(_ => OnHoldTimer(action), (int)HoldDuration.TotalMilliseconds);
+                StartHoldTimer(action);
                 break;
             case ActionState.Released:
             case ActionState.Inactive:
-                _clientApi.World.UnregisterCallback(_timers[action]);
+                StopHoldTimer(action);
                 break;
         }
 
@@ -337,7 +359,7 @@ public partial class ActionListener : IDisposable
 
         if (_actionStates[mappedAction] == ActionState.Pressed)
         {
-            _clientApi.World.RegisterCallback(_ => OnHoldTimer(mappedAction), (int)HoldDuration.TotalMilliseconds);
+            StartHoldTimer(mappedAction);
         }
 
         if (CallSubscriptions(mappedAction))
@@ -358,6 +380,8 @@ public partial class ActionListener : IDisposable
     }
     private void OnHoldTimer(EnumEntityAction action)
     {
+        _timers[action] = 0;
+
         _actionStates[action] = _actionStates[action] switch
         {
             ActionState.Pressed => ActionState.Hold,
@@ -365,6 +389,19 @@ public partial class ActionListener : IDisposable
         };
 
         CallSubscriptions(action);
+    }
+    private void StartHoldTimer(EnumEntityAction action)
+    {
+        StopHoldTimer(action);
+        _timers[action] = _clientApi.World.RegisterCallback(_ => OnHoldTimer(action), (int)HoldDuration.TotalMilliseconds);
+    }
+    private void StopHoldTimer(EnumEntityAction action)
+    {
+        long timer = _timers[action];
+        if (timer == 0) return;
+
+        _clientApi.World.UnregisterCallback(timer);
+        _timers[action] = 0;
     }
     private bool CallSubscriptions(EnumEntityAction action)
     {

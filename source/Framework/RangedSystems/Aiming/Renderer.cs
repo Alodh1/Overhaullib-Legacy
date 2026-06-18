@@ -90,6 +90,9 @@ public sealed class ReticleRenderer : IRenderer
 
     public void Dispose()
     {
+        if (_disposed) return;
+        _disposed = true;
+
         foreach (LoadedTexture texture in _defaultTextures.Values)
         {
             texture.Dispose();
@@ -99,6 +102,12 @@ public sealed class ReticleRenderer : IRenderer
         {
             texture.Dispose();
         }
+
+        _aimTextureThrowCircle.Dispose();
+
+        _defaultTextures.Clear();
+        _currentTextures.Clear();
+        _loadedTextures.Clear();
     }
 
     private readonly Dictionary<WeaponAimingState, LoadedTexture> _defaultTextures = new();
@@ -106,6 +115,7 @@ public sealed class ReticleRenderer : IRenderer
     private readonly Dictionary<string, LoadedTexture> _loadedTextures = new();
     private readonly LoadedTexture _aimTextureThrowCircle;
     private readonly ICoreClientAPI _clientApi;
+    private bool _disposed = false;
 
     private LoadedTexture GetTexture(string path)
     {

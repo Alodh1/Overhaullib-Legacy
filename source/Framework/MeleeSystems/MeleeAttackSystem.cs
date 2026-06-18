@@ -135,6 +135,7 @@ public sealed class MeleeSystemServer : MeleeSystem
     private readonly ICoreServerAPI _api;
     private const double _reachTolerance = 1.0;
     private const float _damageTolerance = 0.05f;
+    private const float _damageRelativeTolerance = 0.20f;
     private const float _knockbackTolerance = 0.01f;
     private const int _maxRejectedAttackPacketLogs = 20;
     private int _rejectedAttackPacketLogs;
@@ -286,9 +287,10 @@ public sealed class MeleeSystemServer : MeleeSystem
             return false;
         }
 
-        if (packet.Damage < 0 || packet.Damage > limits.MaxDamage + _damageTolerance)
+        float allowedMaxDamage = GetAllowedMaxDamage(limits.MaxDamage, slot.Itemstack, packetTarget);
+        if (packet.Damage < 0 || !float.IsFinite(packet.Damage) || packet.Damage > allowedMaxDamage)
         {
-            LogRejectedAttackPacket(player, packet, "damage-too-high");
+            LogRejectedAttackPacket(player, packet, "damage-too-high", $"maxDamage={limits.MaxDamage}, allowedDamage={allowedMaxDamage}");
             return false;
         }
 
@@ -472,12 +474,25 @@ public sealed class MeleeSystemServer : MeleeSystem
             Math.Clamp(point.Z, minZ, maxZ));
     }
 
-    private void LogRejectedAttackPacket(IServerPlayer player, MeleeDamagePacket packet, string reason)
+    private static float GetAllowedMaxDamage(float maxDamage, ItemStack? weaponStack, Entity target)
+    {
+        float effectiveMaxDamage = maxDamage;
+        float buffableMaxDamage = GrindingWheelCompat.ApplyBuffableDamage(weaponStack, target, maxDamage);
+        if (float.IsFinite(buffableMaxDamage))
+        {
+            effectiveMaxDamage = MathF.Max(effectiveMaxDamage, buffableMaxDamage);
+        }
+
+        return effectiveMaxDamage + MathF.Max(_damageTolerance, MathF.Abs(effectiveMaxDamage) * _damageRelativeTolerance);
+    }
+
+    private void LogRejectedAttackPacket(IServerPlayer player, MeleeDamagePacket packet, string reason, string details = "")
     {
         if (_rejectedAttackPacketLogs >= _maxRejectedAttackPacketLogs) return;
 
         _rejectedAttackPacketLogs++;
-        LoggerUtil.Warn(_api, this, $"Rejected melee attack packet from '{player.PlayerName}' ({player.PlayerUID}): reason={reason}, attacker={packet.AttackerEntityId}, target={packet.TargetEntityId}, damage={packet.Damage}, type='{packet.DamageType}'");
+        string detailsText = string.IsNullOrEmpty(details) ? "" : $", {details}";
+        LoggerUtil.Warn(_api, this, $"Rejected melee attack packet from '{player.PlayerName}' ({player.PlayerUID}): reason={reason}, attacker={packet.AttackerEntityId}, target={packet.TargetEntityId}, damage={packet.Damage}, type='{packet.DamageType}'{detailsText}");
     }
 
     private readonly struct MeleeAttackLimits

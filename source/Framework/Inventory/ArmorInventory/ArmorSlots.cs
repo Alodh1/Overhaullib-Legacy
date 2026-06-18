@@ -41,6 +41,8 @@ public class ClothesSlot : ItemSlotCharacter, IClickableSlot
 
         try
         {
+            ResolveStack(sourceSlot?.Itemstack);
+            ResolveStack(Itemstack);
             base.ActivateSlot(sourceSlot, ref op);
             OnItemSlotModified(null);
         }
@@ -80,6 +82,7 @@ public class ClothesSlot : ItemSlotCharacter, IClickableSlot
 
     public override bool CanTake()
     {
+        ResolveStack(itemstack);
         IHeldBag? bag = itemstack?.Collectible?.GetCollectibleInterface<IHeldBag>();
 
         if (bag != null && !bag.IsEmpty(itemstack))
@@ -98,6 +101,7 @@ public class ClothesSlot : ItemSlotCharacter, IClickableSlot
             return;
         }
 
+        ResolveStack(itemSlot?.Itemstack);
         base.FlipWith(itemSlot);
 
         ItemStack stack = itemSlot.Itemstack;
@@ -107,6 +111,7 @@ public class ClothesSlot : ItemSlotCharacter, IClickableSlot
 
     protected void EmptyBag(ItemStack stack)
     {
+        ResolveStack(stack);
         IHeldBag? bag = stack?.Item?.GetCollectibleInterface<IHeldBag>();
 
         try
@@ -143,6 +148,14 @@ public class ClothesSlot : ItemSlotCharacter, IClickableSlot
     protected InventoryPlayerBackpacks? GetBackpackInventory()
     {
         return World?.PlayerByUid(OwnerUUID)?.InventoryManager.GetOwnInventory(GlobalConstants.backpackInvClassName) as InventoryPlayerBackpacks;
+    }
+
+    protected void ResolveStack(ItemStack? stack)
+    {
+        if (stack?.Collectible == null && World != null)
+        {
+            stack?.ResolveBlockOrItem(World);
+        }
     }
 }
 
@@ -248,11 +261,13 @@ public class GearSlot : ClothesSlot
 
     public override bool CanHold(ItemSlot sourceSlot)
     {
+        ResolveStack(sourceSlot?.Itemstack);
         return Enabled && IsGearType(sourceSlot?.Itemstack, SlotType) && CanHoldConfig(sourceSlot);
     }
 
     public virtual bool CanHoldConfig(ItemSlot? sourceSlot)
     {
+        ResolveStack(sourceSlot?.Itemstack);
         if (Config == null || sourceSlot == null) return true;
         if (sourceSlot.Itemstack?.Collectible?.Code == null) return false;
 
@@ -269,7 +284,9 @@ public class GearSlot : ClothesSlot
             matchWithTags = BlockTagRule.ContainsAllFromAtLeastOne(sourceSlot.Itemstack.Block.Tags, Config.CanHoldBlockTags);
         }
 
-        return matchWithoutDomain || matchWithDomain || matchWithTags;
+        bool matchWithAttributes = Config.MatchesItemAttributes(sourceSlot.Itemstack);
+
+        return matchWithoutDomain || matchWithDomain || matchWithTags || matchWithAttributes;
     }
 
     public static bool IsGearType(IItemStack? itemStack, string gearType)
@@ -321,7 +338,9 @@ public class ArmorSlot : ItemSlot, IClickableSlot
 
     public override bool CanHold(ItemSlot sourceSlot)
     {
-        if (DrawUnavailable || !base.CanHold(sourceSlot) || !IsArmor(sourceSlot.Itemstack.Collectible, out IArmor? armor)) return false;
+        ResolveStack(sourceSlot?.Itemstack);
+        CollectibleObject? collectible = sourceSlot?.Itemstack?.Collectible;
+        if (DrawUnavailable || collectible == null || !base.CanHold(sourceSlot) || !IsArmor(collectible, out IArmor? armor)) return false;
 
         if (armor == null || !_inventory.CanHoldArmorPiece(armor)) return false;
 
@@ -331,6 +350,8 @@ public class ArmorSlot : ItemSlot, IClickableSlot
     {
         if (OnSlotClicked?.Invoke(this, sourceSlot, ref op) == true) return;
 
+        ResolveStack(sourceSlot?.Itemstack);
+        ResolveStack(Itemstack);
         if (Itemstack != null) EmptyBag(Itemstack);
 
         try
@@ -362,6 +383,7 @@ public class ArmorSlot : ItemSlot, IClickableSlot
 
     protected override void FlipWith(ItemSlot itemSlot)
     {
+        ResolveStack(itemSlot?.Itemstack);
         base.FlipWith(itemSlot);
 
         ItemStack stack = itemSlot.Itemstack;
@@ -370,6 +392,7 @@ public class ArmorSlot : ItemSlot, IClickableSlot
     }
     protected void EmptyBag(ItemStack stack)
     {
+        ResolveStack(stack);
         IHeldBag? bag = stack?.Item?.GetCollectibleInterface<IHeldBag>();
 
         try
@@ -404,6 +427,14 @@ public class ArmorSlot : ItemSlot, IClickableSlot
     protected InventoryPlayerBackpacks? GetBackpackInventory()
     {
         return World?.PlayerByUid(OwnerUUID)?.InventoryManager.GetOwnInventory(GlobalConstants.backpackInvClassName) as InventoryPlayerBackpacks;
+    }
+
+    protected void ResolveStack(ItemStack? stack)
+    {
+        if (stack?.Collectible == null && World != null)
+        {
+            stack?.ResolveBlockOrItem(World);
+        }
     }
 
     private readonly ArmorInventory _inventory;
