@@ -12,10 +12,11 @@ using Vintagestory.API.Common;
 using Vintagestory.API.Config;
 using Vintagestory.API.Server;
 using Vintagestory.API.Util;
+using Vintagestory.GameContent;
 
 namespace CombatOverhaul.Implementations;
 
-public class MeleeWeapon : Item, IHasMultipleWeaponLogicModes, IHasWeaponLogic, IHasRangedWeaponLogic, IHasDynamicMoveAnimations, IHasMeleeWeaponActions, IHasServerBlockCallback, ISetsRenderingOffset, IMouseWheelInput, IOnGameTick, IRestrictAction
+public class MeleeWeapon : Item, IHasMultipleWeaponLogicModes, IHasWeaponLogic, IHasRangedWeaponLogic, IHasDynamicMoveAnimations, IHasMeleeWeaponActions, IHasServerBlockCallback, ISetsRenderingOffset, IMouseWheelInput, IHeldItemOnMouseWheel, IOnGameTick, IRestrictAction, IHandBookPageCodeProvider, IHandbookGrouping
 {
     public MeleeWeaponClient? ClientLogic => ClientModes?.CurrentMode;
     public MeleeWeaponServer? ServerLogic { get; private set; }
@@ -26,7 +27,31 @@ public class MeleeWeapon : Item, IHasMultipleWeaponLogicModes, IHasWeaponLogic, 
     IServerRangedWeaponLogic? IHasRangedWeaponLogic.ServerWeaponLogic => ServerLogic;
 
     public bool RenderingOffset { get; set; }
-    
+
+    public virtual string HandbookPageCodeForStack(IWorldAccessor world, ItemStack stack)
+    {
+        return TextureAttributeHandbook.PageCodeForStack(stack, TextureAttributeHandbook.GetTextureAttributes(this));
+    }
+
+    public AssetLocation GetCodeForHandbookGrouping(ItemStack stack)
+    {
+        return stack.Collectible?.Code ?? Code;
+    }
+
+    public string GetWildcardForHandbookGrouping(string wildcard, ItemStack stack)
+    {
+        return TextureAttributeHandbook.NormalizeHandbookGroupWildcard(wildcard, stack);
+    }
+
+    public override bool Satisfies(ItemStack thisStack, ItemStack otherStack)
+    {
+        if (TextureAttributeHandbook.SatisfiesIgnoringAttributes(api?.World, thisStack, otherStack, TextureAttributeHandbook.GetTextureAttributes(this)))
+        {
+            return true;
+        }
+
+        return base.Satisfies(thisStack, otherStack);
+    }
 
     public bool RestrictRightHandAction() => ClientLogic?.RestrictRightHandAction() ?? false;
     public bool RestrictLeftHandAction() => ClientLogic?.RestrictLeftHandAction() ?? false;
@@ -90,11 +115,20 @@ public class MeleeWeapon : Item, IHasMultipleWeaponLogicModes, IHasWeaponLogic, 
 
     public override void GetHeldItemInfo(ItemSlot inSlot, StringBuilder dsc, IWorldAccessor world, bool withDebugInfo)
     {
+        SplitMaterialWeaponUtil.Normalize(inSlot.Itemstack);
+        SplitMaterialWeaponUtil.NormalizeDurabilityIfNeeded(inSlot.Itemstack);
+
         ClientLogic?.GetHeldItemInfo(inSlot, dsc, world, withDebugInfo);
         WeaponBuffSystem.AppendTooltip(inSlot.Itemstack, dsc, world, withDebugInfo);
+        SplitMaterialWeaponUtil.AppendTooltip(inSlot.Itemstack, dsc);
         dsc.AppendLine("");
 
         base.GetHeldItemInfo(inSlot, dsc, world, withDebugInfo);
+    }
+
+    public override string GetHeldItemName(ItemStack itemStack)
+    {
+        return SplitMaterialWeaponUtil.GetHeldItemName(itemStack, base.GetHeldItemName(itemStack));
     }
 
     public override WorldInteraction?[]? GetHeldInteractionHelp(ItemSlot inSlot)
@@ -122,6 +156,19 @@ public class MeleeWeapon : Item, IHasMultipleWeaponLogicModes, IHasWeaponLogic, 
 
     public virtual bool OnMouseWheel(ItemSlot slot, IClientPlayer byPlayer, float delta) => ClientLogic?.OnMouseWheel(slot, byPlayer, delta) ?? false;
 
+    public void OnMouseWheel(EntityPlayer byPlayer, ItemSlot inSlot, MouseWheelEventArgs args)
+    {
+        if (ClientApi?.World.Player == null) return;
+
+        float delta = MouseWheelPatch.GetDelta(args);
+        if (delta == 0) return;
+
+        if (OnMouseWheel(inSlot, ClientApi.World.Player, delta))
+        {
+            args.SetHandled();
+        }
+    }
+
     public override int GetToolMode(ItemSlot slot, IPlayer byPlayer, BlockSelection blockSelection)
     {
         return ClientModes?.GetToolMode(byPlayer.Entity, slot) ?? 0;
@@ -148,6 +195,8 @@ public class MeleeWeapon : Item, IHasMultipleWeaponLogicModes, IHasWeaponLogic, 
         base.OnCreatedByCrafting(allInputslots, outputSlot, byRecipe);
 
         PreserveHandleTexture(allInputslots, outputSlot);
+        SplitMaterialWeaponUtil.Normalize(outputSlot.Itemstack);
+        SplitMaterialWeaponUtil.NormalizeDurabilityIfNeeded(outputSlot.Itemstack);
         GeneralUtils.MarkItemStack(outputSlot);
         outputSlot.MarkDirty();
     }

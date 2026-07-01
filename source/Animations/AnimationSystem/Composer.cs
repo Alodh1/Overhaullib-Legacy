@@ -42,10 +42,10 @@ public sealed class Composer
         _frameScratch.Clear();
         foreach (AnimatorState state in _states.Values)
         {
-            PlayerItemFrame frame = state.Animator.Animate(delta, out IEnumerable<string> callbacks);
+            PlayerItemFrame frame = state.Animator.Animate(delta, _callbackScratch);
             _frameScratch.Add((frame, state.CurrentWeight));
 
-            foreach (string callbackId in callbacks)
+            foreach (string callbackId in _callbackScratch)
             {
                 state.Request.CallbackHandler?.Invoke(callbackId);
             }
@@ -164,6 +164,7 @@ public sealed class Composer
 
     private readonly Dictionary<string, AnimatorState> _states = new();
     private readonly List<(PlayerItemFrame frame, float weight)> _frameScratch = new();
+    private readonly List<string> _callbackScratch = new();
     private readonly List<string> _categoriesToRemove = new();
     private readonly Queue<AnimationRequest> _requestsQueue = new();
     private readonly SoundsSynchronizerClient? _soundsManager;

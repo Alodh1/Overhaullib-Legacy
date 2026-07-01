@@ -348,41 +348,41 @@ internal class AnimatableShapeRenderer
             }
         }
     }
-    private static void ZeroTransformCorrection(List<float> elementTransforms)
-    {
-        bool zeroTransform = elementTransforms.Count(value => value == 0) == elementTransforms.Count;
-        if (zeroTransform)
-        {
-            for (int i = 0; i < elementTransforms.Count; i += 4)
-            {
-                if (elementTransforms[i] == 0)
-                {
-                    elementTransforms[i] = 1;
-                }
-            }
-        }
-    }
+    [ThreadStatic]
+    private static float[]? _elementTransformScratch;
 
     private static void FillShaderValues(IShaderProgram shaderProgram, ItemRenderInfo itemStackRenderInfo, IRenderAPI render, ItemStack itemStack, Vec4f lightrgbs, Matrixf itemModelMatrix, IWorldAccessor world, AnimatorBase animator)
     {
         FillShaderValues(shaderProgram, itemStackRenderInfo, render, itemStack, lightrgbs, itemModelMatrix, world);
 
-        List<float> elementTransforms = new();
+        float[] elementTransforms = _elementTransformScratch ??= new float[GlobalConstants.MaxAnimatedElements * 12];
+        float[] transformationMatrices = animator.TransformationMatrices;
+        int writeIndex = 0;
+        bool allZero = true;
 
-        for (int index = 0; index < animator.TransformationMatrices.Length; index++)
+        for (int index = 0; index < transformationMatrices.Length && writeIndex < elementTransforms.Length; index++)
         {
             if (index % 4 == 3) continue;
-            elementTransforms.Add(animator.TransformationMatrices[index]);
+
+            float value = transformationMatrices[index];
+            elementTransforms[writeIndex++] = value;
+            allZero &= value == 0;
         }
 
-        ZeroTransformCorrection(elementTransforms);
+        if (allZero)
+        {
+            for (int index = 0; index < writeIndex; index += 4)
+            {
+                elementTransforms[index] = 1;
+            }
+        }
 
-        int animatedElementsCount = Math.Min(elementTransforms.Count / (4 * 3), GlobalConstants.MaxAnimatedElements);
+        int animatedElementsCount = Math.Min(writeIndex / 12, GlobalConstants.MaxAnimatedElements);
 
         shaderProgram.UniformMatrices4x3(
             "elementTransforms",
             animatedElementsCount,
-            elementTransforms.ToArray()
+            elementTransforms
         );
     }
 

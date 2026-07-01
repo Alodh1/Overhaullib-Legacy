@@ -5,6 +5,8 @@ VisualStudioVersion = 17.9.34728.123
 MinimumVisualStudioVersion = 10.0.40219.1
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Overhaullib", "Overhaullib.csproj", "{C09B5B1A-EDBA-4167-916E-3F033D9B81F7}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "OverhaullibLegacy.Tests", "tests\OverhaullibLegacy.Tests\OverhaullibLegacy.Tests.csproj", "{FA2F7E35-05AA-4F64-A2EA-45D556E40A56}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -15,6 +17,10 @@ Global
 		{C09B5B1A-EDBA-4167-916E-3F033D9B81F7}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{C09B5B1A-EDBA-4167-916E-3F033D9B81F7}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{C09B5B1A-EDBA-4167-916E-3F033D9B81F7}.Release|Any CPU.Build.0 = Release|Any CPU
+		{FA2F7E35-05AA-4F64-A2EA-45D556E40A56}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{FA2F7E35-05AA-4F64-A2EA-45D556E40A56}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{FA2F7E35-05AA-4F64-A2EA-45D556E40A56}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{FA2F7E35-05AA-4F64-A2EA-45D556E40A56}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

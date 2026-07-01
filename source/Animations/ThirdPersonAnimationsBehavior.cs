@@ -23,7 +23,6 @@ public sealed class ThirdPersonAnimationsBehavior : EntityBehavior, IDisposable
 
         _composer = new(null, null, player);
 
-        AnimationPatches.OnBeforeFrame += OnBeforeFrame;
         AnimationPatches.AnimationBehaviors[player.EntityId] = this;
         AnimationPatches.ActiveEntities.Add(player.EntityId);
         _system.OnDispose += Dispose;
@@ -219,6 +218,7 @@ public sealed class ThirdPersonAnimationsBehavior : EntityBehavior, IDisposable
     private readonly ICoreClientAPI? _api;
     private bool _disposed = false;
     private Animatable? _animatable = null;
+    private int _animatableItemId = -1;
     private float _pitch = 0;
     private Vector3 _eyePosition = new();
     private float _eyeHeight = 0;
@@ -227,7 +227,7 @@ public sealed class ThirdPersonAnimationsBehavior : EntityBehavior, IDisposable
     private static readonly TimeSpan _readyTimeout = TimeSpan.FromSeconds(3);
     private static Dictionary<string, ThirdPersonAnimationsBehavior> _existingBehaviors = new();
 
-    private void OnBeforeFrame(Entity targetEntity, float dt)
+    internal void OnBeforeFrame(Entity targetEntity, float dt)
     {
         if (_settings.DisableThirdPersonAnimations) return;
 
@@ -239,7 +239,14 @@ public sealed class ThirdPersonAnimationsBehavior : EntityBehavior, IDisposable
 
         if (_composer.AnyActiveAnimations())
         {
-            _animatable = (entity as EntityAgent)?.RightHandItemSlot?.Itemstack?.Item?.GetCollectibleBehavior(typeof(Animatable), true) as Animatable;
+            // Resolve the Animatable behavior only when the held item changes (same item id == same
+            // behavior instance) instead of walking the collectible's behavior list every frame.
+            int mainHandItemId = (entity as EntityAgent)?.RightHandItemSlot?.Itemstack?.Item?.Id ?? 0;
+            if (mainHandItemId != _animatableItemId)
+            {
+                _animatableItemId = mainHandItemId;
+                _animatable = (entity as EntityAgent)?.RightHandItemSlot?.Itemstack?.Item?.GetCollectibleBehavior(typeof(Animatable), true) as Animatable;
+            }
             _pitch = targetEntity.Pos.HeadPitch;
             _eyePosition = new((float)entity.LocalEyePos.X, (float)entity.LocalEyePos.Y, (float)entity.LocalEyePos.Z);
             _eyeHeight = (float)entity.Properties.EyeHeight;
@@ -535,8 +542,6 @@ public sealed class ThirdPersonAnimationsBehavior : EntityBehavior, IDisposable
         _composer.StopAll();
         _offhandCategories.Clear();
         _mainHandCategories.Clear();
-        AnimationPatches.OnBeforeFrame -= OnBeforeFrame;
-
         if (AnimationPatches.AnimationBehaviors.TryGetValue(_player.EntityId, out ThirdPersonAnimationsBehavior? behavior) && behavior == this)
         {
             AnimationPatches.AnimationBehaviors.Remove(_player.EntityId);

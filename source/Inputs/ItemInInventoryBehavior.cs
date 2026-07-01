@@ -24,7 +24,6 @@ public sealed class InInventoryPlayerBehavior : EntityBehavior
     public override string PropertyName() => "CombatOverhaul:InInventory";
 
     private readonly EntityPlayer _player;
-    internal static readonly List<long> _reportedEntities = [];
     private const float _updatePeriodSec = 1;
     private const float _reportPeriodSec = 10 * 60;
     private readonly bool _process;

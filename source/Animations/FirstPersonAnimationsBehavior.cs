@@ -286,7 +286,6 @@ public sealed class FirstPersonAnimationsBehavior : EntityBehavior, IDisposable
     private readonly HashSet<string> _offhandVanillaAnimations = new();
     private readonly HashSet<string> _mainHandVanillaAnimations = new();
     private bool _mainPlayer = false;
-    private bool _registeredFrameHook = false;
     private bool _registeredDisposeHook = false;
     private bool _disposed = false;
     private bool _reportedMainPlayerActivation = false;
@@ -306,6 +305,7 @@ public sealed class FirstPersonAnimationsBehavior : EntityBehavior, IDisposable
     private const float _settingsUpdatePeriodSec = 3f;
     private float _settingsUpdateTimeSec = 0;
     private Animatable? _animatable = null;
+    private int _animatableItemId = -1;
     private Vector3 _eyePosition = new();
     private float _eyeHeight = 0;
     private bool _immersiveFpModeSetting = false;
@@ -335,12 +335,6 @@ public sealed class FirstPersonAnimationsBehavior : EntityBehavior, IDisposable
         _ownerEntityId = _player.EntityId;
         AnimationPatches.FirstPersonAnimationBehavior = this;
         AnimationPatches.OwnerEntityId = _player.EntityId;
-
-        if (!_registeredFrameHook)
-        {
-            AnimationPatches.OnBeforeFrame += OnBeforeFrame;
-            _registeredFrameHook = true;
-        }
 
         if (!_registeredDisposeHook)
         {
@@ -388,7 +382,7 @@ public sealed class FirstPersonAnimationsBehavior : EntityBehavior, IDisposable
         _thirdPersonAnimations ??= entity.GetBehavior<ThirdPersonAnimationsBehavior>();
     }
 
-    private void OnBeforeFrame(Entity targetEntity, float dt)
+    internal void OnBeforeFrame(Entity targetEntity, float dt)
     {
         if (!IsOwner(targetEntity)) return;
 
@@ -415,7 +409,14 @@ public sealed class FirstPersonAnimationsBehavior : EntityBehavior, IDisposable
             if (_lastFrame.Player.FovMultiplier != 1) SetFov(_lastFrame.Player.FovMultiplier, true);
             _resetFov = true;
 
-            _animatable = (targetEntity as EntityAgent)?.RightHandItemSlot?.Itemstack?.Item?.GetCollectibleBehavior(typeof(Animatable), true) as Animatable;
+            // Resolve the Animatable behavior only when the held item changes (same item id == same
+            // behavior instance) instead of walking the collectible's behavior list every frame.
+            int mainHandItemId = (targetEntity as EntityAgent)?.RightHandItemSlot?.Itemstack?.Item?.Id ?? 0;
+            if (mainHandItemId != _animatableItemId)
+            {
+                _animatableItemId = mainHandItemId;
+                _animatable = (targetEntity as EntityAgent)?.RightHandItemSlot?.Itemstack?.Item?.GetCollectibleBehavior(typeof(Animatable), true) as Animatable;
+            }
             _eyePosition = new((float)targetEntity.LocalEyePos.X, (float)targetEntity.LocalEyePos.Y, (float)targetEntity.LocalEyePos.Z);
             _eyeHeight = (float)targetEntity.Properties.EyeHeight;
 
@@ -476,10 +477,9 @@ public sealed class FirstPersonAnimationsBehavior : EntityBehavior, IDisposable
         }
         else
         {
-            if (!Enum.TryParse(pose.ForElement.Name, out element)) // Cant cache ElementPose because they are new each frame
-            {
-                element = EnumAnimatedElement.Unknown;
-            }
+            // Poses are recreated each frame so we can't cache on the pose, but we can resolve the
+            // name through the shared ordinal cache instead of a per-call Enum.TryParse name scan.
+            element = ExtendedElementPose.GetElementNameEnum(pose.ForElement?.Name);
         }
 
         if (clearPose && element != EnumAnimatedElement.Unknown)
@@ -640,12 +640,6 @@ public sealed class FirstPersonAnimationsBehavior : EntityBehavior, IDisposable
     {
         if (_disposed) return;
         _disposed = true;
-
-        if (_registeredFrameHook)
-        {
-            AnimationPatches.OnBeforeFrame -= OnBeforeFrame;
-            _registeredFrameHook = false;
-        }
 
         if (_registeredDisposeHook)
         {

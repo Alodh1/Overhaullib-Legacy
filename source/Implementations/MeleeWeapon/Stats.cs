@@ -145,6 +145,8 @@ public readonly struct ItemStackMeleeWeaponStats
 
     public static ItemStackMeleeWeaponStats FromItemStack(ItemStack stack)
     {
+        SplitMaterialWeaponUtil.Normalize(stack);
+
         float damageMultiplier = stack.Attributes.GetFloat("damageMultiplier", 1) * QuenchableStatUtil.GetAttackPowerMultiplier(stack);
         float damageBonus = stack.Attributes.GetFloat("damageBonus", 0);
         int damageTierBonus = stack.Attributes.GetInt("damageTierBonus", 0);

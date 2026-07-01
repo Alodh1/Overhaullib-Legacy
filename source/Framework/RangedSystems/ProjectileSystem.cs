@@ -120,6 +120,31 @@ public struct ProjectileSpawnStats
     public float DamageStrength { get => DamageTier; set => DamageTier = (int)value; } // for compatibility
 }
 
+public sealed class RangedDamageResolvedEventArgs
+{
+    public RangedDamageResolvedEventArgs(Entity target, DamageSource damageSource, ItemStack? weaponStack, ItemStack? projectileStack, float damage, bool damageReceived, DamageBlockEventArgs? block)
+    {
+        Target = target;
+        DamageSource = damageSource;
+        WeaponStack = weaponStack;
+        ProjectileStack = projectileStack;
+        Damage = damage;
+        DamageReceived = damageReceived;
+        Block = block;
+    }
+
+    public Entity Target { get; }
+    public DamageSource DamageSource { get; }
+    public ItemStack? WeaponStack { get; }
+    public ItemStack? ProjectileStack { get; }
+    public float Damage { get; }
+    public bool DamageReceived { get; }
+    public DamageBlockEventArgs? Block { get; }
+    public bool WasBlocked => Block != null;
+    public bool WasParried => Block?.Kind == EnumDamageBlockKind.Parry;
+    public bool IsLegalHit => DamageReceived && Block == null;
+}
+
 [ProtoContract(ImplicitFields = ImplicitFields.AllPublic)]
 public class ProjectileCollisionPacket
 {
@@ -141,6 +166,8 @@ public class ProjectileCollisionCheckRequest
     public double[] CurrentPosition { get; set; } = Array.Empty<double>();
     public double[] PreviousPosition { get; set; } = Array.Empty<double>();
     public double[] Velocity { get; set; } = Array.Empty<double>();
+    public double[] ShooterPosition { get; set; } = Array.Empty<double>();
+    public double[] ShotDirection { get; set; } = Array.Empty<double>();
     public float Radius { get; set; }
     public float PenetrationDistance { get; set; }
     public float PenetrationStrength { get; set; }
@@ -193,6 +220,7 @@ public sealed class ProjectileSystemClient
     private readonly Dictionary<string, int> _firearmsCollisionMissCounts = new();
     private long _nextFirearmsCollisionDiagnosticsAtMs;
     private const int FirearmsCollisionDiagnosticsIntervalMs = 10000;
+    private const double BehindShooterTolerance = -0.25;
 
     //private Stopwatch _stopwatch = new();
 
@@ -212,34 +240,57 @@ public sealed class ProjectileSystemClient
             _combatOverhaulSystem.Settings.CollisionRadius + packet.Radius,
             segment.Length / 2f + _combatOverhaulSystem.Settings.CollisionRadius + packet.Radius);
 
-        foreach (Entity entity in GetCollisionCandidates(packet, midPoint, (float)searchRadius))
-        {
-            if (Collide(entity, packet, currentPosition, previousPosition, velocity))
-            {
-                return;
-            }
-        }
-
-    }
-
-    private IEnumerable<Entity> GetCollisionCandidates(ProjectileCollisionCheckRequest packet, Vec3d midPoint, float searchRadius)
-    {
         long[] candidateEntityIds = packet.CandidateEntityIds ?? Array.Empty<long>();
         if (candidateEntityIds.Length > 0)
         {
             foreach (long entityId in candidateEntityIds)
             {
                 Entity? entity = _api.World.GetEntityById(entityId);
-                if (entity != null && CanProjectileHit(entity)) yield return entity;
+                if (entity == null || !CanProjectileHit(entity)) continue;
+
+                if (Collide(entity, packet, currentPosition, previousPosition, velocity))
+                {
+                    return;
+                }
             }
 
-            yield break;
+            return;
         }
 
-        foreach (Entity entity in _api.World.GetEntitiesAround(midPoint, searchRadius, searchRadius).Where(CanProjectileHit))
+        if (TryCollidePartitionedEntities(midPoint, searchRadius, packet, currentPosition, previousPosition, velocity))
         {
-            yield return entity;
+            return;
         }
+
+        Entity[] entities = _api.World.GetEntitiesAround(midPoint, (float)searchRadius, (float)searchRadius);
+        foreach (Entity entity in entities)
+        {
+            if (!CanProjectileHit(entity)) continue;
+
+            if (Collide(entity, packet, currentPosition, previousPosition, velocity))
+            {
+                return;
+            }
+        }
+    }
+
+    private bool TryCollidePartitionedEntities(Vec3d midPoint, double searchRadius, ProjectileCollisionCheckRequest packet, Vector3d currentPosition, Vector3d previousPosition, Vector3d velocity)
+    {
+        bool collided = false;
+        _entityPartitioning.WalkEntities(midPoint, searchRadius, entity =>
+        {
+            if (!CanProjectileHit(entity)) return true;
+
+            if (Collide(entity, packet, currentPosition, previousPosition, velocity))
+            {
+                collided = true;
+                return false;
+            }
+
+            return true;
+        }, EnumEntitySearchType.Creatures);
+
+        return collided;
     }
 
     private void RecordFirearmsCollisionMiss(string reason)
@@ -284,7 +335,7 @@ public sealed class ProjectileSystemClient
 
         if (!packet.CollideWithShooter && packet.ShooterId == target.EntityId) return false;
 
-        if (packet.IgnoreEntities.Contains(target.EntityId)) return false;
+        if (Array.IndexOf(packet.IgnoreEntities, target.EntityId) >= 0) return false;
 
         if (!CheckCollision(target, out string collider, out Vector3d point, currentPosition, previousPosition, packet.Radius, packet.PenetrationDistance, packet.PenetrationStrength, out float penetrationStrengthLoss, packet.CheckAABBOnly, packet.RequireColliderWhenAvailable, out string collisionMode, out string missReason))
         {
@@ -296,6 +347,11 @@ public sealed class ProjectileSystemClient
             return false;
         }
 
+        if (IsCollisionBehindShooter(packet, point))
+        {
+            return false;
+        }
+
         Vector3d targetVelocity = new((float)target.Pos.Motion.X, (float)target.Pos.Motion.Y, (float)target.Pos.Motion.Z);
 
         double relativeSpeed = (targetVelocity - velocity).Length;
@@ -303,6 +359,32 @@ public sealed class ProjectileSystemClient
         Collide(packet.ProjectileId, target, point, targetVelocity, relativeSpeed, collider, packet, penetrationStrengthLoss);
 
         return true;
+    }
+
+    private static bool IsCollisionBehindShooter(ProjectileCollisionCheckRequest packet, Vector3d point)
+    {
+        if (packet.ShooterPosition == null || packet.ShooterPosition.Length < 3) return false;
+        if (packet.ShotDirection == null || packet.ShotDirection.Length < 3) return false;
+
+        Vector3d shooterPosition = new(packet.ShooterPosition[0], packet.ShooterPosition[1], packet.ShooterPosition[2]);
+        Vector3d shotDirection = new(packet.ShotDirection[0], 0, packet.ShotDirection[2]);
+
+        if (shotDirection.LengthSquared <= 1e-8)
+        {
+            shotDirection = new(packet.ShotDirection[0], packet.ShotDirection[1], packet.ShotDirection[2]);
+        }
+
+        if (shotDirection.LengthSquared <= 1e-8) return false;
+
+        shotDirection = shotDirection.Normalized();
+        Vector3d toPoint = new(point.X - shooterPosition.X, 0, point.Z - shooterPosition.Z);
+
+        if (toPoint.LengthSquared <= 1e-8)
+        {
+            toPoint = point - shooterPosition;
+        }
+
+        return Vector3d.Dot(toPoint, shotDirection) < BehindShooterTolerance;
     }
 
     private bool CheckCollision(Entity target, out string collider, out Vector3d point, Vector3d currentPosition, Vector3d previousPosition, float radius, float penetrationDistance, float penetrationSrength, out float penetrationStrengthLoss, bool checkAABBOnly, bool requireColliderWhenAvailable, out string collisionMode, out string missReason)
@@ -399,7 +481,8 @@ public sealed class ProjectileSystemClient
             penetrationStrengthLoss = 0;
             ColliderTypes selectedColliderType = ColliderTypes.Torso;
 
-            List<ColliderTypes> encounteredColliderTypes = new();
+            Span<ColliderTypes> encounteredColliderTypes = stackalloc ColliderTypes[16];
+            int encounteredColliderTypeCount = 0;
 
             foreach ((string key, double parameter, Vector3d intersectionPoint) in intersections)
             {
@@ -439,10 +522,10 @@ public sealed class ProjectileSystemClient
                     penetrationResistance = colliders.PenetrationResistances[key];
                 }
 
-                if (!encounteredColliderTypes.Contains(colliderType))
+                if (!Contains(encounteredColliderTypes, encounteredColliderTypeCount, colliderType))
                 {
                     penetrationStrengthLoss += penetrationResistance;
-                    encounteredColliderTypes.Add(colliderType);
+                    AddEncountered(encounteredColliderTypes, ref encounteredColliderTypeCount, colliderType);
                 }
 
                 if (penetrationStrengthLoss > penetrationSrength)
@@ -488,7 +571,8 @@ public sealed class ProjectileSystemClient
             float maxDamageMultiplier = 0;
             penetrationStrengthLoss = 0;
 
-            List<PlayerBodyPart> encounteredColliderTypes = new();
+            Span<PlayerBodyPart> encounteredColliderTypes = stackalloc PlayerBodyPart[16];
+            int encounteredColliderTypeCount = 0;
 
             foreach ((string key, double parameter, Vector3d intersectionPoint) in intersections)
             {
@@ -512,10 +596,10 @@ public sealed class ProjectileSystemClient
                     penetrationResistance = colliders.PenetrationResistances[key];
                 }
 
-                if (!encounteredColliderTypes.Contains(bodyType))
+                if (!Contains(encounteredColliderTypes, encounteredColliderTypeCount, bodyType))
                 {
                     penetrationStrengthLoss += penetrationResistance;
-                    encounteredColliderTypes.Add(bodyType);
+                    AddEncountered(encounteredColliderTypes, ref encounteredColliderTypeCount, bodyType);
                 }
 
                 if (penetrationStrengthLoss > penetrationSrength)
@@ -550,6 +634,23 @@ public sealed class ProjectileSystemClient
         return true;
     }
 
+    private static bool Contains<T>(Span<T> values, int count, T value)
+    {
+        for (int index = 0; index < count; index++)
+        {
+            if (EqualityComparer<T>.Default.Equals(values[index], value)) return true;
+        }
+
+        return false;
+    }
+
+    private static void AddEncountered<T>(Span<T> values, ref int count, T value)
+    {
+        if (count >= values.Length) return;
+
+        values[count++] = value;
+    }
+
     private static float GetPlayerBodyPartMultiplier(PlayerDamageModelBehavior playerDamageModel, PlayerBodyPart bodyType)
     {
         foreach (DamageZoneStats damageZone in playerDamageModel.DamageModel.DamageZones)
@@ -578,23 +679,22 @@ public sealed class ProjectileSystemClient
     }
     private static CuboidAABBCollider GetCollisionBox(Entity entity)
     {
-        Cuboidf collisionBox = entity.CollisionBox.Clone(); // @TODO: Refactor to not clone
+        Cuboidf collisionBox = entity.CollisionBox;
         EntityPos position = entity.Pos;
-        collisionBox.X1 += (float)position.X;
-        collisionBox.Y1 += (float)position.Y;
-        collisionBox.Z1 += (float)position.Z;
-        collisionBox.X2 += (float)position.X;
-        collisionBox.Y2 += (float)position.Y;
-        collisionBox.Z2 += (float)position.Z;
-        return new(collisionBox);
+        return new(
+            new Vector3d(collisionBox.X1 + position.X, collisionBox.Y1 + position.Y, collisionBox.Z1 + position.Z),
+            new Vector3d(collisionBox.X2 + position.X, collisionBox.Y2 + position.Y, collisionBox.Z2 + position.Z)
+        );
     }
 }
 
 public sealed class ProjectileSystemServer
 {
     public delegate void RangedDamageDelegate(Entity target, DamageSource damageSource, ItemStack? weaponStack, ref float damage);
+    public delegate void RangedDamageResolvedDelegate(RangedDamageResolvedEventArgs args);
 
     public event RangedDamageDelegate? OnDealRangedDamage;
+    public event RangedDamageResolvedDelegate? OnRangedDamageResolved;
 
     public ProjectileSystemServer(ICoreServerAPI api)
     {
@@ -610,25 +710,25 @@ public sealed class ProjectileSystemServer
 
     public void Spawn(Guid id, ProjectileStats projectileStats, ProjectileSpawnStats spawnStats, ItemStack projectileStack, ItemStack? weaponStack, Entity shooter)
     {
-        SpawnInternal(id, projectileStats, spawnStats, projectileStack, weaponStack, null, shooter, shooter);
+        SpawnInternal(id, projectileStats, spawnStats, projectileStack, weaponStack, null, shooter, shooter, applyBuffs: false);
     }
 
     public void Spawn(Guid id, ProjectileStats projectileStats, ProjectileSpawnStats spawnStats, ItemStack projectileStack, ItemStack? weaponStack, Entity shooter, Entity target)
     {
-        SpawnInternal(id, projectileStats, spawnStats, projectileStack, weaponStack, null, shooter, target);
+        SpawnInternal(id, projectileStats, spawnStats, projectileStack, weaponStack, null, shooter, target, applyBuffs: false);
     }
 
     public void SpawnFromWeaponSlot(Guid id, ProjectileStats projectileStats, ProjectileSpawnStats spawnStats, ItemStack projectileStack, ItemSlot weaponSlot, Entity shooter)
     {
-        SpawnInternal(id, projectileStats, spawnStats, projectileStack, weaponSlot.Itemstack, weaponSlot, shooter, shooter);
+        SpawnInternal(id, projectileStats, spawnStats, projectileStack, weaponSlot.Itemstack, weaponSlot, shooter, shooter, applyBuffs: true);
     }
 
     public void SpawnFromWeaponSlot(Guid id, ProjectileStats projectileStats, ProjectileSpawnStats spawnStats, ItemStack projectileStack, ItemSlot weaponSlot, Entity shooter, Entity target)
     {
-        SpawnInternal(id, projectileStats, spawnStats, projectileStack, weaponSlot.Itemstack, weaponSlot, shooter, target);
+        SpawnInternal(id, projectileStats, spawnStats, projectileStack, weaponSlot.Itemstack, weaponSlot, shooter, target, applyBuffs: true);
     }
 
-    private void SpawnInternal(Guid id, ProjectileStats projectileStats, ProjectileSpawnStats spawnStats, ItemStack projectileStack, ItemStack? weaponStack, ItemSlot? weaponSlot, Entity shooter, Entity target)
+    private void SpawnInternal(Guid id, ProjectileStats projectileStats, ProjectileSpawnStats spawnStats, ItemStack projectileStack, ItemStack? weaponStack, ItemSlot? weaponSlot, Entity shooter, Entity target, bool applyBuffs)
     {
         EntityPlayer? owner = (shooter as EntityPlayer) ??
             (target as EntityPlayer) ??
@@ -639,27 +739,46 @@ public sealed class ProjectileSystemServer
             return;
         }
 
-        WeaponBuffSystem.ModifyProjectileSpawn(projectileStats, ref spawnStats, projectileStack, weaponStack, shooter, target);
+        if (applyBuffs)
+        {
+            WeaponBuffSystem.ModifyProjectileSpawn(projectileStats, ref spawnStats, projectileStack, weaponStack, shooter, target);
+        }
 
         SpawnProjectile(id, projectileStack, weaponStack, projectileStats, spawnStats, _api, shooter, owner, out ProjectileEntity? projectile);
 
         if (projectile != null)
         {
-            _projectiles.Add(id, new(projectile, projectileStats, spawnStats, _api, ClearId, projectileStack, weaponSlot));
+            _projectiles.Add(id, new(projectile, projectileStats, spawnStats, _api, ClearId, projectileStack, weaponSlot, applyBuffs));
             projectile.ServerProjectile = _projectiles[id];
-            if (WeaponBuffSystem.ConsumeInternal(weaponStack, WeaponBuffConsumptionTrigger.ProjectileSpawn) > 0)
+            if (applyBuffs && WeaponBuffSystem.ConsumeInternal(weaponStack, WeaponBuffConsumptionTrigger.ProjectileSpawn) > 0)
             {
                 weaponSlot?.MarkDirty();
             }
-            WeaponBuffSystem.ConsumeInternal(projectileStack, WeaponBuffConsumptionTrigger.ProjectileSpawn);
+            if (applyBuffs)
+            {
+                WeaponBuffSystem.ConsumeInternal(projectileStack, WeaponBuffConsumptionTrigger.ProjectileSpawn);
+            }
         }
     }
     public void TryCollide(ProjectileEntity projectile)
     {
+        double deltaX = projectile.ServerPos.X - projectile.PreviousPosition.X;
+        double deltaY = projectile.ServerPos.Y - projectile.PreviousPosition.Y;
+        double deltaZ = projectile.ServerPos.Z - projectile.PreviousPosition.Z;
+        if (deltaX * deltaX + deltaY * deltaY + deltaZ * deltaZ <= 1e-12)
+        {
+            return;
+        }
+
         bool isFirearmsProjectile = IsFirearmsProjectile(projectile);
         long[] candidateEntityIds = isFirearmsProjectile ? GetProjectileCollisionCandidateEntityIds(projectile) : Array.Empty<long>();
         if (isFirearmsProjectile && candidateEntityIds.Length == 0) return;
         bool checkAABBOnly = CheckAABBOnly(_api, projectile);
+        long[] ignoredEntities = projectile.CollidedWith.Count == 0 ? Array.Empty<long>() : projectile.CollidedWith.ToArray();
+        Entity? shooter = _api.World.GetEntityById(projectile.ShooterId);
+        bool gateAgainstShooterBackHits = shooter is EntityPlayer;
+        Vector3d shotDirection = gateAgainstShooterBackHits ? GetProjectileShotDirection(projectile) : Vector3d.Zero;
+        Vec3d shooterPosition = gateAgainstShooterBackHits ? GetProjectileShooterPosition(projectile, shooter) : new();
 
         ProjectileCollisionCheckRequest packet = new()
         {
@@ -668,11 +787,13 @@ public sealed class ProjectileSystemServer
             CurrentPosition = [projectile.ServerPos.X, projectile.ServerPos.Y, projectile.ServerPos.Z],
             PreviousPosition = [projectile.PreviousPosition.X, projectile.PreviousPosition.Y, projectile.PreviousPosition.Z],
             Velocity = [projectile.PreviousVelocity.X, projectile.PreviousVelocity.Y, projectile.PreviousVelocity.Z],
+            ShooterPosition = gateAgainstShooterBackHits ? [shooterPosition.X, shooterPosition.Y, shooterPosition.Z] : Array.Empty<double>(),
+            ShotDirection = gateAgainstShooterBackHits && shotDirection.LengthSquared > 1e-8 ? [shotDirection.X, shotDirection.Y, shotDirection.Z] : Array.Empty<double>(),
             Radius = projectile.ColliderRadius,
             PenetrationDistance = projectile.PenetrationDistance + PenetrationDistanceOffset,
             PenetrationStrength = projectile.PenetrationStrength,
             CollideWithShooter = false,
-            IgnoreEntities = projectile.CollidedWith.ToArray(),
+            IgnoreEntities = ignoredEntities,
             CandidateEntityIds = candidateEntityIds,
             PacketVersion = projectile.ServerProjectile?.PacketVersion ?? 0,
             ShooterId = projectile.ShooterId,
@@ -691,9 +812,22 @@ public sealed class ProjectileSystemServer
 
     public void OnDealDamage(Entity target, DamageSource damageSource, ItemStack? weaponStack, ItemStack? projectileStack, ref float damage)
     {
+        OnDealDamage(target, damageSource, weaponStack, projectileStack, ref damage, applyBuffs: true);
+    }
+
+    internal void OnDealDamage(Entity target, DamageSource damageSource, ItemStack? weaponStack, ItemStack? projectileStack, ref float damage, bool applyBuffs)
+    {
         OnDealRangedDamage?.Invoke(target, damageSource, weaponStack, ref damage);
-        WeaponBuffSystem.ModifyRangedDamage(target, damageSource, weaponStack, projectileStack, ref damage);
-        damage = GrindingWheelCompat.ApplyBuffableDamage(weaponStack, target, damage);
+        if (applyBuffs)
+        {
+            WeaponBuffSystem.ModifyRangedDamage(target, damageSource, weaponStack, projectileStack, ref damage);
+        }
+        damage = GrindingWheelCompat.ApplyBuffableDamage(weaponStack, target, damage, damageSource);
+    }
+
+    internal void EmitRangedDamageResolved(Entity target, DamageSource damageSource, ItemStack? weaponStack, ItemStack? projectileStack, float damage, bool damageReceived, DamageBlockEventArgs? block)
+    {
+        OnRangedDamageResolved?.Invoke(new(target, damageSource, weaponStack, projectileStack, damage, damageReceived, block));
     }
 
     private readonly ICoreServerAPI _api;
@@ -701,12 +835,15 @@ public sealed class ProjectileSystemServer
     private readonly Dictionary<Guid, ProjectileServer> _projectiles = new();
     private readonly Dictionary<Guid, LateProjectileCollision> _lateProjectiles = new();
     private readonly Dictionary<string, int> _firearmsCollisionRejectionCounts = new();
+    private readonly List<(long EntityId, double Distance)> _projectileCandidateScratch = new(MaxFirearmsProjectileCollisionCandidates);
+    private readonly List<Guid> _lateProjectileRemovalScratch = new();
     private const float _nearestPlayerSearchRange = 300;
     private const float FirearmsProjectileCandidatePadding = 4f;
     private const int MaxFirearmsProjectileCollisionCandidates = 16;
     private const int LateCollisionGraceMs = 1500;
     private const int MaxLateProjectileCacheSize = 4096;
     private const int FirearmsCollisionDiagnosticsIntervalMs = 10000;
+    private const double BehindShooterTolerance = -0.25;
     private long _nextFirearmsCollisionDiagnosticsAtMs;
 
     private long[] GetProjectileCollisionCandidateEntityIds(ProjectileEntity projectile)
@@ -727,10 +864,12 @@ public sealed class ProjectileSystemServer
 
         double searchRadius = segment.Length / 2f + projectile.ColliderRadius + FirearmsProjectileCandidatePadding;
         float candidateRadius = projectile.ColliderRadius + FirearmsProjectileCandidatePadding;
-        List<(long EntityId, double Distance)> candidates = new();
+        _projectileCandidateScratch.Clear();
 
-        foreach (Entity entity in _api.World.GetEntitiesAround(midPoint, (float)searchRadius, (float)searchRadius).Where(CanProjectileHit))
+        Entity[] entities = _api.World.GetEntitiesAround(midPoint, (float)searchRadius, (float)searchRadius);
+        foreach (Entity entity in entities)
         {
+            if (!CanProjectileHit(entity)) continue;
             if (ShouldIgnoreProjectileCandidate(projectile, entity)) continue;
 
             if (!CheckEntityAabb(entity, currentPosition, previousPosition, candidateRadius, 0, out Vector3d point, out _, useServerPosition: true))
@@ -739,24 +878,42 @@ public sealed class ProjectileSystemServer
             }
 
             double distance = (point - previousPosition).LengthSquared;
-            candidates.Add((entity.EntityId, distance));
+            AddProjectileCandidate(entity.EntityId, distance);
         }
 
-        if (candidates.Count == 0)
+        if (_projectileCandidateScratch.Count == 0)
         {
             return Array.Empty<long>();
         }
 
-        candidates.Sort((left, right) => left.Distance.CompareTo(right.Distance));
-
-        int count = Math.Min(candidates.Count, MaxFirearmsProjectileCollisionCandidates);
+        int count = _projectileCandidateScratch.Count;
         long[] result = new long[count];
         for (int index = 0; index < count; index++)
         {
-            result[index] = candidates[index].EntityId;
+            result[index] = _projectileCandidateScratch[index].EntityId;
         }
 
         return result;
+    }
+
+    private void AddProjectileCandidate(long entityId, double distance)
+    {
+        int insertIndex = _projectileCandidateScratch.Count;
+        while (insertIndex > 0 && distance < _projectileCandidateScratch[insertIndex - 1].Distance)
+        {
+            insertIndex--;
+        }
+
+        if (insertIndex >= MaxFirearmsProjectileCollisionCandidates)
+        {
+            return;
+        }
+
+        _projectileCandidateScratch.Insert(insertIndex, (entityId, distance));
+        if (_projectileCandidateScratch.Count > MaxFirearmsProjectileCollisionCandidates)
+        {
+            _projectileCandidateScratch.RemoveAt(_projectileCandidateScratch.Count - 1);
+        }
     }
 
     private static bool ShouldIgnoreProjectileCandidate(ProjectileEntity projectile, Entity entity)
@@ -838,15 +995,12 @@ public sealed class ProjectileSystemServer
 
     private static CuboidAABBCollider GetCollisionBox(Entity entity, bool useServerPosition)
     {
-        Cuboidf collisionBox = entity.CollisionBox.Clone();
+        Cuboidf collisionBox = entity.CollisionBox;
         EntityPos position = useServerPosition ? entity.ServerPos : entity.Pos;
-        collisionBox.X1 += (float)position.X;
-        collisionBox.Y1 += (float)position.Y;
-        collisionBox.Z1 += (float)position.Z;
-        collisionBox.X2 += (float)position.X;
-        collisionBox.Y2 += (float)position.Y;
-        collisionBox.Z2 += (float)position.Z;
-        return new(collisionBox);
+        return new(
+            new Vector3d(collisionBox.X1 + position.X, collisionBox.Y1 + position.Y, collisionBox.Z1 + position.Z),
+            new Vector3d(collisionBox.X2 + position.X, collisionBox.Y2 + position.Y, collisionBox.Z2 + position.Z)
+        );
     }
     private static void SpawnProjectile(Guid id, ItemStack projectileStack, ItemStack? weaponStack, ProjectileStats stats, ProjectileSpawnStats spawnStats, ICoreAPI api, Entity shooter, Entity owner, out ProjectileEntity? projectile)
     {
@@ -874,6 +1028,7 @@ public sealed class ProjectileSystemServer
             projectile.DurabilityDamageOnImpact = stats.DurabilityDamage;
             projectile.ShooterId = shooter.EntityId;
             projectile.OwnerId = owner.EntityId;
+            projectile.ShooterPosition.Set(shooter.ServerPos.X, shooter.ServerPos.Y, shooter.ServerPos.Z);
             projectile.CanBeCollected = stats.CanBeCollected;
             projectile.IgnoreInvFrames = true;
 
@@ -980,7 +1135,16 @@ public sealed class ProjectileSystemServer
         }
 
         long now = _api.World.ElapsedMilliseconds;
-        foreach (Guid id in _lateProjectiles.Where(entry => now > entry.Value.ExpiresAtMs).Select(entry => entry.Key).ToArray())
+        _lateProjectileRemovalScratch.Clear();
+        foreach ((Guid id, LateProjectileCollision lateCollision) in _lateProjectiles)
+        {
+            if (now > lateCollision.ExpiresAtMs)
+            {
+                _lateProjectileRemovalScratch.Add(id);
+            }
+        }
+
+        foreach (Guid id in _lateProjectileRemovalScratch)
         {
             _lateProjectiles.Remove(id);
         }
@@ -994,7 +1158,25 @@ public sealed class ProjectileSystemServer
             return;
         }
 
-        foreach (Guid id in _lateProjectiles.OrderBy(entry => entry.Value.ExpiresAtMs).Take(overflow).Select(entry => entry.Key).ToArray())
+        _lateProjectileRemovalScratch.Clear();
+        for (int removeIndex = 0; removeIndex < overflow; removeIndex++)
+        {
+            Guid oldestId = default;
+            long oldestExpiresAt = long.MaxValue;
+            foreach ((Guid id, LateProjectileCollision lateCollision) in _lateProjectiles)
+            {
+                if (_lateProjectileRemovalScratch.Contains(id)) continue;
+                if (lateCollision.ExpiresAtMs >= oldestExpiresAt) continue;
+
+                oldestId = id;
+                oldestExpiresAt = lateCollision.ExpiresAtMs;
+            }
+
+            if (oldestExpiresAt == long.MaxValue) break;
+            _lateProjectileRemovalScratch.Add(oldestId);
+        }
+
+        foreach (Guid id in _lateProjectileRemovalScratch)
         {
             _lateProjectiles.Remove(id);
         }
@@ -1064,7 +1246,64 @@ public sealed class ProjectileSystemServer
             return false;
         }
 
+        if (IsCollisionBehindShooter(projectileServer._entity, packet))
+        {
+            rejectionReason = "behind-shooter";
+            return false;
+        }
+
         return true;
+    }
+
+    private bool IsCollisionBehindShooter(ProjectileEntity projectile, ProjectileCollisionPacket packet)
+    {
+        if (packet.CollisionPoint == null || packet.CollisionPoint.Length < 3) return false;
+        if (_api.World.GetEntityById(projectile.ShooterId) is not EntityPlayer) return false;
+
+        Vector3d shotDirection = GetProjectileShotDirection(projectile);
+        if (shotDirection.LengthSquared <= 1e-8) return false;
+
+        Vec3d shooterPositionVanilla = GetProjectileShooterPosition(projectile, null);
+        Vector3d shooterPosition = new(shooterPositionVanilla.X, shooterPositionVanilla.Y, shooterPositionVanilla.Z);
+        Vector3d collisionPoint = new(packet.CollisionPoint[0], packet.CollisionPoint[1], packet.CollisionPoint[2]);
+        Vector3d horizontalShotDirection = new(shotDirection.X, 0, shotDirection.Z);
+        if (horizontalShotDirection.LengthSquared <= 1e-8) horizontalShotDirection = shotDirection;
+        horizontalShotDirection = horizontalShotDirection.Normalized();
+
+        Vector3d toPoint = new(collisionPoint.X - shooterPosition.X, 0, collisionPoint.Z - shooterPosition.Z);
+        if (toPoint.LengthSquared <= 1e-8) toPoint = collisionPoint - shooterPosition;
+
+        return Vector3d.Dot(toPoint, horizontalShotDirection) < BehindShooterTolerance;
+    }
+
+    private static Vector3d GetProjectileShotDirection(ProjectileEntity projectile)
+    {
+        Vector3d velocity = new(projectile.PreviousVelocity.X, projectile.PreviousVelocity.Y, projectile.PreviousVelocity.Z);
+        if (velocity.LengthSquared <= 1e-8)
+        {
+            velocity = new(projectile.ServerPos.Motion.X, projectile.ServerPos.Motion.Y, projectile.ServerPos.Motion.Z);
+        }
+        if (velocity.LengthSquared <= 1e-8)
+        {
+            velocity = new(projectile.ServerPos.X - projectile.PreviousPosition.X, projectile.ServerPos.Y - projectile.PreviousPosition.Y, projectile.ServerPos.Z - projectile.PreviousPosition.Z);
+        }
+
+        return velocity.LengthSquared <= 1e-8 ? Vector3d.Zero : velocity.Normalized();
+    }
+
+    private static Vec3d GetProjectileShooterPosition(ProjectileEntity projectile, Entity? shooter)
+    {
+        if (projectile.ShooterPosition.LengthSq() > 1e-8)
+        {
+            return projectile.ShooterPosition;
+        }
+
+        if (shooter != null)
+        {
+            return new(shooter.ServerPos.X, shooter.ServerPos.Y, shooter.ServerPos.Z);
+        }
+
+        return new(projectile.PreviousPosition.X, projectile.PreviousPosition.Y, projectile.PreviousPosition.Z);
     }
 
     private static bool IsPacketSenderOwner(IServerPlayer player, ProjectileServer projectileServer)

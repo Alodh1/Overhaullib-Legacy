@@ -22,6 +22,7 @@ public class SlotConfigJson
     public string SlotBackpackCategory { get; set; } = "";
     public float CategoryOrderPriority { get; set; } = 1f;
     public int SlotsNumber { get; set; } = 0;
+    public int StoredItemLightLevelOffset { get; set; } = 0;
 
     public string SlotVariant { get; set; } = "bag_slot";
     public string SlotStateVariant { get; set; } = "bag_slot_state";
@@ -58,6 +59,7 @@ public class SlotConfigJson
             BackpackCategoryCode = SlotBackpackCategory,
             OrderPriority = CategoryOrderPriority,
             SlotsNumber = SlotsNumber,
+            StoredItemLightLevelOffset = StoredItemLightLevelOffset,
             SlotVariant = SlotVariant,
             SlotStateVariant = SlotStateVariant,
             EmptyStateCode = EmptyStateCode,
@@ -84,6 +86,7 @@ public class SlotConfig : IHasSlotBackpackCategory
     public string BackpackCategoryCode { get; set; } = "";
     public float OrderPriority { get; set; } = 1f;
     public int SlotsNumber { get; set; } = 0;
+    public int StoredItemLightLevelOffset { get; set; } = 0;
 
     public bool HandleHotkey { get; set; } = false;
     public bool DisplayInToolDialog { get; set; } = false;

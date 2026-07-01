@@ -1,5 +1,4 @@
 ﻿using Cairo;
-using System.Diagnostics;
 using Vintagestory.API.Client;
 using Vintagestory.API.Common;
 using Vintagestory.API.MathTools;
@@ -8,6 +7,9 @@ namespace CombatOverhaul.Armor;
 
 public class ToolSelectionGuiDialog : GuiDialog
 {
+    private const double OverlayDrawOrder = 0.21;
+    private const double BottomOffset = -170;
+
     public ToolSelectionGuiDialog(ICoreClientAPI api, ToolBagSelectionSystemClient system) : base(api)
     {
         Api = api;
@@ -15,6 +17,7 @@ public class ToolSelectionGuiDialog : GuiDialog
     }
 
     public override string ToggleKeyCombinationCode => "";
+    public override double DrawOrder => OverlayDrawOrder;
 
     public override void OnGuiOpened()
     {
@@ -48,8 +51,11 @@ public class ToolSelectionGuiDialog : GuiDialog
 
         if (skillItems.Count == 0) return false;
 
-        ElementBounds mainBounds = ElementStdBounds.AutosizedMainDialog.BelowCopy(fixedDeltaY: 100);
-        ElementBounds skillGridBounds = ElementBounds.Fixed(20, 20, 100, 100);
+        ElementBounds mainBounds = ElementStdBounds.AutosizedMainDialog
+            .WithAlignment(EnumDialogArea.CenterBottom)
+            .WithFixedAlignmentOffset(0, BottomOffset);
+        double slotSize = GuiElementPassiveItemSlot.unscaledSlotSize + GuiElementItemSlotGridBase.unscaledSlotPadding;
+        ElementBounds skillGridBounds = ElementBounds.Fixed(20, 20, skillItems.Count * slotSize, slotSize);
 
         mainBounds = mainBounds.WithChild(skillGridBounds);
 

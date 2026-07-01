@@ -43,6 +43,11 @@ public sealed class MeleeAttack
         MaxReach = stats.MaxReach;
         Impale = stats.Impale;
         DamageTypes = stats.DamageTypes.Select(stats => stats.ToDamageType()).ToArray();
+        _lineColliders = new IHasLineCollider[DamageTypes.Length];
+        for (int index = 0; index < DamageTypes.Length; index++)
+        {
+            _lineColliders[index] = DamageTypes[index];
+        }
 
         _meleeSystem = api.ModLoader.GetModSystem<CombatOverhaulSystem>().ClientMeleeSystem ?? throw new Exception();
         _combatOverhaulSystem = _api.ModLoader.GetModSystem<CombatOverhaulSystem>();
@@ -63,7 +68,7 @@ public sealed class MeleeAttack
 
         _hitPlayer = false;
 
-        LineSegmentCollider.ResetPreviousColliders(DamageTypes.Select(element => element as IHasLineCollider));
+        LineSegmentCollider.ResetPreviousColliders(_lineColliders);
     }
 
     [Obsolete]
@@ -82,7 +87,7 @@ public sealed class MeleeAttack
 
         _hitPlayer = false;
 
-        LineSegmentCollider.ResetPreviousColliders(DamageTypes.Select(element => element as IHasLineCollider));
+        LineSegmentCollider.ResetPreviousColliders(_lineColliders);
     }
 
     public void Attack(IPlayer player, ItemSlot slot, bool mainHand, out IEnumerable<(Block block, Vector3d point)> terrainCollisions, out IEnumerable<(Entity entity, Vector3d point)> entitiesCollisions)
@@ -91,6 +96,10 @@ public sealed class MeleeAttack
     }
     public bool Attack(IPlayer player, ItemSlot slot, bool mainHand, out IEnumerable<(Block block, Vector3d point)> terrainCollisions, out IEnumerable<(Entity entity, Vector3d point)> entitiesCollisions, ItemStackMeleeWeaponStats stats, AttackDirection attackDirection = AttackDirection.Top)
     {
+        return Attack(player, slot, mainHand, out terrainCollisions, out entitiesCollisions, stats, attackDirection, true);
+    }
+    public bool Attack(IPlayer player, ItemSlot slot, bool mainHand, out IEnumerable<(Block block, Vector3d point)> terrainCollisions, out IEnumerable<(Entity entity, Vector3d point)> entitiesCollisions, ItemStackMeleeWeaponStats stats, AttackDirection attackDirection = AttackDirection.Top, bool collideWithTerrain = true)
+    {
         terrainCollisions = Array.Empty<(Block block, Vector3d point)>();
         entitiesCollisions = Array.Empty<(Entity entity, Vector3d point)>();
 
@@ -98,7 +107,10 @@ public sealed class MeleeAttack
 
         double parameter = 1f;
 
-        _ = TryCollideWithTerrain(out terrainCollisions, out parameter);
+        if (collideWithTerrain)
+        {
+            _ = TryCollideWithTerrain(out terrainCollisions, out parameter);
+        }
 
         bool attacked = TryAttackEntities(player, slot, out entitiesCollisions, mainHand, parameter, stats, attackDirection);
         
@@ -124,32 +136,41 @@ public sealed class MeleeAttack
     }
     public void PrepareColliders(IPlayer player, ItemSlot slot, bool mainHand)
     {
-        LineSegmentCollider.Transform(DamageTypes.Select(element => element as IHasLineCollider), player.Entity, slot, _api, mainHand);
+        LineSegmentCollider.Transform(_lineColliders, player.Entity, slot, _api, mainHand);
     }
     public bool TryCollideWithTerrain(out IEnumerable<(Block block, Vector3d point)> terrainCollisions, out double parameter)
     {
-        terrainCollisions = CheckTerrainCollision(out parameter);
+        if (!CollideWithTerrain)
+        {
+            _terrainCollisionsScratch.Clear();
+            parameter = 1f;
+            terrainCollisions = _terrainCollisionsScratch;
+            return false;
+        }
 
-        return terrainCollisions.Any();
+        bool collided = CheckTerrainCollision(out parameter);
+        terrainCollisions = _terrainCollisionsScratch;
+
+        return collided;
     }
     public bool TryAttackEntities(IPlayer player, ItemSlot slot, out IEnumerable<(Entity entity, Vector3d point)> entitiesCollisions, bool mainHand, double maximumParameter, ItemStackMeleeWeaponStats stats, AttackDirection attackDirection = AttackDirection.Top)
     {
-        entitiesCollisions = CollideWithEntities(player, slot, out IEnumerable<MeleeDamagePacket> damagePackets, out IEnumerable<MeleeCollisionPacket> collisions, mainHand, maximumParameter, stats, attackDirection);
+        entitiesCollisions = CollideWithEntities(player, slot, out List<MeleeDamagePacket> damagePackets, out List<MeleeCollisionPacket> collisions, mainHand, maximumParameter, stats, attackDirection);
 
-        LastDamagePackets = damagePackets.ToArray();
+        LastDamagePackets = damagePackets.Count == 0 ? [] : damagePackets.ToArray();
 
-        if (damagePackets.Any()) _meleeSystem.SendPackets(LastDamagePackets);
-        if (collisions.Any()) _meleeSystem.SendPackets(collisions);
+        if (LastDamagePackets.Length > 0) _meleeSystem.SendPackets(LastDamagePackets);
+        if (collisions.Count > 0) _meleeSystem.SendPackets(collisions);
 
-        return damagePackets.Any();
+        return LastDamagePackets.Length > 0;
     }
 
     public void RenderDebugColliders(IPlayer player, ItemSlot slot, bool rightHand = true)
     {
-        LineSegmentCollider.Transform(DamageTypes.Select(element => element as IHasLineCollider), player.Entity, slot, _api, rightHand);
-        foreach (LineSegmentCollider collider in DamageTypes.Select(item => item.InWorldCollider))
+        LineSegmentCollider.Transform(_lineColliders, player.Entity, slot, _api, rightHand);
+        foreach (MeleeDamageType damageType in DamageTypes)
         {
-            collider.Render(_api, player.Entity);
+            damageType.InWorldCollider.Render(_api, player.Entity);
         }
     }
     public void MergeAttackedEntities(MeleeAttack attack)
@@ -185,15 +206,19 @@ public sealed class MeleeAttack
     }
 
     private readonly ICoreClientAPI _api;
+    private readonly IHasLineCollider[] _lineColliders;
     private readonly Dictionary<long, HashSet<long>> _attackedEntities = new();
     private readonly MeleeSystemClient _meleeSystem;
     private readonly CombatOverhaulSystem _combatOverhaulSystem;
+    private readonly List<(Block block, Vector3d point)> _terrainCollisionsScratch = new();
+    private readonly List<(Entity entity, Vector3d point)> _entityCollisionsScratch = new();
+    private readonly List<MeleeDamagePacket> _damagePacketsScratch = new();
+    private readonly List<MeleeCollisionPacket> _collisionPacketsScratch = new();
     private bool _hitPlayer = false;
 
-    private IEnumerable<(Block block, Vector3d point)> CheckTerrainCollision(out double parameter)
+    private bool CheckTerrainCollision(out double parameter)
     {
-        List<(Block block, Vector3d point)> terrainCollisions = new();
-
+        _terrainCollisionsScratch.Clear();
         parameter = 1f;
 
         foreach (MeleeDamageType damageType in DamageTypes)
@@ -202,44 +227,46 @@ public sealed class MeleeAttack
 
             if (result != null)
             {
-                terrainCollisions.Add((result.Value.block, result.Value.position));
+                _terrainCollisionsScratch.Add((result.Value.block, result.Value.position));
                 if (result.Value.parameter < parameter) parameter = result.Value.parameter;
             }
         }
 
-        return terrainCollisions;
+        return _terrainCollisionsScratch.Count > 0;
     }
-    private IEnumerable<(Entity entity, Vector3d point)> CollideWithEntities(IPlayer player, ItemSlot slot, out IEnumerable<MeleeDamagePacket> packets, out IEnumerable<MeleeCollisionPacket> collisions, bool mainHand, double maximumParameter, ItemStackMeleeWeaponStats stats, AttackDirection attackDirection)
+    private IEnumerable<(Entity entity, Vector3d point)> CollideWithEntities(IPlayer player, ItemSlot slot, out List<MeleeDamagePacket> packets, out List<MeleeCollisionPacket> collisions, bool mainHand, double maximumParameter, ItemStackMeleeWeaponStats stats, AttackDirection attackDirection)
     {
         long entityId = player.Entity.EntityId;
         long mountedOn = player.Entity.MountedOn?.Entity?.EntityId ?? 0;
 
-        if (!_attackedEntities.ContainsKey(entityId))
+        if (!_attackedEntities.TryGetValue(entityId, out HashSet<long>? attackedEntities))
         {
-            _attackedEntities.Add(entityId, new());
+            attackedEntities = new();
+            _attackedEntities.Add(entityId, attackedEntities);
         }
 
-        if (_attackedEntities[entityId].Count > 0 && HitOnlyOneEntity)
+        _entityCollisionsScratch.Clear();
+        _damagePacketsScratch.Clear();
+        _collisionPacketsScratch.Clear();
+
+        if (attackedEntities.Count > 0 && HitOnlyOneEntity)
         {
-            packets = [];
-            collisions = [];
-            return [];
+            packets = _damagePacketsScratch;
+            collisions = _collisionPacketsScratch;
+            return _entityCollisionsScratch;
         }
 
         Entity[] entities = _api.World.GetEntitiesAround(player.Entity.Pos.XYZ, _combatOverhaulSystem.Settings.CollisionRadius + MaxReach, _combatOverhaulSystem.Settings.CollisionRadius + MaxReach);
 
-        List<(Entity entity, Vector3d point)> entitiesCollisions = new();
-
-        List<MeleeDamagePacket> damagePackets = new();
         foreach (MeleeDamageType damageType in DamageTypes)
         {
             bool attackedAtLeastOnce = false;
 
-            foreach (Entity entity in entities
-                    .Where(entity => entity.IsCreature)
-                    .Where(entity => entity.Alive)
-                    .Where(entity => entity.EntityId != entityId && entity.EntityId != mountedOn))
+            foreach (Entity entity in entities)
             {
+                if (!entity.IsCreature || !entity.Alive) continue;
+                if (entity.EntityId == entityId || entity.EntityId == mountedOn) continue;
+
                 if (entity is EntityPlayer && _hitPlayer)
                 {
                     continue;
@@ -249,9 +276,9 @@ public sealed class MeleeAttack
 
                 if (!collided || maximumParameter < parameter) continue;
 
-                entitiesCollisions.Add((entity, point));
+                _entityCollisionsScratch.Add((entity, point));
 
-                if (_attackedEntities[entityId].Contains(entity.EntityId)) continue;
+                if (attackedEntities.Contains(entity.EntityId)) continue;
 
                 bool attacked = damageType.Attack(player.Entity, entity, point, collider, out MeleeDamagePacket packet, mainHand, colliderType, stats, attackDirection);
 
@@ -260,9 +287,9 @@ public sealed class MeleeAttack
                 attackedAtLeastOnce = true;
 
                 ApplyImpaleStats(packet, slot);
-                damagePackets.Add(packet);
+                _damagePacketsScratch.Add(packet);
 
-                _attackedEntities[entityId].Add(entity.EntityId);
+                attackedEntities.Add(entity.EntityId);
 
                 if (StopOnEntityHit) break;
 
@@ -275,10 +302,10 @@ public sealed class MeleeAttack
             if (attackedAtLeastOnce && StopOnEntityHit) break;
         }
 
-        packets = damagePackets;
-        collisions = [];
+        packets = _damagePacketsScratch;
+        collisions = _collisionPacketsScratch;
 
-        return entitiesCollisions;
+        return _entityCollisionsScratch;
     }
 
     private void ApplyImpaleStats(MeleeDamagePacket packet, ItemSlot slot)

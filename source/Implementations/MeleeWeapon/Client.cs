@@ -342,22 +342,63 @@ public class MeleeWeaponClient : IClientWeaponLogic, IHasDynamicMoveAnimations, 
 
     public virtual bool OnMouseWheel(ItemSlot slot, IClientPlayer byPlayer, float delta)
     {
-        if (PlayerActionsBehavior?.ActionListener.IsActive(EnumEntityAction.RightMouseDown) == false) return false;
+        if (!IsRightMouseDown(byPlayer)) return false;
 
-        bool mainHand = byPlayer.Entity.RightHandItemSlot == slot;
-        StanceStats? stance = GetStanceStats(byPlayer.Entity, mainHand);
-        float canChangeGrip = stance?.GripLengthFactor ?? 0;
+        bool mainHand = IsMainHandSlot(slot, byPlayer.Entity);
+        EnsureStance(byPlayer.Entity, mainHand);
+        StanceStats? stance = GetGripStanceStats(byPlayer.Entity, mainHand);
 
-        if (canChangeGrip != 0 && stance != null)
+        if (CanChangeGrip(stance))
         {
-            GripController?.ChangeGrip(delta, mainHand, canChangeGrip, stance.GripMinLength, stance.GripMaxLength);
+            GripController?.ChangeGrip(delta, mainHand, stance!.GripLengthFactor, stance.GripMinLength, stance.GripMaxLength);
             return true;
         }
-        else
+
+        GripController?.ResetGrip(mainHand);
+        return false;
+    }
+
+    private StanceStats? GetGripStanceStats(EntityPlayer player, bool mainHand)
+    {
+        StanceStats? stance = GetStanceStats(player, mainHand);
+        if (CanChangeGrip(stance)) return stance;
+
+        if (mainHand && CheckForOtherHandEmptyNoError(mainHand, player) && CanChangeGrip(Stats.TwoHandedStance))
         {
-            GripController?.ResetGrip(mainHand);
-            return false;
+            return Stats.TwoHandedStance;
         }
+
+        if (mainHand && CanChangeGrip(Stats.OneHandedStance))
+        {
+            return Stats.OneHandedStance;
+        }
+
+        if (!mainHand && CanChangeGrip(Stats.OffHandStance))
+        {
+            return Stats.OffHandStance;
+        }
+
+        return stance;
+    }
+
+    private static bool CanChangeGrip(StanceStats? stance)
+    {
+        return stance != null && stance.GripLengthFactor != 0 && stance.GripMinLength != stance.GripMaxLength;
+    }
+
+    private bool IsRightMouseDown(IClientPlayer byPlayer)
+    {
+        return PlayerActionsBehavior?.ActionListener.IsActive(EnumEntityAction.RightMouseDown) == true
+            || PlayerActionsBehavior?.ActionListener.IsActive(EnumEntityAction.InWorldRightMouseDown) == true
+            || byPlayer.Entity.Controls.RightMouseDown
+            || byPlayer.Entity.ServerControls.RightMouseDown
+            || Api.Input.InWorldMouseButton.Right
+            || Api.Input.MouseButton.Right;
+    }
+
+    private static bool IsMainHandSlot(ItemSlot slot, EntityPlayer player)
+    {
+        return !ReferenceEquals(slot, player.LeftHandItemSlot);
     }
 
     public bool CanAttack(EntityPlayer player, bool mainHand = true) => GetStanceStats(player, mainHand)?.CanAttack ?? false;
@@ -390,7 +431,7 @@ public class MeleeWeaponClient : IClientWeaponLogic, IHasDynamicMoveAnimations, 
                 {
                     if (attack != null)
                     {
-                        TryAttack(attack, handle, stats, slot, player, mainHand, out bool hitTerrain, Settings.MeleeWeaponIgnoreTerrainBehind);
+                        TryAttack(attack, handle, stats, slot, player, mainHand, out bool hitTerrain, Settings.MeleeWeaponIgnoreTerrainBehind, Settings.MeleeWeaponStopOnTerrainHit);
 
                         if (hitTerrain && Settings.MeleeWeaponStopOnTerrainHit)
                         {
@@ -886,10 +927,7 @@ public class MeleeWeaponClient : IClientWeaponLogic, IHasDynamicMoveAnimations, 
         int counter = mainHand ? MainHandAttackCounter : OffHandAttackCounter;
 
         string attackAnimation =
-            (riposte ? stats.RiposteAnimation :
-            DirectionsType == DirectionsConfiguration.None ?
-            stats.AttackAnimation["Main"][counter % stats.AttackAnimation["Main"].Length] :
-            stats.AttackAnimation[direction.ToString()][counter % stats.AttackAnimation[direction.ToString()].Length])
+            (riposte ? stats.RiposteAnimation : GetAttackAnimationForDirection(stats, direction, counter))
             ?? throw new InvalidOperationException($"[Combat Overhaul] Item '{Item.Code}' does not have attack animation specified");
 
         float animationSpeed = GetAnimationSpeed(player, Stats) * ItemStackMeleeWeaponStats.GetAttackSpeed(slot.Itemstack) * stats.AttackSpeedMultiplier * Settings.MeleeWeaponAttackSpeedMultiplier;
@@ -934,7 +972,7 @@ public class MeleeWeaponClient : IClientWeaponLogic, IHasDynamicMoveAnimations, 
             PlayerActionsBehavior?.FlipDirectionToOpposite();
         }
     }
-    protected virtual void TryAttack(MeleeAttack attack, MeleeAttack? handle, StanceStats stats, ItemSlot slot, EntityPlayer player, bool mainHand, out bool hitTerrain, bool ignoreTerrainBehind)
+    protected virtual void TryAttack(MeleeAttack attack, MeleeAttack? handle, StanceStats stats, ItemSlot slot, EntityPlayer player, bool mainHand, out bool hitTerrain, bool ignoreTerrainBehind, bool collideWithTerrain)
     {
         hitTerrain = false;
         ItemStackMeleeWeaponStats stackStats = ItemStackMeleeWeaponStats.FromItemStack(slot.Itemstack);
@@ -951,7 +989,8 @@ public class MeleeWeaponClient : IClientWeaponLogic, IHasDynamicMoveAnimations, 
                         out IEnumerable<(Block block, Vector3d point)> handleTerrainCollision,
                         out IEnumerable<(Vintagestory.API.Common.Entities.Entity entity, Vector3d point)> handleEntitiesCollision,
                         stackStats,
-                        attackDirection);
+                        attackDirection,
+                        collideWithTerrain);
 
             if (handleTerrainCollision.Any() && !handleAttacked)
             {
@@ -1018,7 +1057,8 @@ public class MeleeWeaponClient : IClientWeaponLogic, IHasDynamicMoveAnimations, 
             out IEnumerable<(Block block, Vector3d point)> terrainCollision,
             out IEnumerable<(Vintagestory.API.Common.Entities.Entity entity, Vector3d point)> entitiesCollision,
             stackStats,
-            attackDirection);
+            attackDirection,
+            collideWithTerrain);
 
         if (Settings.DebugHitParticles && terrainCollision.Any() && !attacked)
         {
@@ -1305,11 +1345,6 @@ public class MeleeWeaponClient : IClientWeaponLogic, IHasDynamicMoveAnimations, 
 
     protected virtual string? GetAttackAnimationForDirection(StanceStats stats, AttackDirection direction, int counter)
     {
-        if (stats.RiposteAnimation != null)
-        {
-            return stats.RiposteAnimation;
-        }
-
         if (stats.AttackAnimation == null || stats.AttackAnimation.Count == 0)
         {
             return null;
@@ -1317,7 +1352,7 @@ public class MeleeWeaponClient : IClientWeaponLogic, IHasDynamicMoveAnimations, 
 
         string directionKey = direction.ToString();
         string[]? animations = null;
-        if (stats.AttackDirectionsType != "None" && stats.AttackAnimation.TryGetValue(directionKey, out string[]? directionalAnimations))
+        if (DirectionsType != DirectionsConfiguration.None && stats.AttackAnimation.TryGetValue(directionKey, out string[]? directionalAnimations))
         {
             animations = directionalAnimations;
         }
@@ -1327,7 +1362,7 @@ public class MeleeWeaponClient : IClientWeaponLogic, IHasDynamicMoveAnimations, 
         }
         else
         {
-            animations = stats.AttackAnimation.Values.FirstOrDefault();
+            animations = stats.AttackAnimation.Values.FirstOrDefault(value => value != null && value.Length > 0);
         }
 
         if (animations == null || animations.Length == 0)
@@ -1460,7 +1495,7 @@ public class MeleeWeaponClient : IClientWeaponLogic, IHasDynamicMoveAnimations, 
             SetState(MeleeWeaponState.Parrying, mainHand);
             if (stats.ParryWithoutDelay)
             {
-                MeleeBlockSystem.StartBlock(parryStats, mainHand, () => RiposteCallback(mainHand, player));
+                MeleeBlockSystem.StartBlock(parryStats, mainHand, EnumDamageBlockKind.Parry, () => RiposteCallback(mainHand, player));
             }
             AnimationBehavior?.Play(
                 mainHand,
@@ -1480,7 +1515,7 @@ public class MeleeWeaponClient : IClientWeaponLogic, IHasDynamicMoveAnimations, 
         else if (CanBlock(player, mainHand) && blockStats != null && stats != null)
         {
             SetState(MeleeWeaponState.Blocking, mainHand);
-            MeleeBlockSystem.StartBlock(blockStats, mainHand);
+            MeleeBlockSystem.StartBlock(blockStats, mainHand, EnumDamageBlockKind.Block);
             if (ShouldUseVanillaShieldRaiseAnimation(slot, mainHand))
             {
                 PlayVanillaShieldRaiseAnimation(player, mainHand);
@@ -1515,7 +1550,7 @@ public class MeleeWeaponClient : IClientWeaponLogic, IHasDynamicMoveAnimations, 
                     if (CanParry(player, mainHand) && parryStats != null)
                     {
                         SetState(MeleeWeaponState.Parrying, mainHand);
-                        MeleeBlockSystem.StartBlock(parryStats, mainHand, () => RiposteCallback(mainHand, player));
+                        MeleeBlockSystem.StartBlock(parryStats, mainHand, EnumDamageBlockKind.Parry, () => RiposteCallback(mainHand, player));
                     }
                 }
                 break;
@@ -1524,7 +1559,7 @@ public class MeleeWeaponClient : IClientWeaponLogic, IHasDynamicMoveAnimations, 
                     if (CanBlock(player, mainHand) && blockStats != null && PlayerActionsBehavior?.ActionListener.IsActive(EnumEntityAction.RightMouseDown) == true)
                     {
                         SetState(MeleeWeaponState.Blocking, mainHand);
-                        MeleeBlockSystem.StartBlock(blockStats, mainHand);
+                        MeleeBlockSystem.StartBlock(blockStats, mainHand, EnumDamageBlockKind.Block);
                     }
                     else
                     {
@@ -1749,7 +1784,8 @@ public class MeleeWeaponClient : IClientWeaponLogic, IHasDynamicMoveAnimations, 
                         mainHand,
                         out IEnumerable<(Block block, Vector3d point)> handleTerrainCollision,
                         out IEnumerable<(Vintagestory.API.Common.Entities.Entity entity, Vector3d point)> handleEntitiesCollision,
-                        stackStats);
+                        stackStats,
+                        collideWithTerrain: Settings.MeleeWeaponStopOnTerrainHit);
 
             if (!HandleHitTerrain && hanldeAttacked)
             {
@@ -1766,7 +1802,8 @@ public class MeleeWeaponClient : IClientWeaponLogic, IHasDynamicMoveAnimations, 
             mainHand,
             out IEnumerable<(Block block, Vector3d point)> terrainCollision,
             out IEnumerable<(Vintagestory.API.Common.Entities.Entity entity, Vector3d point)> entitiesCollision,
-            stackStats);
+            stackStats,
+            collideWithTerrain: Settings.MeleeWeaponStopOnTerrainHit);
 
         if (handle != null) handle.AddAttackedEntities(attack);
 
@@ -1867,7 +1904,7 @@ public class MeleeWeaponClient : IClientWeaponLogic, IHasDynamicMoveAnimations, 
         if (CanBlock(player, mainHand) && blockStats != null && stats != null)
         {
             SetState(MeleeWeaponState.Blocking, mainHand);
-            MeleeBlockSystem.StartBlock(blockStats, mainHand);
+            MeleeBlockSystem.StartBlock(blockStats, mainHand, EnumDamageBlockKind.Block);
             AnimationBehavior?.Play(
                 mainHand,
                 stats.BlockAnimation,

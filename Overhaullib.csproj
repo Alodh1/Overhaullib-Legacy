@@ -3,7 +3,7 @@
   <PropertyGroup>
     <ModName>Overhaul lib legacy compat</ModName>
     <ModType>code</ModType>
-    <ModVersion>1.1.35</ModVersion>
+    <ModVersion>1.1.61</ModVersion>
     <ModId>overhaulliblegacycompat</ModId>
     <Description></Description>
     <Side>universal</Side>
@@ -85,7 +85,7 @@
   <Reference Include="SkiaSharp" HintPath="$(GameDirectory)\Lib\SkiaSharp.dll" Private="false" />
 
   <Reference Include="$(GameDirectory)\Lib\OpenTK*.dll" Private="false" />
-  <Reference Include="$(ExternalLibs)\**\*.dll" Private="false" />
+  <Reference Include="$(ExternalLibs)\**\*.dll" Exclude="$(ExternalLibs)\PlayerModelLib.dll" Private="false" />
 </ItemGroup>
 
 <ItemGroup>
@@ -101,6 +101,7 @@
 
   <Compile Remove="source\Animations\ItemsAnimations\AnimatableShapeCompat.cs" />
   <Compile Remove="source\Animations\ItemsAnimations\ClientItemAnimatorCompat.cs" />
+  <Compile Remove="tests\**\*.cs" />
 </ItemGroup>
 
   <!-- Forces rebuild -->

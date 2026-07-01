@@ -3,9 +3,45 @@ using CombatOverhaul.Utils;
 using ProtoBuf;
 using Vintagestory.API.Client;
 using Vintagestory.API.Common;
+using Vintagestory.API.Common.Entities;
 using Vintagestory.API.Server;
 
 namespace CombatOverhaul.DamageSystems;
+
+public enum EnumDamageBlockKind
+{
+    Unknown,
+    Block,
+    Parry
+}
+
+public sealed class DamageBlockEventArgs
+{
+    public DamageBlockEventArgs(EntityPlayer player, DamageSource damageSource, PlayerBodyPart bodyPart, EnumDamageBlockKind kind, bool mainHand, float initialDamage, float damageAfterBlock, int attackTier, int blockTier)
+    {
+        Player = player;
+        DamageSource = damageSource;
+        BodyPart = bodyPart;
+        Kind = kind;
+        MainHand = mainHand;
+        InitialDamage = initialDamage;
+        DamageAfterBlock = damageAfterBlock;
+        AttackTier = attackTier;
+        BlockTier = blockTier;
+    }
+
+    public EntityPlayer Player { get; }
+    public DamageSource DamageSource { get; }
+    public PlayerBodyPart BodyPart { get; }
+    public EnumDamageBlockKind Kind { get; }
+    public bool MainHand { get; }
+    public float InitialDamage { get; }
+    public float DamageAfterBlock { get; }
+    public float DamageBlocked => InitialDamage - DamageAfterBlock;
+    public int AttackTier { get; }
+    public int BlockTier { get; }
+    public bool FullyBlocked => DamageAfterBlock <= 0;
+}
 
 public sealed class DamageBlockStats
 {
@@ -17,8 +53,10 @@ public sealed class DamageBlockStats
     public readonly bool CanBlockProjectiles;
     public readonly TimeSpan StaggerTime;
     public readonly int StaggerTier;
+    public readonly EnumDamageBlockKind Kind;
+    public readonly bool MainHand;
 
-    public DamageBlockStats(PlayerBodyPart type, DirectionConstrain directions, Action<float, int, int> callback, string? sound, Dictionary<EnumDamageType, int>? blockTier, bool canBlockProjectiles, TimeSpan staggerTime, int staggerTier)
+    public DamageBlockStats(PlayerBodyPart type, DirectionConstrain directions, Action<float, int, int> callback, string? sound, Dictionary<EnumDamageType, int>? blockTier, bool canBlockProjectiles, TimeSpan staggerTime, int staggerTier, EnumDamageBlockKind kind, bool mainHand)
     {
         ZoneType = type;
         Directions = directions;
@@ -28,6 +66,8 @@ public sealed class DamageBlockStats
         CanBlockProjectiles = canBlockProjectiles;
         StaggerTime = staggerTime;
         StaggerTier = staggerTier;
+        Kind = kind;
+        MainHand = mainHand;
     }
 }
 
@@ -42,11 +82,12 @@ public sealed class DamageBlockPacket
     public bool CanBlockProjectiles { get; set; }
     public int StaggerTimeMs { get; set; }
     public int StaggerTier { get; set; }
+    public EnumDamageBlockKind Kind { get; set; } = EnumDamageBlockKind.Unknown;
     public ulong Id { get; set; }
 
     public DamageBlockStats ToBlockStats(Action<float, int, int> callback)
     {
-        return new((PlayerBodyPart)Zones, DirectionConstrain.FromArray(Directions), callback, Sound, BlockTier, CanBlockProjectiles, TimeSpan.FromMilliseconds(StaggerTimeMs), StaggerTier);
+        return new((PlayerBodyPart)Zones, DirectionConstrain.FromArray(Directions), callback, Sound, BlockTier, CanBlockProjectiles, TimeSpan.FromMilliseconds(StaggerTimeMs), StaggerTier, Kind, MainHand);
     }
 }
 
@@ -112,18 +153,25 @@ public sealed class MeleeBlockSystemClient : MeleeSystem
             .SetMessageHandler<DamageBlockCallbackPacket>(HandleCallback);
     }
 
-    public void StartBlock(DamageBlockJson block, bool mainHand)
+    public void StartBlock(DamageBlockJson block, bool mainHand) => StartBlock(block, mainHand, EnumDamageBlockKind.Unknown);
+
+    public void StartBlock(DamageBlockJson block, bool mainHand, EnumDamageBlockKind kind)
     {
         DamageBlockPacket packet = block.ToPacket();
         packet.Id = 0;
         packet.MainHand = mainHand;
+        packet.Kind = kind;
         _clientChannel.SendPacket(packet);
     }
-    public void StartBlock(DamageBlockJson block, bool mainHand, Action callback)
+
+    public void StartBlock(DamageBlockJson block, bool mainHand, Action callback) => StartBlock(block, mainHand, EnumDamageBlockKind.Unknown, callback);
+
+    public void StartBlock(DamageBlockJson block, bool mainHand, EnumDamageBlockKind kind, Action callback)
     {
         DamageBlockPacket packet = block.ToPacket();
         packet.Id = _nextId++;
         packet.MainHand = mainHand;
+        packet.Kind = kind;
 
         PushCallback(packet.Id, callback);
 
@@ -167,6 +215,9 @@ public interface IHasServerBlockCallback
 
 public sealed class MeleeBlockSystemServer : MeleeSystem
 {
+    public event Action<DamageBlockEventArgs>? OnDamageBlocked;
+    internal bool HasDamageBlockedListeners => OnDamageBlocked != null;
+
     public MeleeBlockSystemServer(ICoreServerAPI api)
     {
         _api = api;
@@ -184,7 +235,7 @@ public sealed class MeleeBlockSystemServer : MeleeSystem
 
     private void HandlePacket(IServerPlayer player, DamageBlockPacket packet)
     {
-        PlayerDamageModelBehavior behavior = player.Entity.GetBehavior<PlayerDamageModelBehavior>();
+        PlayerDamageModelBehavior? behavior = player.Entity.GetBehavior<PlayerDamageModelBehavior>();
         if (behavior != null)
         {
             _lastBlockMainHand = packet.MainHand;
@@ -194,7 +245,7 @@ public sealed class MeleeBlockSystemServer : MeleeSystem
 
     private void HandlePacket(IServerPlayer player, DamageStopBlockPacket packet)
     {
-        PlayerDamageModelBehavior behavior = player.Entity.GetBehavior<PlayerDamageModelBehavior>();
+        PlayerDamageModelBehavior? behavior = player.Entity.GetBehavior<PlayerDamageModelBehavior>();
         if (behavior != null && _lastBlockMainHand == packet.MainHand)
         {
             behavior.CurrentDamageBlock = null;
@@ -215,5 +266,10 @@ public sealed class MeleeBlockSystemServer : MeleeSystem
         {
             _serverChannel?.SendPacket(new DamageBlockCallbackPacket() { Id = id }, player);
         }
+    }
+
+    internal void EmitDamageBlocked(DamageBlockEventArgs args)
+    {
+        OnDamageBlocked?.Invoke(args);
     }
 }

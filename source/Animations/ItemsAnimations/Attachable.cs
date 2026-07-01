@@ -61,17 +61,25 @@ public class AnimatableAttachable : Animatable
 
         base.BeforeRender(clientApi, itemStack, player, target, dt);
 
-        foreach (Attachment attachment in Attachments.SelectMany(entry => entry.Value).Select(entry => entry.Value))
+        // Nested foreach over the dictionaries instead of SelectMany/Select to avoid the LINQ
+        // enumerator allocations on every held-item render.
+        foreach (Dictionary<string, Attachment> perEntity in Attachments.Values)
         {
-            attachment.BeforeRender(target, player, dt);
+            foreach (Attachment attachment in perEntity.Values)
+            {
+                attachment.BeforeRender(target, player, dt);
+            }
         }
     }
     public override void OnUnloaded(ICoreAPI api)
     {
         base.OnUnloaded(api);
-        foreach (Attachment attachment in Attachments.SelectMany(entry => entry.Value).Select(entry => entry.Value))
+        foreach (Dictionary<string, Attachment> perEntity in Attachments.Values)
         {
-            attachment.Dispose();
+            foreach (Attachment attachment in perEntity.Values)
+            {
+                attachment.Dispose();
+            }
         }
     }
 
@@ -88,12 +96,18 @@ public class AnimatableAttachable : Animatable
         base.RenderShape(shaderProgram, world, shape, itemStackRenderInfo, render, itemStack, lightrgbs, ItemModelMat, itemSlot, entity, dt, meshOverride);
 
         if (Shape?.GetAnimator(entity.EntityId) == null) return;
-        if (!ActiveAttachments.ContainsKey(entity.EntityId) || !Attachments.ContainsKey(entity.EntityId)) return;
-        if (GetCurrentShape(itemStack) == null) return;
+        if (!ActiveAttachments.TryGetValue(entity.EntityId, out Dictionary<string, bool>? activeAttachments)) return;
+        if (!Attachments.TryGetValue(entity.EntityId, out Dictionary<string, Attachment>? attachments)) return;
 
-        foreach ((string code, bool active) in ActiveAttachments[entity.EntityId].Where(x => x.Value))
+        // Resolve the shape once (was called again per attachment) and iterate the dictionary
+        // directly instead of allocating a LINQ Where enumerator each render pass.
+        AnimatableShape? currentShape = GetCurrentShape(itemStack);
+        if (currentShape == null) return;
+
+        foreach ((string code, bool active) in activeAttachments)
         {
-            Attachments[entity.EntityId][code].Render(GetCurrentShape(itemStack), shaderProgram, itemStackRenderInfo, render, lightrgbs, itemModelMat, entity, dt);
+            if (!active) continue;
+            attachments[code].Render(currentShape, shaderProgram, itemStackRenderInfo, render, lightrgbs, itemModelMat, entity, dt);
         }
     }
 }
@@ -172,13 +186,16 @@ public sealed class Attachment : IDisposable
     private readonly Animatable? _behavior;
     private readonly bool _disposeShape;
 
-    private Matrixf _attachedMeshMatrix = new();
+    private readonly Matrixf _attachedMeshMatrix = new();
+    private DummySlot? _dummySlot;
     private bool _disposed = false;
 
     private AnimatableShape? GetShape() => _shape ?? _behavior?.CurrentAnimatableShape;
     private void CalculateMeshMatrix(Matrixf modelMat, ItemRenderInfo renderInfo, ItemRenderInfo attachedRenderInfo, AttachmentPointAndPose apap, AttachmentPoint ap)
     {
-        _attachedMeshMatrix = modelMat.Clone()
+        // Reuse the matrix field in place instead of allocating a fresh Matrixf (new float[16]) per
+        // attachment per render pass. Set() copies modelMat's values into the existing buffer.
+        _attachedMeshMatrix.Set(modelMat.Values)
             .Translate(-renderInfo.Transform.Origin.X, -renderInfo.Transform.Origin.Y, -renderInfo.Transform.Origin.Z)
             .Mul(apap.AnimModelMatrix)
             .Translate((ap.PosX + attachedRenderInfo.Transform.Translation.X) / 16f, (ap.PosY + attachedRenderInfo.Transform.Translation.Y) / 16f, (ap.PosZ + attachedRenderInfo.Transform.Translation.Z) / 16f)
@@ -192,8 +209,10 @@ public sealed class Attachment : IDisposable
     }
     private ItemRenderInfo GetAttachmentRenderInfo(float dt)
     {
-        DummySlot dummySlot = new(_itemStack);
-        ItemRenderInfo renderInfo = _api.Render.GetItemStackRenderInfo(dummySlot, EnumItemRenderTarget.Ground, dt);
+        // The held stack is fixed for the lifetime of this attachment, so reuse one DummySlot
+        // instead of allocating a new one every render pass.
+        _dummySlot ??= new DummySlot(_itemStack);
+        ItemRenderInfo renderInfo = _api.Render.GetItemStackRenderInfo(_dummySlot, EnumItemRenderTarget.Ground, dt);
         renderInfo.Transform = _attachedTransform;
         return renderInfo;
     }

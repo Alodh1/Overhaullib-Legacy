@@ -75,14 +75,26 @@ public readonly struct PlayerItemFrame
 
     public static PlayerItemFrame Compose(IEnumerable<(PlayerItemFrame element, float weight)> frames)
     {
-        PlayerFrame player = PlayerFrame.Compose(frames.Select(entry => (entry.element.Player, entry.weight)));
-        ItemFrame item = ItemFrame.Compose(frames
-            .Where(entry => entry.element.Item != null)
-            .Select(entry => (entry.element.Item.Value, entry.weight))
-            );
+        IReadOnlyList<(PlayerItemFrame element, float weight)> materializedFrames = frames as IReadOnlyList<(PlayerItemFrame element, float weight)> ?? frames.ToArray();
+        PlayerFrame player = PlayerFrame.Compose(materializedFrames);
+
+        List<(ItemFrame element, float weight)> itemFrames = _itemFrameComposeScratch ??= new();
+        itemFrames.Clear();
+        foreach ((PlayerItemFrame element, float weight) in materializedFrames)
+        {
+            if (element.Item != null)
+            {
+                itemFrames.Add((element.Item.Value, weight));
+            }
+        }
+
+        ItemFrame item = ItemFrame.Compose(itemFrames);
 
         return new(player, item);
     }
+
+    [ThreadStatic]
+    private static List<(ItemFrame element, float weight)>? _itemFrameComposeScratch;
 }
 
 public readonly struct SoundFrame
@@ -1020,68 +1032,159 @@ public readonly struct PlayerFrame
     }
     public static PlayerFrame Compose(IEnumerable<(PlayerFrame element, float weight)> frames)
     {
-        List<(PlayerFrame element, float weight)> source = frames.ToList();
-
-        if (source.Count == 0)
+        PlayerFrameComposition composition = new();
+        foreach ((PlayerFrame element, float weight) in frames)
         {
-            return Empty;
+            composition.Add(element, weight);
         }
 
-        bool haveRightHandFrame = source.Any(entry => entry.element.RightHand != null);
-        bool haveLeftHandFrame = source.Any(entry => entry.element.LeftHand != null);
-        bool haveOtherPartsFrame = source.Any(entry => entry.element.OtherParts != null);
-        bool haveUpperTorsoFrame = source.Any(entry => entry.element.UpperTorso != null);
-        bool haveDetachedAnchorFrame = source.Any(entry => entry.element.DetachedAnchorFrame != null);
-        bool haveLowerTorsoFrame = source.Any(entry => entry.element.LowerTorso != null);
-
-        RightHandFrame rightHand = RightHandFrame.Compose(
-            source.Where(entry => entry.element.RightHand != null)
-                  .Select(entry => (entry.element.RightHand!.Value, entry.weight))
-        );
-
-        LeftHandFrame leftHand = LeftHandFrame.Compose(
-            source.Where(entry => entry.element.LeftHand != null)
-                  .Select(entry => (entry.element.LeftHand!.Value, entry.weight))
-        );
-
-        OtherPartsFrame otherParts = OtherPartsFrame.Compose(
-            source.Where(entry => entry.element.OtherParts != null)
-                  .Select(entry => (entry.element.OtherParts!.Value, entry.weight))
-        );
-
-        AnimationElement upperTorso = AnimationElement.Compose(
-            source.Where(entry => entry.element.UpperTorso != null)
-                  .Select(entry => (entry.element.UpperTorso!.Value, entry.weight))
-        );
-
-        AnimationElement detachedAnchor = AnimationElement.Compose(
-            source.Where(entry => entry.element.DetachedAnchorFrame != null)
-                  .Select(entry => (entry.element.DetachedAnchorFrame!.Value, entry.weight))
-        );
-
-        AnimationElement lowerTorso = AnimationElement.Compose(
-            source.Where(entry => entry.element.LowerTorso != null)
-                  .Select(entry => (entry.element.LowerTorso!.Value, entry.weight))
-        );
-
-        return new(
-            haveRightHandFrame ? rightHand : null,
-            haveLeftHandFrame ? leftHand : null,
-            haveOtherPartsFrame ? otherParts : null,
-            haveUpperTorsoFrame ? upperTorso : null,
-            haveDetachedAnchorFrame ? detachedAnchor : null,
-            source.Any(entry => entry.element.DetachedAnchor),
-            source.Any(entry => entry.element.SwitchArms),
-            source.Select(entry => entry.element.PitchFollow)
-                  .Where(value => Math.Abs(value - DefaultPitchFollow) > 1E-6f)
-                  .FirstOrDefault(DefaultPitchFollow),
-            source.Select(entry => entry.element.FovMultiplier).Min(),
-            source.Select(entry => entry.element.BobbingAmplitude).Min(),
-            source.Select(entry => entry.element.DetachedAnchorFollow).Min(),
-            haveLowerTorsoFrame ? lowerTorso : null
-        );
+        return composition.ToFrame();
     }
 
+    public static PlayerFrame Compose(IReadOnlyList<(PlayerItemFrame element, float weight)> frames)
+    {
+        PlayerFrameComposition composition = new();
+        foreach ((PlayerItemFrame element, float weight) in frames)
+        {
+            composition.Add(element.Player, weight);
+        }
+
+        return composition.ToFrame();
+    }
+
+    private struct PlayerFrameComposition
+    {
+        private bool _hasAny;
+        private bool _hasRightHand;
+        private bool _hasLeftHand;
+        private bool _hasOtherParts;
+        private bool _hasUpperTorso;
+        private bool _hasDetachedAnchorFrame;
+        private bool _hasLowerTorso;
+        private bool _detachedAnchor;
+        private bool _switchArms;
+        private bool _pitchFollowSet;
+        private float _pitchFollow;
+        private float _fovMultiplier;
+        private float _bobbingAmplitude;
+        private float _detachedAnchorFollow;
+
+        private AnimationElement.Accumulator _rightItemAnchor;
+        private AnimationElement.Accumulator _rightLowerArm;
+        private AnimationElement.Accumulator _rightUpperArm;
+        private AnimationElement.Accumulator _leftItemAnchor;
+        private AnimationElement.Accumulator _leftLowerArm;
+        private AnimationElement.Accumulator _leftUpperArm;
+        private AnimationElement.Accumulator _neck;
+        private AnimationElement.Accumulator _head;
+        private AnimationElement.Accumulator _upperFootR;
+        private AnimationElement.Accumulator _upperFootL;
+        private AnimationElement.Accumulator _lowerFootR;
+        private AnimationElement.Accumulator _lowerFootL;
+        private AnimationElement.Accumulator _upperTorso;
+        private AnimationElement.Accumulator _detachedAnchorFrame;
+        private AnimationElement.Accumulator _lowerTorso;
+
+        public void Add(PlayerFrame frame, float weight)
+        {
+            if (!_hasAny)
+            {
+                _fovMultiplier = frame.FovMultiplier;
+                _bobbingAmplitude = frame.BobbingAmplitude;
+                _detachedAnchorFollow = frame.DetachedAnchorFollow;
+                _hasAny = true;
+            }
+            else
+            {
+                _fovMultiplier = Math.Min(_fovMultiplier, frame.FovMultiplier);
+                _bobbingAmplitude = Math.Min(_bobbingAmplitude, frame.BobbingAmplitude);
+                _detachedAnchorFollow = Math.Min(_detachedAnchorFollow, frame.DetachedAnchorFollow);
+            }
+
+            _detachedAnchor |= frame.DetachedAnchor;
+            _switchArms |= frame.SwitchArms;
+            if (!_pitchFollowSet && Math.Abs(frame.PitchFollow - DefaultPitchFollow) > 1E-6f)
+            {
+                _pitchFollow = frame.PitchFollow;
+                _pitchFollowSet = true;
+            }
+
+            if (frame.RightHand is RightHandFrame rightHand)
+            {
+                _hasRightHand = true;
+                _rightItemAnchor.Add(rightHand.ItemAnchor, weight);
+                _rightLowerArm.Add(rightHand.LowerArmR, weight);
+                _rightUpperArm.Add(rightHand.UpperArmR, weight);
+            }
+
+            if (frame.LeftHand is LeftHandFrame leftHand)
+            {
+                _hasLeftHand = true;
+                _leftItemAnchor.Add(leftHand.ItemAnchorL, weight);
+                _leftLowerArm.Add(leftHand.LowerArmL, weight);
+                _leftUpperArm.Add(leftHand.UpperArmL, weight);
+            }
+
+            if (frame.OtherParts is OtherPartsFrame otherParts)
+            {
+                _hasOtherParts = true;
+                _neck.Add(otherParts.Neck, weight);
+                _head.Add(otherParts.Head, weight);
+                _upperFootR.Add(otherParts.UpperFootR, weight);
+                _upperFootL.Add(otherParts.UpperFootL, weight);
+                _lowerFootR.Add(otherParts.LowerFootR, weight);
+                _lowerFootL.Add(otherParts.LowerFootL, weight);
+            }
+
+            if (frame.UpperTorso is AnimationElement upperTorso)
+            {
+                _hasUpperTorso = true;
+                _upperTorso.Add(upperTorso, weight);
+            }
+
+            if (frame.DetachedAnchorFrame is AnimationElement detachedAnchorFrame)
+            {
+                _hasDetachedAnchorFrame = true;
+                _detachedAnchorFrame.Add(detachedAnchorFrame, weight);
+            }
+
+            if (frame.LowerTorso is AnimationElement lowerTorso)
+            {
+                _hasLowerTorso = true;
+                _lowerTorso.Add(lowerTorso, weight);
+            }
+        }
+
+        public PlayerFrame ToFrame()
+        {
+            if (!_hasAny) return Empty;
+
+            RightHandFrame? rightHand = _hasRightHand
+                ? new(_rightItemAnchor.ToElement(), _rightLowerArm.ToElement(), _rightUpperArm.ToElement())
+                : null;
+            LeftHandFrame? leftHand = _hasLeftHand
+                ? new(_leftItemAnchor.ToElement(), _leftLowerArm.ToElement(), _leftUpperArm.ToElement())
+                : null;
+            OtherPartsFrame? otherParts = _hasOtherParts
+                ? new(_neck.ToElement(), _head.ToElement(), _upperFootR.ToElement(), _upperFootL.ToElement(), _lowerFootR.ToElement(), _lowerFootL.ToElement())
+                : null;
+
+            return new(
+                rightHand,
+                leftHand,
+                otherParts,
+                _hasUpperTorso ? _upperTorso.ToElement() : null,
+                _hasDetachedAnchorFrame ? _detachedAnchorFrame.ToElement() : null,
+                _detachedAnchor,
+                _switchArms,
+                _pitchFollowSet ? _pitchFollow : DefaultPitchFollow,
+                _fovMultiplier,
+                _bobbingAmplitude,
+                _detachedAnchorFollow,
+                _hasLowerTorso ? _lowerTorso.ToElement() : null
+            );
+        }
+    }
 }
 
 public readonly struct RightHandFrame
@@ -1140,10 +1243,20 @@ public readonly struct RightHandFrame
 
     public static RightHandFrame Compose(IEnumerable<(RightHandFrame element, float weight)> frames)
     {
+        AnimationElement.Accumulator itemAnchor = new();
+        AnimationElement.Accumulator lowerArm = new();
+        AnimationElement.Accumulator upperArm = new();
+        foreach ((RightHandFrame element, float weight) in frames)
+        {
+            itemAnchor.Add(element.ItemAnchor, weight);
+            lowerArm.Add(element.LowerArmR, weight);
+            upperArm.Add(element.UpperArmR, weight);
+        }
+
         return new(
-            AnimationElement.Compose(frames.Select(entry => (entry.element.ItemAnchor, entry.weight))),
-            AnimationElement.Compose(frames.Select(entry => (entry.element.LowerArmR, entry.weight))),
-            AnimationElement.Compose(frames.Select(entry => (entry.element.UpperArmR, entry.weight)))
+            itemAnchor.ToElement(),
+            lowerArm.ToElement(),
+            upperArm.ToElement()
             );
     }
 }
@@ -1204,10 +1317,20 @@ public readonly struct LeftHandFrame
 
     public static LeftHandFrame Compose(IEnumerable<(LeftHandFrame element, float weight)> frames)
     {
+        AnimationElement.Accumulator itemAnchor = new();
+        AnimationElement.Accumulator lowerArm = new();
+        AnimationElement.Accumulator upperArm = new();
+        foreach ((LeftHandFrame element, float weight) in frames)
+        {
+            itemAnchor.Add(element.ItemAnchorL, weight);
+            lowerArm.Add(element.LowerArmL, weight);
+            upperArm.Add(element.UpperArmL, weight);
+        }
+
         return new(
-            AnimationElement.Compose(frames.Select(entry => (entry.element.ItemAnchorL, entry.weight))),
-            AnimationElement.Compose(frames.Select(entry => (entry.element.LowerArmL, entry.weight))),
-            AnimationElement.Compose(frames.Select(entry => (entry.element.UpperArmL, entry.weight)))
+            itemAnchor.ToElement(),
+            lowerArm.ToElement(),
+            upperArm.ToElement()
             );
     }
 }
@@ -1298,13 +1421,29 @@ public readonly struct OtherPartsFrame
 
     public static OtherPartsFrame Compose(IEnumerable<(OtherPartsFrame element, float weight)> frames)
     {
+        AnimationElement.Accumulator neck = new();
+        AnimationElement.Accumulator head = new();
+        AnimationElement.Accumulator upperFootR = new();
+        AnimationElement.Accumulator upperFootL = new();
+        AnimationElement.Accumulator lowerFootR = new();
+        AnimationElement.Accumulator lowerFootL = new();
+        foreach ((OtherPartsFrame element, float weight) in frames)
+        {
+            neck.Add(element.Neck, weight);
+            head.Add(element.Head, weight);
+            upperFootR.Add(element.UpperFootR, weight);
+            upperFootL.Add(element.UpperFootL, weight);
+            lowerFootR.Add(element.LowerFootR, weight);
+            lowerFootL.Add(element.LowerFootL, weight);
+        }
+
         return new(
-            AnimationElement.Compose(frames.Select(entry => (entry.element.Neck, entry.weight))),
-            AnimationElement.Compose(frames.Select(entry => (entry.element.Head, entry.weight))),
-            AnimationElement.Compose(frames.Select(entry => (entry.element.UpperFootR, entry.weight))),
-            AnimationElement.Compose(frames.Select(entry => (entry.element.UpperFootL, entry.weight))),
-            AnimationElement.Compose(frames.Select(entry => (entry.element.LowerFootR, entry.weight))),
-            AnimationElement.Compose(frames.Select(entry => (entry.element.LowerFootL, entry.weight)))
+            neck.ToElement(),
+            head.ToElement(),
+            upperFootR.ToElement(),
+            upperFootL.ToElement(),
+            lowerFootR.ToElement(),
+            lowerFootL.ToElement()
             );
     }
 }
@@ -1410,52 +1549,76 @@ public readonly struct AnimationElement
     }
     public static AnimationElement Compose(IEnumerable<(AnimationElement element, float weight)> elements)
     {
-        float offsetX = 0;
-        float offsetY = 0;
-        float offsetZ = 0;
-        float rotationX = 0;
-        float rotationY = 0;
-        float rotationZ = 0;
-
-        float offsetXMaxWeight = 0;
-        float offsetYMaxWeight = 0;
-        float offsetZMaxWeight = 0;
-        float rotationXMaxWeight = 0;
-        float rotationYMaxWeight = 0;
-        float rotationZMaxWeight = 0;
-
+        Accumulator accumulator = new();
         foreach ((AnimationElement element, float weight) in elements)
         {
-            if (weight <= 0) continue;
-
-            if (weight >= offsetXMaxWeight && element.OffsetX.HasValue) { offsetXMaxWeight = weight; offsetX = element.OffsetX.Value; }
-            if (weight >= offsetYMaxWeight && element.OffsetY.HasValue) { offsetYMaxWeight = weight; offsetY = element.OffsetY.Value; }
-            if (weight >= offsetZMaxWeight && element.OffsetZ.HasValue) { offsetZMaxWeight = weight; offsetZ = element.OffsetZ.Value; }
-            if (weight >= rotationXMaxWeight && element.RotationX.HasValue) { rotationXMaxWeight = weight; rotationX = element.RotationX.Value; }
-            if (weight >= rotationYMaxWeight && element.RotationY.HasValue) { rotationYMaxWeight = weight; rotationY = element.RotationY.Value; }
-            if (weight >= rotationZMaxWeight && element.RotationZ.HasValue) { rotationZMaxWeight = weight; rotationZ = element.RotationZ.Value; }
+            accumulator.Add(element, weight);
         }
 
-        foreach ((AnimationElement element, float weight) in elements)
+        return accumulator.ToElement();
+    }
+
+    internal struct Accumulator
+    {
+        // Positive-weight contributions are resolved with "max weight wins" (replace); weight <= 0
+        // contributions are additive layers applied on top of the replace winner. These two groups are
+        // kept in separate fields and combined only in ToElement, so the result does not depend on the
+        // order in which Add is called. A single shared field would let a positive-weight frame added
+        // after an additive frame overwrite that additive contribution (e.g. the weight-0 "grip" layer
+        // being clobbered by the main-hand animation when it composes later in iteration order).
+        private float _offsetX;
+        private float _offsetY;
+        private float _offsetZ;
+        private float _rotationX;
+        private float _rotationY;
+        private float _rotationZ;
+
+        private float _offsetXMaxWeight;
+        private float _offsetYMaxWeight;
+        private float _offsetZMaxWeight;
+        private float _rotationXMaxWeight;
+        private float _rotationYMaxWeight;
+        private float _rotationZMaxWeight;
+
+        private float _offsetXAdditive;
+        private float _offsetYAdditive;
+        private float _offsetZAdditive;
+        private float _rotationXAdditive;
+        private float _rotationYAdditive;
+        private float _rotationZAdditive;
+
+        public void Add(AnimationElement element, float weight)
         {
-            if (weight > 0) continue;
+            if (weight > 0)
+            {
+                if (weight >= _offsetXMaxWeight && element.OffsetX.HasValue) { _offsetXMaxWeight = weight; _offsetX = element.OffsetX.Value; }
+                if (weight >= _offsetYMaxWeight && element.OffsetY.HasValue) { _offsetYMaxWeight = weight; _offsetY = element.OffsetY.Value; }
+                if (weight >= _offsetZMaxWeight && element.OffsetZ.HasValue) { _offsetZMaxWeight = weight; _offsetZ = element.OffsetZ.Value; }
+                if (weight >= _rotationXMaxWeight && element.RotationX.HasValue) { _rotationXMaxWeight = weight; _rotationX = element.RotationX.Value; }
+                if (weight >= _rotationYMaxWeight && element.RotationY.HasValue) { _rotationYMaxWeight = weight; _rotationY = element.RotationY.Value; }
+                if (weight >= _rotationZMaxWeight && element.RotationZ.HasValue) { _rotationZMaxWeight = weight; _rotationZ = element.RotationZ.Value; }
+                return;
+            }
 
-            if (element.OffsetX.HasValue) offsetX += element.OffsetX.Value;
-            if (element.OffsetY.HasValue) offsetY += element.OffsetY.Value;
-            if (element.OffsetZ.HasValue) offsetZ += element.OffsetZ.Value;
-            if (element.RotationX.HasValue) rotationX += element.RotationX.Value;
-            if (element.RotationY.HasValue) rotationY += element.RotationY.Value;
-            if (element.RotationZ.HasValue) rotationZ += element.RotationZ.Value;
+            if (element.OffsetX.HasValue) _offsetXAdditive += element.OffsetX.Value;
+            if (element.OffsetY.HasValue) _offsetYAdditive += element.OffsetY.Value;
+            if (element.OffsetZ.HasValue) _offsetZAdditive += element.OffsetZ.Value;
+            if (element.RotationX.HasValue) _rotationXAdditive += element.RotationX.Value;
+            if (element.RotationY.HasValue) _rotationYAdditive += element.RotationY.Value;
+            if (element.RotationZ.HasValue) _rotationZAdditive += element.RotationZ.Value;
         }
 
-        return new(
-            offsetX,
-            offsetY,
-            offsetZ,
-            rotationX,
-            rotationY,
-            rotationZ
+        public AnimationElement ToElement()
+        {
+            return new(
+                _offsetX + _offsetXAdditive,
+                _offsetY + _offsetYAdditive,
+                _offsetZ + _offsetZAdditive,
+                _rotationX + _rotationXAdditive,
+                _rotationY + _rotationYAdditive,
+                _rotationZ + _rotationZAdditive
             );
+        }
     }
     public static AnimationElement FromVanilla(AnimationKeyFrameElement frame)
     {

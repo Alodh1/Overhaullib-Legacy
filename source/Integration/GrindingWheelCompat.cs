@@ -12,11 +12,25 @@ namespace CombatOverhaul.Integration;
 
 public static class GrindingWheelCompat
 {
+    public delegate float ExtraWeaponCriticalHitChanceDelegate(ItemStack weaponStack, Entity target, float damage);
+
+    private const string GrindingWheelCritStatCode = "critchance";
+    private const string GrindingWheelSharpenedBuffCode = "sharpened";
+    private const float CriticalHitDamageMultiplier = 2f;
     private static ICoreAPI? _api;
+
+    public static event ExtraWeaponCriticalHitChanceDelegate? ExtraWeaponCriticalHitChance;
 
     public static void SetApi(ICoreAPI api)
     {
         _api = api;
+        CriticalHitFeedback.Register(api);
+    }
+
+    public static void Dispose()
+    {
+        CriticalHitFeedback.Dispose();
+        _api = null;
     }
 
     public static void EnsureWeaponBuffableBehavior(ICoreAPI api)
@@ -52,18 +66,144 @@ public static class GrindingWheelCompat
 
     public static float ApplyBuffableDamage(ItemStack? weaponStack, Entity target, float damage)
     {
+        return ApplyBuffableDamage(weaponStack, target, damage, null, allowCriticalHit: true);
+    }
+
+    public static float ApplyBuffableDamage(ItemStack? weaponStack, Entity target, float damage, DamageSource? damageSource)
+    {
+        return ApplyBuffableDamage(weaponStack, target, damage, damageSource, allowCriticalHit: true);
+    }
+
+    public static float ApplyBuffableDamage(ItemStack? weaponStack, Entity target, float damage, DamageSource? damageSource, bool allowCriticalHit)
+    {
         if (damage <= 0 || weaponStack?.Collectible == null)
         {
             return damage;
         }
 
-        if (weaponStack.Collectible.GetCollectibleBehavior<CollectibleBehaviorBuffable>(true) == null)
+        CollectibleBehaviorBuffable? behavior = weaponStack.Collectible.GetCollectibleBehavior<CollectibleBehaviorBuffable>(true);
+
+        float criticalHitChance = allowCriticalHit ? GetCombinedCriticalHitChance(weaponStack, target, damage, behavior) : 0f;
+        if (criticalHitChance > 0 && target.World.Rand.NextDouble() < criticalHitChance)
         {
-            return damage;
+            damage *= CriticalHitDamageMultiplier;
+            CriticalHitFeedback.Trigger(damageSource);
         }
 
-        bool isCriticalHit = false;
-        return weaponStack.Collectible.GetDamageToEntity(damage, target, weaponStack, ref isCriticalHit);
+        if (behavior == null) return damage;
+
+        return ApplyBuffableDamageWithoutGrindingWheelCriticalRoll(weaponStack, target, damage, behavior);
+    }
+
+    private static float ApplyBuffableDamageWithoutGrindingWheelCriticalRoll(ItemStack weaponStack, Entity target, float damage, CollectibleBehaviorBuffable behavior)
+    {
+        List<AppliedCollectibleBuff> originalBuffs;
+        try
+        {
+            originalBuffs = CloneBuffs(behavior.GetItemBuffs(weaponStack));
+        }
+        catch
+        {
+            bool fallbackCriticalHit = false;
+            return weaponStack.Collectible.GetDamageToEntity(damage, target, weaponStack, ref fallbackCriticalHit);
+        }
+
+        if (!originalBuffs.Any(IsGrindingWheelCriticalHitBuff))
+        {
+            bool nonCriticalHit = false;
+            return weaponStack.Collectible.GetDamageToEntity(damage, target, weaponStack, ref nonCriticalHit);
+        }
+
+        List<AppliedCollectibleBuff> nonRollingBuffs = CloneBuffs(originalBuffs);
+        foreach (AppliedCollectibleBuff buff in nonRollingBuffs)
+        {
+            if (IsGrindingWheelCriticalHitBuff(buff))
+            {
+                buff.Multiplier = buff.Multiplier > 1f ? 1f : 0f;
+            }
+        }
+
+        try
+        {
+            behavior.StoreItemBuffs(weaponStack, nonRollingBuffs);
+            bool nonCriticalHit = false;
+            return weaponStack.Collectible.GetDamageToEntity(damage, target, weaponStack, ref nonCriticalHit);
+        }
+        finally
+        {
+            behavior.StoreItemBuffs(weaponStack, originalBuffs);
+        }
+    }
+
+    private static float GetCombinedCriticalHitChance(ItemStack weaponStack, Entity target, float damage, CollectibleBehaviorBuffable? behavior)
+    {
+        float chance = GetGrindingWheelCriticalHitChance(weaponStack, behavior);
+
+        ExtraWeaponCriticalHitChanceDelegate? handlers = ExtraWeaponCriticalHitChance;
+        if (handlers != null)
+        {
+            foreach (ExtraWeaponCriticalHitChanceDelegate handler in handlers.GetInvocationList().Cast<ExtraWeaponCriticalHitChanceDelegate>())
+            {
+                try
+                {
+                    chance += Math.Max(0f, handler(weaponStack, target, damage));
+                }
+                catch (Exception exception)
+                {
+                    _api?.Logger.Warning($"[OverhaullibLegacyCompat] Weapon critical hit chance provider failed: {exception}");
+                }
+            }
+        }
+
+        return Math.Clamp(chance, 0f, 1f);
+    }
+
+    private static float GetGrindingWheelCriticalHitChance(ItemStack weaponStack, CollectibleBehaviorBuffable? behavior)
+    {
+        if (behavior == null) return 0f;
+
+        try
+        {
+            float chance = 0f;
+            foreach (AppliedCollectibleBuff buff in behavior.GetItemBuffs(weaponStack))
+            {
+                if (IsGrindingWheelCriticalHitBuff(buff))
+                {
+                    chance += NormalizeCriticalHitChance(buff.Multiplier);
+                }
+            }
+
+            return Math.Clamp(chance, 0f, 1f);
+        }
+        catch
+        {
+            return 0f;
+        }
+    }
+
+    private static bool IsGrindingWheelCriticalHitBuff(AppliedCollectibleBuff buff)
+    {
+        return buff.Code.Equals(GrindingWheelSharpenedBuffCode, StringComparison.OrdinalIgnoreCase)
+            && buff.StatCode.Equals(GrindingWheelCritStatCode, StringComparison.OrdinalIgnoreCase)
+            && NormalizeCriticalHitChance(buff.Multiplier) > 0f;
+    }
+
+    private static float NormalizeCriticalHitChance(float multiplier)
+    {
+        if (multiplier <= 0f) return 0f;
+        return multiplier > 1f ? multiplier - 1f : multiplier;
+    }
+
+    private static List<AppliedCollectibleBuff> CloneBuffs(IEnumerable<AppliedCollectibleBuff> buffs)
+    {
+        return buffs.Select(buff => new AppliedCollectibleBuff
+        {
+            Code = buff.Code,
+            StatCode = buff.StatCode,
+            Multiplier = buff.Multiplier,
+            FlatChange = buff.FlatChange,
+            RemainingDurability = buff.RemainingDurability
+        }).ToList();
     }
 
     public static bool TryEnableGrindingWheelBuff(ItemSlot? slot)

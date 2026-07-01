@@ -12,10 +12,12 @@ using CombatOverhaul.RangedSystems;
 using CombatOverhaul.RangedSystems.Aiming;
 using CombatOverhaul.Utils;
 using CombatOverhaul.Vanity;
-using ConfigLib;
 using Newtonsoft.Json.Linq;
 using OpenTK.Mathematics;
 using ProtoBuf;
+using System.Globalization;
+using System.Linq.Expressions;
+using System.Reflection;
 using Vintagestory.API.Client;
 using Vintagestory.API.Common;
 using Vintagestory.API.Common.Entities;
@@ -107,12 +109,17 @@ public partial class CombatOverhaulSystem : ModSystem
         (api as ClientCoreAPI)?.ClassRegistryNative.RegisterInventoryClass(GlobalConstants.characterInvClassName, typeof(ArmorInventory));
         (api as ClientCoreAPI)?.ClassRegistryNative.RegisterInventoryClass(GlobalConstants.backpackInvClassName, typeof(InventoryPlayerBackPacksCombatOverhaul));
 
-        ExtendedElementPose.NameHashCache = new(api, "element pose name hash cache", 500000, 11 * 60 * 1000, threadSafe: true);
+        api.RegisterBlockClass("CombatOverhaul:GenericDisplayBlock", typeof(Utils.GenericDisplayBlock));
+        api.RegisterBlockClass("CombatOverhaul:HandbookAntlerMount", typeof(HandbookAntlerMount));
+        api.RegisterBlockEntityClass("CombatOverhaul:GenericDisplayBlockEntity", typeof(Utils.GenericDisplayBlockEntity));
+
+        RegisterClassMappings(api);
     }
 
     public override void Start(ICoreAPI api)
     {
         GrindingWheelCompat.SetApi(api);
+        SplitMaterialWeaponUtil.SetApi(api);
         HarmonyPatchesManager.Patch(api);
 
         if (api.Side == EnumAppSide.Client)
@@ -126,6 +133,21 @@ public partial class CombatOverhaulSystem : ModSystem
             AnimationPatches.ServerSettings = Settings;
         }
 
+        AiTaskRegistry.Register<AiTaskCOTurretMode>("CombatOverhaul:TurretMode");
+        AiTaskRegistry.Register<StaggerAiTask>("CombatOverhaul:Stagger");
+
+        StartConfigLibSubscription(api);
+        ApplyConfigFileSettings(api);
+        ApplyRuntimeSettings(Settings);
+
+        if (api.ModLoader.IsModEnabled("combatoverhaul") || api.ModLoader.IsModEnabled("combatoverhaulfork"))
+        {
+            EidolonSlam_KnockbackMultiplierPatch.KnockbackMultiplier = 0.2f;
+        }
+    }
+
+    private static void RegisterClassMappings(ICoreAPI api)
+    {
         api.RegisterEntityBehaviorClass("CombatOverhaul:FirstPersonAnimations", typeof(FirstPersonAnimationsBehavior));
         api.RegisterEntityBehaviorClass("CombatOverhaul:ThirdPersonAnimations", typeof(ThirdPersonAnimationsBehavior));
         api.RegisterEntityBehaviorClass("CombatOverhaul:EntityColliders", typeof(CollidersEntityBehavior));
@@ -162,33 +184,18 @@ public partial class CombatOverhaulSystem : ModSystem
         api.RegisterItemClass("CombatOverhaul:Sling", typeof(SlingItem));
         api.RegisterItemClass("CombatOverhaul:MeleeWeapon", typeof(MeleeWeapon));
         api.RegisterItemClass("CombatOverhaul:StanceBasedMeleeWeapon", typeof(StanceBasedMeleeWeapon));
+        api.RegisterItemClass("CombatOverhaul:TextureAttributedItem", typeof(TextureAttributedItem));
         api.RegisterItemClass("CombatOverhaul:VanillaShield", typeof(VanillaShield));
         api.RegisterItemClass("CombatOverhaul:WearableArmor", typeof(ItemWearableArmor));
         api.RegisterItemClass("CombatOverhaul:WearableFueledLightSource", typeof(WearableFueledLightSource));
-        api.RegisterBlockClass("CombatOverhaul:GenericDisplayBlock", typeof(Utils.GenericDisplayBlock));
-        api.RegisterBlockEntityClass("CombatOverhaul:GenericDisplayBlockEntity", typeof(Utils.GenericDisplayBlockEntity));
 
         api.RegisterEntity("CombatOverhaul:Projectile", typeof(ProjectileEntity));
         api.RegisterEntity("CombatOverhaul:ArmorStand", typeof(EntityCOArmorStand));
-
-
-        AiTaskRegistry.Register<AiTaskCOTurretMode>("CombatOverhaul:TurretMode");
-        AiTaskRegistry.Register<StaggerAiTask>("CombatOverhaul:Stagger");
-
-        InInventoryPlayerBehavior._reportedEntities.Clear();
-
-        if (api.ModLoader.IsModEnabled("configlib"))
-        {
-            SubscribeToConfigChange(api);
-        }
-
-        if (api.ModLoader.IsModEnabled("combatoverhaul") || api.ModLoader.IsModEnabled("combatoverhaulfork"))
-        {
-            EidolonSlam_KnockbackMultiplierPatch.KnockbackMultiplier = 0.2f;
-        }
     }
+
     public override void StartServerSide(ICoreServerAPI api)
     {
+        _serverApi = api;
         ServerProjectileSystem = new(api);
         ServerRangedWeaponSystem = new(api);
         ServerSoundsSynchronizer = new(api);
@@ -204,6 +211,10 @@ public partial class CombatOverhaulSystem : ModSystem
             .RegisterMessageType<TogglePacket>()
             .SetMessageHandler<TogglePacket>(ToggleWearableItem);
 
+        _serverGameplaySettingsChannel = api.Network.RegisterChannel(GameplaySettingsChannelId)
+            .RegisterMessageType<ServerGameplaySettingsPacket>();
+        _playerNowPlayingSettingsHandler = SendGameplaySettings;
+        api.Event.PlayerNowPlaying += _playerNowPlayingSettingsHandler;
     }
     public override void StartClientSide(ICoreClientAPI api)
     {
@@ -231,6 +242,10 @@ public partial class CombatOverhaulSystem : ModSystem
 
         _clientToggleChannel = api.Network.RegisterChannel("combatOverhaulToggleItem")
             .RegisterMessageType<TogglePacket>();
+
+        _clientGameplaySettingsChannel = api.Network.RegisterChannel(GameplaySettingsChannelId)
+            .RegisterMessageType<ServerGameplaySettingsPacket>()
+            .SetMessageHandler<ServerGameplaySettingsPacket>(HandleServerGameplaySettings);
 
 #if DEBUG
         if (!api.IsSinglePlayer)
@@ -290,6 +305,9 @@ public partial class CombatOverhaulSystem : ModSystem
     }
     public override void AssetsLoaded(ICoreAPI api)
     {
+        StartConfigLibSubscription(api);
+        ApplyConfigFileSettings(api);
+        ApplyRuntimeSettings(Settings);
         QuenchablePatchGate.DisableCustomQuenchRecipeAssetsIfDisabled(api);
 
         if (api is not ICoreClientAPI clientApi) return;
@@ -403,7 +421,16 @@ public partial class CombatOverhaulSystem : ModSystem
         if (Disposed) return;
 
         HarmonyPatchesManager.Unpatch();
+        GrindingWheelCompat.Dispose();
+        StopConfigLibSubscriptionRetry();
         UnsubscribeFromConfigChange();
+        _configLibSubscriptionApi = null;
+        if (_serverApi != null && _playerNowPlayingSettingsHandler != null)
+        {
+            _serverApi.Event.PlayerNowPlaying -= _playerNowPlayingSettingsHandler;
+        }
+        _serverApi = null;
+        _playerNowPlayingSettingsHandler = null;
 
         _clientApi?.Event.UnregisterRenderer(ReticleRenderer, EnumRenderStage.Ortho);
         _clientApi?.Event.UnregisterRenderer(DirectionCursorRenderer, EnumRenderStage.Ortho);
@@ -429,10 +456,6 @@ public partial class CombatOverhaulSystem : ModSystem
         _clientApi?.World.UnregisterGameTickListener(_cacheMissesReportedListener);
 
         Disposed = true;
-
-        ExtendedElementPose.NameHashCache?.Dispose();
-        ExtendedElementPose.NameHashCache = null;
-
         ServerImpaleSystem?.Dispose();
         ServerVanitySystem?.Dispose();
     }
@@ -461,6 +484,31 @@ public partial class CombatOverhaulSystem : ModSystem
         return toggled;
     }
     public void ToggleWearableItem(IServerPlayer player, TogglePacket packet) => ToggleWearableItem(player, packet.HotKeyCode);
+
+    private void SendGameplaySettings(IServerPlayer player)
+    {
+        _serverGameplaySettingsChannel?.SendPacket(ServerGameplaySettingsPacket.From(Settings), player);
+    }
+
+    private void BroadcastGameplaySettings()
+    {
+        _serverGameplaySettingsChannel?.BroadcastPacket(ServerGameplaySettingsPacket.From(Settings));
+    }
+
+    private void HandleServerGameplaySettings(ServerGameplaySettingsPacket packet)
+    {
+        _lastServerGameplaySettings = packet;
+        packet.ApplyTo(Settings);
+        ApplyRuntimeSettings(Settings);
+        SettingsChanged?.Invoke(Settings);
+    }
+
+    private void ReapplyServerGameplaySettingsIfNeeded(ICoreAPI? api)
+    {
+        if (api?.Side != EnumAppSide.Client || _lastServerGameplaySettings == null) return;
+
+        _lastServerGameplaySettings.ApplyTo(Settings);
+    }
 
     public ProjectileSystemClient? ClientProjectileSystem { get; private set; }
     public ProjectileSystemServer? ServerProjectileSystem { get; private set; }
@@ -493,20 +541,42 @@ public partial class CombatOverhaulSystem : ModSystem
     private readonly Vector4 _iconScale = new(-0.1f, -0.1f, 1.2f, 1.2f);
     private IClientNetworkChannel? _clientToggleChannel;
     private IServerNetworkChannel? _serverToggleChannel;
+    private IClientNetworkChannel? _clientGameplaySettingsChannel;
+    private IServerNetworkChannel? _serverGameplaySettingsChannel;
+    private ICoreServerAPI? _serverApi;
+    private PlayerDelegate? _playerNowPlayingSettingsHandler;
+    private ServerGameplaySettingsPacket? _lastServerGameplaySettings;
+    private const string GameplaySettingsChannelId = "CombatOverhaul:server-gameplay-settings";
     private const string _iconsFolder = "sloticons";
     private const string _iconsPath = $"textures/{_iconsFolder}/";
     private long _cacheMissesReportedListener = 0;
     private long _ensureAnimationBehaviorsListener = 0;
     private bool _reportedAnimationBehaviorFallback = false;
     private bool _reportedAnimationBehaviorFallbackError = false;
-    private ConfigLibModSystem? _configLibSystem;
-    private Action<string, IConfig, ISetting>? _configSettingChangedHandler;
-    private Action? _configLoadedHandler;
+    private readonly HashSet<AssetLocation> _reportedMissingSvgIcons = [];
+    private object? _configLibSystem;
+    private EventInfo? _configSettingChangedEvent;
+    private EventInfo? _configLoadedEvent;
+    private MethodInfo? _configGetConfigMethod;
+    private Delegate? _configSettingChangedHandler;
+    private Delegate? _configLoadedHandler;
+    private ICoreAPI? _configLibSubscriptionApi;
+    private long _configLibSubscribeRetryListener;
+    private bool _configLibSubscribed;
+    private bool _reportedConfigLibIntegrationError;
+    private string? _lastAppliedConfigFileSettingsSummary;
+    private const int ConfigLibSubscribeRetryIntervalMs = 500;
 
     private void RegisterCustomIcon(ICoreClientAPI api, string key, string path)
     {
+        AssetLocation location = new(path);
+        IAsset? svgAsset = TryGetLoadedSvgAsset(api, location);
+
         api.Gui.Icons.CustomIcons[key] = delegate (Context ctx, int x, int y, float w, float h, double[] rgba)
         {
+            svgAsset = EnsureLoadedSvgAsset(api, location, svgAsset);
+            if (svgAsset == null) return;
+
             int value = ColorUtil.ColorFromRgba(75, 75, 75, 255);
 
             if (rgba.Length == 4)
@@ -514,13 +584,11 @@ public partial class CombatOverhaulSystem : ModSystem
                 value = ColorUtil.ColorFromRgba(rgba);
             }
 
-            if (rgba[0] == 0 && rgba[1] == 0 && rgba[2] == 0 && rgba[3] == 0.2) // To override vanilla clothes and armor icon color
+            if (rgba.Length >= 4 && rgba[0] == 0 && rgba[1] == 0 && rgba[2] == 0 && rgba[3] == 0.2) // To override vanilla clothes and armor icon color
             {
                 value = ColorUtil.ColorFromRgba(75, 75, 75, 190);
             }
 
-            AssetLocation location = new(path);
-            IAsset svgAsset = api.Assets.TryGet(location);
             Surface target = ctx.GetTarget();
 
             int xNew = x + (int)(w * _iconScale.X);
@@ -532,32 +600,142 @@ public partial class CombatOverhaulSystem : ModSystem
         };
     }
 
-    private void SubscribeToConfigChange(ICoreAPI api)
+    private IAsset? EnsureLoadedSvgAsset(ICoreClientAPI api, AssetLocation location, IAsset? asset)
     {
-        ConfigLibModSystem system = api.ModLoader.GetModSystem<ConfigLibModSystem>();
-        _configLibSystem = system;
+        if (asset?.IsLoaded() == true && asset.Data != null) return asset;
 
-        _configSettingChangedHandler = (domain, config, setting) =>
+        asset = TryGetLoadedSvgAsset(api, location);
+        if (asset != null) return asset;
+
+        if (_reportedMissingSvgIcons.Add(location))
         {
-            if (domain != "combatoverhaul" && domain != "combatoverhaulfork" && domain != "bullseyecontinued" && domain != "overhaullib") return;
+            LoggerUtil.Warn(api, this, $"Failed to draw custom GUI icon '{location}': SVG asset is missing or not loaded");
+        }
 
-            setting.AssignSettingValue(Settings);
+        return null;
+    }
+
+    private static IAsset? TryGetLoadedSvgAsset(ICoreClientAPI api, AssetLocation location)
+    {
+        IAsset? asset = api.Assets.TryGet(location, loadAsset: true);
+        return asset?.IsLoaded() == true && asset.Data != null ? asset : null;
+    }
+
+    private void StartConfigLibSubscription(ICoreAPI api)
+    {
+        if (_configLibSubscribed || _reportedConfigLibIntegrationError) return;
+        if (!api.ModLoader.IsModEnabled("configlib")) return;
+
+        _configLibSubscriptionApi = api;
+
+        if (SubscribeToConfigChange(api)) return;
+        if (_reportedConfigLibIntegrationError || _configLibSubscribeRetryListener != 0) return;
+
+        _configLibSubscribeRetryListener = api.Event.RegisterGameTickListener(_ =>
+        {
+            if (_reportedConfigLibIntegrationError)
+            {
+                StopConfigLibSubscriptionRetry();
+                return;
+            }
+
+            if (!SubscribeToConfigChange(api)) return;
+
+            StopConfigLibSubscriptionRetry();
+        }, ConfigLibSubscribeRetryIntervalMs, ConfigLibSubscribeRetryIntervalMs);
+    }
+
+    private void StopConfigLibSubscriptionRetry()
+    {
+        if (_configLibSubscribeRetryListener == 0) return;
+
+        _configLibSubscriptionApi?.Event.UnregisterGameTickListener(_configLibSubscribeRetryListener);
+        _configLibSubscribeRetryListener = 0;
+    }
+
+    private bool SubscribeToConfigChange(ICoreAPI api)
+    {
+        if (_configLibSubscribed) return true;
+
+        try
+        {
+            Type? configLibSystemType = FindLoadedType("ConfigLib.ConfigLibModSystem");
+            if (configLibSystemType == null) return false;
+
+            object? system = GetModSystem(api, configLibSystemType);
+            if (system == null) return false;
+
+            _configLibSystem = system;
+            _configGetConfigMethod = configLibSystemType.GetMethod("GetConfig", BindingFlags.Public | BindingFlags.Instance, null, [typeof(string)], null);
+            _configSettingChangedEvent = configLibSystemType.GetEvent("SettingChanged", BindingFlags.Public | BindingFlags.Instance);
+            _configLoadedEvent = configLibSystemType.GetEvent("ConfigsLoaded", BindingFlags.Public | BindingFlags.Instance);
+
+            if (_configSettingChangedEvent?.EventHandlerType != null)
+            {
+                _configSettingChangedHandler = CreateConfigSettingChangedHandler(_configSettingChangedEvent.EventHandlerType);
+                if (_configSettingChangedHandler != null)
+                {
+                    _configSettingChangedEvent.AddEventHandler(system, _configSettingChangedHandler);
+                }
+            }
+
+            if (_configLoadedEvent?.EventHandlerType != null)
+            {
+                _configLoadedHandler = CreateConfigLoadedHandler(_configLoadedEvent.EventHandlerType);
+                if (_configLoadedHandler != null)
+                {
+                    _configLoadedEvent.AddEventHandler(system, _configLoadedHandler);
+                }
+            }
+
+            _configLibSubscribed = true;
+            OnConfigLoaded();
+            return true;
+        }
+        catch (Exception exception)
+        {
+            ReportConfigLibIntegrationError(api, exception);
+            UnsubscribeFromConfigChange();
+            return false;
+        }
+    }
+
+    private void OnConfigSettingChanged(string domain, object setting)
+    {
+        if (domain != "combatoverhaul" && domain != "combatoverhaulfork" && domain != "bullseyecontinued" && domain != "overhaullib") return;
+
+        bool applied = TryInvokeConfigAssignment(setting, "AssignSettingValue");
+        if (!applied)
+        {
+            applied = ApplyConfigFileSettings(_configLibSubscriptionApi);
+        }
+
+        if (applied)
+        {
+            ReapplyServerGameplaySettingsIfNeeded(_configLibSubscriptionApi);
             ApplyRuntimeSettings(Settings);
+            if (_configLibSubscriptionApi?.Side == EnumAppSide.Server)
+            {
+                BroadcastGameplaySettings();
+            }
             SettingsChanged?.Invoke(Settings);
-        };
+        }
+    }
 
-        _configLoadedHandler = () =>
+    private void OnConfigLoaded()
+    {
+        AssignConfigSettings("combatoverhaul");
+        AssignConfigSettings("combatoverhaulfork");
+        AssignConfigSettings("bullseyecontinued");
+        AssignConfigSettings("overhaullib");
+        ApplyConfigFileSettings(_configLibSubscriptionApi);
+        ReapplyServerGameplaySettingsIfNeeded(_configLibSubscriptionApi);
+        ApplyRuntimeSettings(Settings);
+        if (_configLibSubscriptionApi?.Side == EnumAppSide.Server)
         {
-            system.GetConfig("combatoverhaul")?.AssignSettingsValues(Settings);
-            system.GetConfig("combatoverhaulfork")?.AssignSettingsValues(Settings);
-            system.GetConfig("bullseyecontinued")?.AssignSettingsValues(Settings);
-            system.GetConfig("overhaullib")?.AssignSettingsValues(Settings);
-            ApplyRuntimeSettings(Settings);
-            SettingsLoaded?.Invoke(Settings);
-        };
-
-        system.SettingChanged += _configSettingChangedHandler;
-        system.ConfigsLoaded += _configLoadedHandler;
+            BroadcastGameplaySettings();
+        }
+        SettingsLoaded?.Invoke(Settings);
     }
 
     private void UnsubscribeFromConfigChange()
@@ -566,18 +744,324 @@ public partial class CombatOverhaulSystem : ModSystem
         {
             if (_configSettingChangedHandler != null)
             {
-                _configLibSystem.SettingChanged -= _configSettingChangedHandler;
+                _configSettingChangedEvent?.RemoveEventHandler(_configLibSystem, _configSettingChangedHandler);
             }
 
             if (_configLoadedHandler != null)
             {
-                _configLibSystem.ConfigsLoaded -= _configLoadedHandler;
+                _configLoadedEvent?.RemoveEventHandler(_configLibSystem, _configLoadedHandler);
             }
         }
 
         _configLibSystem = null;
+        _configSettingChangedEvent = null;
+        _configLoadedEvent = null;
+        _configGetConfigMethod = null;
         _configSettingChangedHandler = null;
         _configLoadedHandler = null;
+        _configLibSubscribed = false;
+    }
+
+    private void AssignConfigSettings(string domain)
+    {
+        if (_configLibSystem == null || _configGetConfigMethod == null) return;
+
+        object? config = _configGetConfigMethod.Invoke(_configLibSystem, [domain]);
+        if (config == null) return;
+
+        TryInvokeConfigAssignment(config, "AssignSettingsValues");
+    }
+
+    private bool ApplyConfigFileSettings(ICoreAPI? api)
+    {
+        string configPath = System.IO.Path.Combine(GamePaths.ModConfig, "combatoverhaul.yaml");
+        if (!System.IO.File.Exists(configPath)) return false;
+
+        List<string> appliedSettings = [];
+
+        try
+        {
+            foreach (string rawLine in System.IO.File.ReadLines(configPath))
+            {
+                string line = StripYamlComment(rawLine).Trim();
+                if (line.Length == 0) continue;
+
+                int separator = line.IndexOf(':');
+                if (separator <= 0) continue;
+
+                string key = line[..separator].Trim();
+                string value = line[(separator + 1)..].Trim();
+                if (key.Length == 0 || value.Length == 0) continue;
+
+                if (TryAssignSettingsPropertyFromString(key, value, out string? appliedSetting) && appliedSetting != null)
+                {
+                    appliedSettings.Add(appliedSetting);
+                }
+            }
+        }
+        catch (Exception exception)
+        {
+            LoggerUtil.Warn(api ?? _clientApi, typeof(CombatOverhaulSystem), $"Could not apply Combat Overhaul runtime config file '{configPath}':\n{exception}");
+            return false;
+        }
+
+        if (appliedSettings.Count == 0) return false;
+
+        string summary = string.Join(", ", appliedSettings.OrderBy(setting => setting));
+        if (!string.Equals(summary, _lastAppliedConfigFileSettingsSummary, StringComparison.Ordinal))
+        {
+            _lastAppliedConfigFileSettingsSummary = summary;
+        }
+
+        return true;
+    }
+
+    private bool TryAssignSettingsPropertyFromString(string key, string value, out string? appliedSetting)
+    {
+        appliedSetting = null;
+        string normalizedKey = NormalizeConfigName(key);
+        PropertyInfo? property = typeof(Settings)
+            .GetProperties(BindingFlags.Public | BindingFlags.Instance)
+            .FirstOrDefault(property => NormalizeConfigName(property.Name) == normalizedKey);
+
+        if (property?.CanWrite != true) return false;
+        if (!TryConvertConfigValue(value, property.PropertyType, out object? converted)) return false;
+
+        property.SetValue(Settings, converted);
+        appliedSetting = $"{key}={FormatConfigValue(converted)}";
+        return true;
+    }
+
+    private static bool TryConvertConfigValue(string value, Type targetType, out object? converted)
+    {
+        converted = null;
+        value = UnquoteConfigScalar(value);
+
+        if (targetType == typeof(bool))
+        {
+            if (!bool.TryParse(value, out bool boolValue)) return false;
+            converted = boolValue;
+            return true;
+        }
+
+        if (targetType == typeof(int))
+        {
+            if (!int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out int intValue)) return false;
+            converted = intValue;
+            return true;
+        }
+
+        if (targetType == typeof(float))
+        {
+            if (!float.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, out float floatValue)) return false;
+            converted = floatValue;
+            return true;
+        }
+
+        if (targetType == typeof(string))
+        {
+            converted = value;
+            return true;
+        }
+
+        return false;
+    }
+
+    private static string FormatConfigValue(object? value) => value switch
+    {
+        bool boolValue => boolValue.ToString(CultureInfo.InvariantCulture).ToLowerInvariant(),
+        float floatValue => floatValue.ToString(CultureInfo.InvariantCulture),
+        IFormattable formattable => formattable.ToString(null, CultureInfo.InvariantCulture),
+        _ => value?.ToString() ?? ""
+    };
+
+    private static string UnquoteConfigScalar(string value)
+    {
+        value = value.Trim();
+        if (value.Length >= 2 && ((value[0] == '"' && value[^1] == '"') || (value[0] == '\'' && value[^1] == '\'')))
+        {
+            return value[1..^1];
+        }
+
+        return value;
+    }
+
+    private static string StripYamlComment(string line)
+    {
+        bool inSingleQuote = false;
+        bool inDoubleQuote = false;
+
+        for (int index = 0; index < line.Length; index++)
+        {
+            char character = line[index];
+            if (character == '\'' && !inDoubleQuote)
+            {
+                inSingleQuote = !inSingleQuote;
+                continue;
+            }
+
+            if (character == '"' && !inSingleQuote)
+            {
+                inDoubleQuote = !inDoubleQuote;
+                continue;
+            }
+
+            if (character == '#' && !inSingleQuote && !inDoubleQuote)
+            {
+                return line[..index];
+            }
+        }
+
+        return line;
+    }
+
+    private static string NormalizeConfigName(string name)
+    {
+        Span<char> buffer = stackalloc char[name.Length];
+        int length = 0;
+
+        foreach (char character in name)
+        {
+            if (!char.IsLetterOrDigit(character)) continue;
+            buffer[length++] = char.ToLowerInvariant(character);
+        }
+
+        return new string(buffer[..length]);
+    }
+
+    private bool TryInvokeConfigAssignment(object target, string methodName)
+    {
+        try
+        {
+            if (TryInvokeInstanceConfigAssignment(target, methodName)) return true;
+            if (TryInvokeExtensionConfigAssignment(target, methodName)) return true;
+        }
+        catch (Exception exception)
+        {
+            ReportConfigLibIntegrationError(null, exception);
+        }
+
+        return false;
+    }
+
+    private bool TryInvokeInstanceConfigAssignment(object target, string methodName)
+    {
+        MethodInfo? method = target.GetType()
+            .GetMethods(BindingFlags.Public | BindingFlags.Instance)
+            .FirstOrDefault(method => IsConfigAssignmentMethod(method, methodName, extensionMethod: false, target.GetType()));
+
+        if (method == null) return false;
+
+        method.Invoke(target, [Settings]);
+        return true;
+    }
+
+    private bool TryInvokeExtensionConfigAssignment(object target, string methodName)
+    {
+        Type targetType = target.GetType();
+        Type settingsType = Settings.GetType();
+        Assembly configLibAssembly = targetType.Assembly;
+
+        foreach (Type type in GetLoadableTypes(configLibAssembly))
+        {
+            if (!type.IsAbstract || !type.IsSealed) continue;
+
+            foreach (MethodInfo method in type.GetMethods(BindingFlags.Public | BindingFlags.Static))
+            {
+                if (!method.IsDefined(typeof(System.Runtime.CompilerServices.ExtensionAttribute), inherit: false)) continue;
+                if (!IsConfigAssignmentMethod(method, methodName, extensionMethod: true, targetType)) continue;
+
+                ParameterInfo[] parameters = method.GetParameters();
+                if (!parameters[1].ParameterType.IsAssignableFrom(settingsType)) continue;
+
+                method.Invoke(null, [target, Settings]);
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static bool IsConfigAssignmentMethod(MethodInfo method, string methodName, bool extensionMethod, Type targetType)
+    {
+        if (method.Name != methodName) return false;
+
+        ParameterInfo[] parameters = method.GetParameters();
+        if (extensionMethod)
+        {
+            return parameters.Length == 2 && parameters[0].ParameterType.IsAssignableFrom(targetType);
+        }
+
+        return parameters.Length == 1;
+    }
+
+    private Delegate? CreateConfigSettingChangedHandler(Type eventHandlerType)
+    {
+        MethodInfo? invokeMethod = eventHandlerType.GetMethod("Invoke");
+        ParameterInfo[]? parametersInfo = invokeMethod?.GetParameters();
+        if (parametersInfo?.Length != 3) return null;
+
+        ParameterExpression[] parameters = parametersInfo
+            .Select(parameter => Expression.Parameter(parameter.ParameterType, parameter.Name))
+            .ToArray();
+        MethodInfo targetMethod = GetType().GetMethod(nameof(OnConfigSettingChanged), BindingFlags.Instance | BindingFlags.NonPublic) ?? throw new MissingMethodException(nameof(OnConfigSettingChanged));
+        MethodCallExpression body = Expression.Call(
+            Expression.Constant(this),
+            targetMethod,
+            Expression.Convert(parameters[0], typeof(string)),
+            Expression.Convert(parameters[2], typeof(object)));
+
+        return Expression.Lambda(eventHandlerType, body, parameters).Compile();
+    }
+
+    private Delegate? CreateConfigLoadedHandler(Type eventHandlerType)
+    {
+        MethodInfo? invokeMethod = eventHandlerType.GetMethod("Invoke");
+        ParameterInfo[]? parametersInfo = invokeMethod?.GetParameters();
+        if (parametersInfo?.Length != 0) return null;
+
+        MethodInfo targetMethod = GetType().GetMethod(nameof(OnConfigLoaded), BindingFlags.Instance | BindingFlags.NonPublic) ?? throw new MissingMethodException(nameof(OnConfigLoaded));
+        return Delegate.CreateDelegate(eventHandlerType, this, targetMethod, throwOnBindFailure: false);
+    }
+
+    private static object? GetModSystem(ICoreAPI api, Type modSystemType)
+    {
+        MethodInfo? getModSystem = api.ModLoader.GetType()
+            .GetMethods(BindingFlags.Public | BindingFlags.Instance)
+            .FirstOrDefault(method => method.Name == "GetModSystem" && method.IsGenericMethodDefinition && method.GetParameters().Length == 0);
+
+        return getModSystem?.MakeGenericMethod(modSystemType).Invoke(api.ModLoader, null);
+    }
+
+    private static Type? FindLoadedType(string fullName)
+    {
+        foreach (Assembly assembly in AppDomain.CurrentDomain.GetAssemblies())
+        {
+            Type? type = assembly.GetType(fullName, throwOnError: false);
+            if (type != null) return type;
+        }
+
+        return null;
+    }
+
+    private static IEnumerable<Type> GetLoadableTypes(Assembly assembly)
+    {
+        try
+        {
+            return assembly.GetTypes();
+        }
+        catch (ReflectionTypeLoadException exception)
+        {
+            return exception.Types.Where(type => type != null).Cast<Type>();
+        }
+    }
+
+    private void ReportConfigLibIntegrationError(ICoreAPI? api, Exception exception)
+    {
+        if (_reportedConfigLibIntegrationError) return;
+
+        _reportedConfigLibIntegrationError = true;
+        LoggerUtil.Warn(api ?? _clientApi, typeof(CombatOverhaulSystem), $"ConfigLib optional integration failed and was disabled:\n{exception}");
     }
 
     private static void ApplyRuntimeSettings(Settings settings)
@@ -600,6 +1084,15 @@ public partial class CombatOverhaulSystem : ModSystem
         {
             EntityPlayer? playerEntity = _clientApi?.World?.Player?.Entity;
             if (playerEntity == null) return;
+
+            // Common steady-state case: all three behaviors already exist. Bail before allocating
+            // the throwaway JsonObject below; this watchdog runs once per second for the whole session.
+            if (playerEntity.GetBehavior<FirstPersonAnimationsBehavior>() != null
+                && playerEntity.GetBehavior<ThirdPersonAnimationsBehavior>() != null
+                && playerEntity.GetBehavior<WearableStatsBehavior>() != null)
+            {
+                return;
+            }
 
             bool added = false;
             JsonObject emptyAttributes = new(new JObject());

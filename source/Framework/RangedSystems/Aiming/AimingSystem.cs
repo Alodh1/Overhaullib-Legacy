@@ -192,7 +192,7 @@ public sealed class ClientAimingSystem : IDisposable
         ShowBullseyeReticle = _aimingStats.CursorType != AimingCursorType.None && _aimingStats.CursorType != AimingCursorType.Vanilla && _aimingStats.CursorType != AimingCursorType.MovingNone;
         _difficultyMultiplier = ShowBullseyeReticle ? 1 : _noCursorDifficultyMultiplier;
 
-        _clientApi.World.Player.Entity.GetBehavior<AimingAccuracyBehavior>().StartAim(stats);
+        _clientApi.World.Player?.Entity.GetBehavior<AimingAccuracyBehavior>()?.StartAim(stats);
 
         _reticleRenderer.SetReticleTextures(stats.CursorTextureNotReady, stats.CursorTextureReady);
     }
@@ -211,7 +211,7 @@ public sealed class ClientAimingSystem : IDisposable
 
         _reticleRenderer.AimingState = WeaponAimingState.None;
 
-        _clientApi.World.Player.Entity.GetBehavior<AimingAccuracyBehavior>().StopAim();
+        _clientApi.World.Player?.Entity.GetBehavior<AimingAccuracyBehavior>()?.StopAim();
     }
     public Vector2 GetCurrentAim()
     {

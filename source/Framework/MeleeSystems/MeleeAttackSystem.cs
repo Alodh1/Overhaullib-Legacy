@@ -57,6 +57,46 @@ public readonly struct AttackId
     }
 }
 
+public readonly struct ServerMeleeAttackStats
+{
+    public readonly MeleeAttackStats? Attack;
+    public readonly ItemStackMeleeWeaponStats StackStats;
+
+    public ServerMeleeAttackStats(MeleeAttackStats? attack, ItemStackMeleeWeaponStats stackStats)
+    {
+        Attack = attack;
+        StackStats = stackStats;
+    }
+}
+
+public interface IHasServerMeleeAttacks
+{
+    IEnumerable<ServerMeleeAttackStats> GetServerMeleeAttacks(EntityPlayer attacker, Entity target, ItemSlot weaponSlot);
+}
+
+public sealed class MeleeDamageResolvedEventArgs
+{
+    public MeleeDamageResolvedEventArgs(Entity target, DamageSource damageSource, ItemSlot? slot, float damage, bool damageReceived, DamageBlockEventArgs? block)
+    {
+        Target = target;
+        DamageSource = damageSource;
+        Slot = slot;
+        Damage = damage;
+        DamageReceived = damageReceived;
+        Block = block;
+    }
+
+    public Entity Target { get; }
+    public DamageSource DamageSource { get; }
+    public ItemSlot? Slot { get; }
+    public float Damage { get; }
+    public bool DamageReceived { get; }
+    public DamageBlockEventArgs? Block { get; }
+    public bool WasBlocked => Block != null;
+    public bool WasParried => Block?.Kind == EnumDamageBlockKind.Parry;
+    public bool IsLegalHit => DamageReceived && Block == null;
+}
+
 public sealed class MeleeSystemClient : MeleeSystem
 {
     public delegate void MeleeAttackDelegate(Entity attacker, ItemSlot? slot);
@@ -76,7 +116,7 @@ public sealed class MeleeSystemClient : MeleeSystem
     {
         _clientChannel.SendPacket(new MeleeAttackPacket
         {
-            MeleeAttackDamagePackets = packets.ToArray()
+            MeleeAttackDamagePackets = packets as MeleeDamagePacket[] ?? packets.ToArray()
         });
     }
 
@@ -84,7 +124,7 @@ public sealed class MeleeSystemClient : MeleeSystem
     {
         _clientChannel.SendPacket(new MeleePushPacket
         {
-            MeleeAttackDamagePackets = packets.ToArray()
+            MeleeAttackDamagePackets = packets as MeleeCollisionPacket[] ?? packets.ToArray()
         });
     }
 
@@ -114,9 +154,11 @@ public sealed class MeleeSystemClient : MeleeSystem
 public sealed class MeleeSystemServer : MeleeSystem
 {
     public delegate void MeleeDamageDelegate(Entity target, DamageSource damageSource, ItemSlot? slot, ref float damage);
+    public delegate void MeleeDamageResolvedDelegate(MeleeDamageResolvedEventArgs args);
     public delegate void MeleeAttackDelegate(Entity attacker, ItemSlot weaponSlot);
 
     public event MeleeDamageDelegate? OnDealMeleeDamage;
+    public event MeleeDamageResolvedDelegate? OnMeleeDamageResolved;
     public event MeleeAttackDelegate? OnMeleeAttackStart;
     public event MeleeAttackDelegate? OnMeleeAttackEnd;
 
@@ -138,6 +180,9 @@ public sealed class MeleeSystemServer : MeleeSystem
     private const float _damageRelativeTolerance = 0.20f;
     private const float _knockbackTolerance = 0.01f;
     private const int _maxRejectedAttackPacketLogs = 20;
+    private const double TerrainObstructionRadius = 0.03;
+    private const double TerrainObstructionStartPadding = 0.25;
+    private const double TerrainObstructionEndPadding = 0.05;
     private int _rejectedAttackPacketLogs;
 
     private void HandlePacket(IServerPlayer player, MeleeAttackPacket packet)
@@ -287,6 +332,15 @@ public sealed class MeleeSystemServer : MeleeSystem
             return false;
         }
 
+        CombatOverhaulSystem system = _api.ModLoader.GetModSystem<CombatOverhaulSystem>();
+        if (system.Settings.MeleeWeaponStopOnTerrainHit
+            && limits.RequiresTerrainClearance(damageType)
+            && IsTerrainObstructingHit(player.Entity, position))
+        {
+            LogRejectedAttackPacket(player, packet, "terrain-obstructed");
+            return false;
+        }
+
         float allowedMaxDamage = GetAllowedMaxDamage(limits.MaxDamage, slot.Itemstack, packetTarget);
         if (packet.Damage < 0 || !float.IsFinite(packet.Damage) || packet.Damage > allowedMaxDamage)
         {
@@ -403,7 +457,43 @@ public sealed class MeleeSystemServer : MeleeSystem
             // Spears and similar modal weapons use Modes; non-modal weapons do not.
         }
 
+        AddServerMeleeAttacks(attacker, target, slot, builder);
+
         return builder.TryBuild(out limits);
+    }
+
+    private static void AddServerMeleeAttacks(EntityPlayer attacker, Entity target, ItemSlot slot, MeleeAttackLimitsBuilder builder)
+    {
+        CollectibleObject? collectible = slot.Itemstack?.Collectible;
+        if (collectible == null) return;
+
+        if (collectible is IHasServerMeleeAttacks itemProvider)
+        {
+            AddServerMeleeAttacks(attacker, target, slot, builder, itemProvider);
+        }
+
+        foreach (CollectibleBehavior behavior in collectible.CollectibleBehaviors ?? Array.Empty<CollectibleBehavior>())
+        {
+            if (behavior is IHasServerMeleeAttacks behaviorProvider)
+            {
+                AddServerMeleeAttacks(attacker, target, slot, builder, behaviorProvider);
+            }
+        }
+    }
+
+    private static void AddServerMeleeAttacks(EntityPlayer attacker, Entity target, ItemSlot slot, MeleeAttackLimitsBuilder builder, IHasServerMeleeAttacks provider)
+    {
+        try
+        {
+            foreach (ServerMeleeAttackStats attack in provider.GetServerMeleeAttacks(attacker, target, slot))
+            {
+                builder.Add(attack.Attack, attack.StackStats);
+            }
+        }
+        catch
+        {
+            // Optional validators should not break normal melee validation.
+        }
     }
 
     private static void AddMeleeWeaponStats(MeleeAttackLimitsBuilder builder, MeleeWeaponStats stats)
@@ -457,9 +547,57 @@ public sealed class MeleeSystemServer : MeleeSystem
         return Vector3d.Distance(attackerPosition, closestTargetPoint) <= allowedDistance;
     }
 
+    private bool IsTerrainObstructingHit(EntityPlayer attacker, Vector3d hitPosition)
+    {
+        foreach (Vector3d origin in GetTerrainValidationOrigins(attacker))
+        {
+            if (!IsTerrainObstructingSegment(origin, hitPosition))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private bool IsTerrainObstructingSegment(Vector3d origin, Vector3d hitPosition)
+    {
+        Vector3d segment = hitPosition - origin;
+        double length = segment.Length;
+        if (length <= TerrainObstructionStartPadding + TerrainObstructionEndPadding) return false;
+
+        Vector3d direction = segment / length;
+        Vector3d start = origin + direction * TerrainObstructionStartPadding;
+        Vector3d end = hitPosition - direction * TerrainObstructionEndPadding;
+        if ((end - start).LengthSquared <= 1e-6) return false;
+
+        return CuboidAABBCollider.CollideWithTerrain(
+            _api.World.BlockAccessor,
+            end,
+            start,
+            TerrainObstructionRadius,
+            out _,
+            out _,
+            out _,
+            out _,
+            out _);
+    }
+
+    private static IEnumerable<Vector3d> GetTerrainValidationOrigins(EntityPlayer attacker)
+    {
+        Vector3d basePosition = attacker.ServerPos.ToOpenTK();
+        yield return basePosition + attacker.LocalEyePos.ToOpenTK();
+
+        double chestY = Math.Max(0.25, attacker.LocalEyePos.Y * 0.65);
+        yield return basePosition + new Vector3d(0, chestY, 0);
+
+        double bodyY = Math.Max(0.25, Math.Min(attacker.LocalEyePos.Y * 0.45, attacker.CollisionBox.Y2 * 0.5));
+        yield return basePosition + new Vector3d(0, bodyY, 0);
+    }
+
     private static Vector3d GetClosestPointOnTargetAabb(Vector3d point, Entity target)
     {
-        Cuboidf collisionBox = target.CollisionBox.Clone();
+        Cuboidf collisionBox = target.CollisionBox;
         EntityPos position = target.Pos;
         double minX = Math.Min(collisionBox.X1, collisionBox.X2) + position.X;
         double minY = Math.Min(collisionBox.Y1, collisionBox.Y2) + position.Y;
@@ -477,7 +615,7 @@ public sealed class MeleeSystemServer : MeleeSystem
     private static float GetAllowedMaxDamage(float maxDamage, ItemStack? weaponStack, Entity target)
     {
         float effectiveMaxDamage = maxDamage;
-        float buffableMaxDamage = GrindingWheelCompat.ApplyBuffableDamage(weaponStack, target, maxDamage);
+        float buffableMaxDamage = GrindingWheelCompat.ApplyBuffableDamage(weaponStack, target, maxDamage, null, allowCriticalHit: false);
         if (float.IsFinite(buffableMaxDamage))
         {
             effectiveMaxDamage = MathF.Max(effectiveMaxDamage, buffableMaxDamage);
@@ -507,8 +645,9 @@ public sealed class MeleeSystemServer : MeleeSystem
         public readonly int MaxStaggerTimeMs;
         public readonly int MaxStaggerTier;
         public readonly HashSet<EnumDamageType> DamageTypes;
+        public readonly HashSet<EnumDamageType> TerrainBypassDamageTypes;
 
-        public MeleeAttackLimits(float maxReach, float maxDamage, float minKnockback, float maxKnockback, int maxTier, int maxArmorPiercingTier, int maxDurabilityDamage, int maxStaggerTimeMs, int maxStaggerTier, HashSet<EnumDamageType> damageTypes)
+        public MeleeAttackLimits(float maxReach, float maxDamage, float minKnockback, float maxKnockback, int maxTier, int maxArmorPiercingTier, int maxDurabilityDamage, int maxStaggerTimeMs, int maxStaggerTier, HashSet<EnumDamageType> damageTypes, HashSet<EnumDamageType> terrainBypassDamageTypes)
         {
             MaxReach = maxReach;
             MaxDamage = maxDamage;
@@ -520,7 +659,10 @@ public sealed class MeleeSystemServer : MeleeSystem
             MaxStaggerTimeMs = maxStaggerTimeMs;
             MaxStaggerTier = maxStaggerTier;
             DamageTypes = damageTypes;
+            TerrainBypassDamageTypes = terrainBypassDamageTypes;
         }
+
+        public bool RequiresTerrainClearance(EnumDamageType damageType) => !TerrainBypassDamageTypes.Contains(damageType);
     }
 
     private sealed class MeleeAttackLimitsBuilder
@@ -530,7 +672,7 @@ public sealed class MeleeSystemServer : MeleeSystem
             _attacker = attacker;
             _target = target;
             _slot = slot;
-            _stackStats = stackStats;
+            _defaultStackStats = stackStats;
             _meleeDamageMultiplier = attacker.Stats.GetBlended("meleeWeaponsDamage");
             _mechanicalsDamageMultiplier = target.Properties.Attributes?["isMechanical"].AsBool() == true
                 ? attacker.Stats.GetBlended("mechanicalsDamage")
@@ -540,6 +682,11 @@ public sealed class MeleeSystemServer : MeleeSystem
 
         public void Add(MeleeAttackStats? attack)
         {
+            Add(attack, _defaultStackStats);
+        }
+
+        public void Add(MeleeAttackStats? attack, ItemStackMeleeWeaponStats stackStats)
+        {
             if (attack == null) return;
 
             _hasAttack = true;
@@ -547,7 +694,7 @@ public sealed class MeleeSystemServer : MeleeSystem
 
             foreach (MeleeDamageTypeJson damageType in attack.DamageTypes ?? Array.Empty<MeleeDamageTypeJson>())
             {
-                Add(damageType);
+                Add(damageType, stackStats, attack.CollideWithTerrain);
             }
         }
 
@@ -567,11 +714,17 @@ public sealed class MeleeSystemServer : MeleeSystem
                 _maxDurabilityDamage,
                 _maxStaggerTimeMs,
                 _maxStaggerTier,
-                _damageTypes);
+                _damageTypes,
+                _terrainBypassDamageTypes);
             return true;
         }
 
-        private void Add(MeleeDamageTypeJson damageType)
+        private void Add(MeleeDamageTypeJson damageType, ItemStackMeleeWeaponStats stackStats)
+        {
+            Add(damageType, stackStats, collidesWithTerrain: true);
+        }
+
+        private void Add(MeleeDamageTypeJson damageType, ItemStackMeleeWeaponStats stackStats, bool collidesWithTerrain)
         {
             if (!Enum.TryParse(damageType.Damage.DamageType, out EnumDamageType configuredDamageType))
             {
@@ -579,26 +732,35 @@ public sealed class MeleeSystemServer : MeleeSystem
             }
 
             _damageTypes.Add(configuredDamageType);
+            if (!collidesWithTerrain)
+            {
+                _terrainBypassDamageTypes.Add(configuredDamageType);
+            }
+
             if (configuredDamageType == EnumDamageType.PiercingAttack && _isDagger)
             {
                 _damageTypes.Add(EnumDamageType.SlashingAttack);
+                if (!collidesWithTerrain)
+                {
+                    _terrainBypassDamageTypes.Add(EnumDamageType.SlashingAttack);
+                }
             }
 
             float damage = damageType.Damage.Damage * _meleeDamageMultiplier * _mechanicalsDamageMultiplier;
-            damage += _stackStats.DamageBonus;
-            damage *= _stackStats.DamageMultiplier;
+            damage += stackStats.DamageBonus;
+            damage *= stackStats.DamageMultiplier;
             _maxDamage = Math.Max(_maxDamage, damage);
 
             string damageTierStat = MeleeDamageType.DamageTierPlayerStatPrefix + configuredDamageType;
             float statValue = _attacker.Stats.GetBlended(damageTierStat) - 1;
-            int damageTier = GameMath.Max(damageType.Damage.Tier + _stackStats.DamageTierBonus + (int)statValue, 0);
+            int damageTier = GameMath.Max(damageType.Damage.Tier + stackStats.DamageTierBonus + (int)statValue, 0);
             _maxTier = Math.Max(_maxTier, damageTier);
-            _maxArmorPiercingTier = Math.Max(_maxArmorPiercingTier, damageType.Damage.ArmorPiercingTier + _stackStats.ArmorPiercingBonus);
+            _maxArmorPiercingTier = Math.Max(_maxArmorPiercingTier, damageType.Damage.ArmorPiercingTier + stackStats.ArmorPiercingBonus);
             _maxDurabilityDamage = Math.Max(_maxDurabilityDamage, damageType.DurabilityDamage);
             _maxStaggerTimeMs = Math.Max(_maxStaggerTimeMs, damageType.StaggerTimeMs);
             _maxStaggerTier = Math.Max(_maxStaggerTier, damageType.StaggerTier);
 
-            float knockback = damageType.Knockback * _stackStats.KnockbackMultiplier;
+            float knockback = damageType.Knockback * stackStats.KnockbackMultiplier;
             _minKnockback = Math.Min(_minKnockback, knockback);
             _maxKnockback = Math.Max(_maxKnockback, knockback);
         }
@@ -611,11 +773,12 @@ public sealed class MeleeSystemServer : MeleeSystem
         private readonly EntityPlayer _attacker;
         private readonly Entity _target;
         private readonly ItemSlot _slot;
-        private readonly ItemStackMeleeWeaponStats _stackStats;
+        private readonly ItemStackMeleeWeaponStats _defaultStackStats;
         private readonly float _meleeDamageMultiplier;
         private readonly float _mechanicalsDamageMultiplier;
         private readonly bool _isDagger;
         private readonly HashSet<EnumDamageType> _damageTypes = [];
+        private readonly HashSet<EnumDamageType> _terrainBypassDamageTypes = [];
         private bool _hasAttack;
         private float _maxReach;
         private float _maxDamage;
@@ -637,9 +800,16 @@ public sealed class MeleeSystemServer : MeleeSystem
     {
         OnDealMeleeDamage?.Invoke(target, damageSource, slot, ref damage);
         WeaponBuffSystem.ModifyMeleeDamage(target, damageSource, slot, ref damage);
-        damage = GrindingWheelCompat.ApplyBuffableDamage(slot?.Itemstack, target, damage);
+        damage = GrindingWheelCompat.ApplyBuffableDamage(slot?.Itemstack, target, damage, damageSource);
 
-        return target.ReceiveDamage(damageSource, damage);
+        bool damageReceived = target.ReceiveDamage(damageSource, damage);
+        if (OnMeleeDamageResolved != null)
+        {
+            DamageBlockEventArgs? block = target.GetBehavior<PlayerDamageModelBehavior>()?.GetLastDamageBlock(damageSource);
+            OnMeleeDamageResolved.Invoke(new(target, damageSource, slot, damage, damageReceived, block));
+        }
+
+        return damageReceived;
     }
 
     private void DealDurabilityDamage(ItemSlot? slot, MeleeDamagePacket packet, Entity? attacker)

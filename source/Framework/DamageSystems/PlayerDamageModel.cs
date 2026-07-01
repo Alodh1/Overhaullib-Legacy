@@ -3,7 +3,6 @@ using CombatOverhaul.Colliders;
 using CombatOverhaul.Compatibility;
 using CombatOverhaul.Integration;
 using CombatOverhaul.Utils;
-using PlayerModelLib;
 using Vintagestory.API.Common;
 using Vintagestory.API.Common.Entities;
 using Vintagestory.API.Config;
@@ -34,11 +33,13 @@ public sealed class PlayerDamageModelBehavior : EntityBehavior
 {
     public PlayerDamageModelBehavior(Entity entity) : base(entity)
     {
-        _settings = entity.Api.ModLoader.GetModSystem<CombatOverhaulSystem>().Settings;
+        _system = entity.Api.ModLoader.GetModSystem<CombatOverhaulSystem>();
+        _settings = _system.Settings;
         _player = entity as EntityPlayer ?? throw new ArgumentNullException(nameof(entity), "'PlayerDamageModelBehavior' should be attached to player");
     }
 
     public event OnPlayerReceiveDamageDelegate? OnReceiveDamage;
+    public event Action<DamageBlockEventArgs>? OnDamageBlocked;
 
     public override string PropertyName() => "PlayerDamageModel";
 
@@ -98,6 +99,8 @@ public sealed class PlayerDamageModelBehavior : EntityBehavior
     public bool SecondChanceAvailable { get; set; }
 
     public DamageBlockStats? CurrentDamageBlock { get; set; } = null;
+    internal DamageBlockEventArgs? LastDamageBlock { get; private set; }
+    internal DamageBlockEventArgs? GetLastDamageBlock(DamageSource damageSource) => ReferenceEquals(LastDamageBlock?.DamageSource, damageSource) ? LastDamageBlock : null;
 
     public override void Initialize(EntityProperties properties, JsonObject attributes)
     {
@@ -112,13 +115,31 @@ public sealed class PlayerDamageModelBehavior : EntityBehavior
         _colliders = entity.GetBehavior<CollidersEntityBehavior>();
         if (_serverSide)
         {
-            entity.GetBehavior<EntityBehaviorHealth>().onDamaged += OnReceiveDamageHandler;
+            _subscribedHealthBehavior = entity.GetBehavior<EntityBehaviorHealth>();
+            if (_subscribedHealthBehavior != null)
+            {
+                _subscribedHealthBehavior.onDamaged += OnReceiveDamageHandler;
+            }
         }
 
         if (entity.Api.ModLoader.IsModEnabled(CollidersEntityBehavior.PlayerModelLibId))
         {
             SubscribeOnModelChange();
         }
+    }
+
+    public override void OnEntityDespawn(EntityDespawnData despawn)
+    {
+        if (_subscribedHealthBehavior != null)
+        {
+            _subscribedHealthBehavior.onDamaged -= OnReceiveDamageHandler;
+            _subscribedHealthBehavior = null;
+        }
+
+        _subscribedSkinBehavior?.Dispose();
+        _subscribedSkinBehavior = null;
+
+        base.OnEntityDespawn(despawn);
     }
 
     public override void OnGameTick(float deltaTime)
@@ -244,8 +265,11 @@ public sealed class PlayerDamageModelBehavior : EntityBehavior
     }
 
     private readonly EntityPlayer _player;
+    private readonly CombatOverhaulSystem _system;
     private readonly Settings _settings;
     private CollidersEntityBehavior? _colliders;
+    private PlayerModelSkinSubscription? _subscribedSkinBehavior;
+    private EntityBehaviorHealth? _subscribedHealthBehavior;
     private readonly float _healthAfterSecondChance = 1;
     private PlayerDamageModelConfig _defaultConfig = new();
     private bool _serverSide = false;
@@ -259,6 +283,8 @@ public sealed class PlayerDamageModelBehavior : EntityBehavior
 
     private float OnReceiveDamageHandler(float damage, DamageSource damageSource)
     {
+        LastDamageBlock = null;
+
         if (!DamageTypesToProcess.Contains(damageSource.Type)) return damage;
 
         (PlayerBodyPart detailedDamageZone, float multiplier) = DetermineHitZone(damageSource);
@@ -306,9 +332,11 @@ public sealed class PlayerDamageModelBehavior : EntityBehavior
     {
         PlayerBodyPart damageZone;
         float multiplier;
-        if (_colliders != null && damageSource is ILocationalDamage locationalDamageSource && locationalDamageSource.Collider != "")
+        if (_colliders != null &&
+            damageSource is ILocationalDamage locationalDamageSource &&
+            locationalDamageSource.Collider != "" &&
+            CollidersToBodyParts.TryGetValue(locationalDamageSource.Collider, out damageZone))
         {
-            damageZone = CollidersToBodyParts[locationalDamageSource.Collider];
             multiplier = DamageModel.GetMultiplier(damageZone);
         }
         else if (damageSource is IDirectionalDamage directionalDamage)
@@ -390,6 +418,12 @@ public sealed class PlayerDamageModelBehavior : EntityBehavior
 
         CurrentDamageBlock.Callback.Invoke(initialDamage - damage, damageTier, blockTier);
 
+        DamageBlockEventArgs args = new(_player, damageSource, zone, CurrentDamageBlock.Kind, CurrentDamageBlock.MainHand, initialDamage, damage, damageTier, blockTier);
+        LastDamageBlock = args;
+
+        OnDamageBlocked?.Invoke(args);
+        _system.ServerBlockSystem?.EmitDamageBlocked(args);
+
         if (CurrentDamageBlock.Sound != null) entity.Api.World.PlaySoundAt(new AssetLocation(CurrentDamageBlock.Sound), entity, null, false, 16f, 1f);
     }
     private void ApplyArmorResists(DamageSource damageSource, DamageZone zone, ref float damage, out string damageLogMessage, out EnumDamageType damageType)
@@ -401,21 +435,24 @@ public sealed class PlayerDamageModelBehavior : EntityBehavior
 
         if (zone == DamageZone.None) return;
 
-        IEnumerable<ArmorSlot> slots = inventory.GetNotEmptyZoneSlots(zone);
+        List<ArmorSlot> slots = inventory.GetNotEmptyZoneSlots(zone).ToList();
 
-        if (!slots.Any()) return;
+        if (slots.Count == 0) return;
 
-        IEnumerable<DamageResistData> resistsFromSlots = slots
+        IEnumerable<(ArmorSlot Slot, DamageResistData Resists)> protectedSlots = slots
             .Where(slot => slot?.Itemstack?.Item != null)
             .Where(slot => slot?.Itemstack?.Item.GetRemainingDurability(slot.Itemstack) > 0 || slot?.Itemstack?.Item.GetMaxDurability(slot.Itemstack) == 0)
-            .Select(slot => slot.GetResists(zone));
+            .Select(slot => (slot, slot.GetResists(zone)));
 
         if (GetAttackDirection(damageSource, out DirectionOffset direction))
         {
-            resistsFromSlots = resistsFromSlots.Where(resist => resist.CheckDirection(direction));
+            protectedSlots = protectedSlots.Where(slot => slot.Resists.CheckDirection(direction));
         }
 
-        DamageResistData resists = DamageResistData.Combine(resistsFromSlots);
+        List<(ArmorSlot Slot, DamageResistData Resists)> protectedSlotList = protectedSlots.ToList();
+        if (protectedSlotList.Count == 0) return;
+
+        DamageResistData resists = DamageResistData.Combine(protectedSlotList.Select(slot => slot.Resists));
 
         float previousDamage = damage;
         int durabilityDamage = 0;
@@ -427,9 +464,9 @@ public sealed class PlayerDamageModelBehavior : EntityBehavior
 
         _ = resists.ApplyPlayerResist(new(damageSource.Type, damageSource.DamageTier, apTier), ref damage, out durabilityDamage);
 
-        durabilityDamage = GameMath.Clamp(durabilityDamage, 1, durabilityDamage);
+        durabilityDamage = Math.Max(durabilityDamage, 1);
 
-        DamageArmor(slots, zone, damageType, durabilityDamage, out int totalDurabilityDamage);
+        DamageArmor(protectedSlotList, damageType, durabilityDamage, out int totalDurabilityDamage);
 
         if (previousDamage - damage > 0)
         {
@@ -501,12 +538,7 @@ public sealed class PlayerDamageModelBehavior : EntityBehavior
     }
     private void SubscribeOnModelChange()
     {
-        PlayerSkinBehavior? skinBehavior = entity.GetBehavior<PlayerSkinBehavior>();
-
-        if (skinBehavior != null)
-        {
-            skinBehavior.OnModelChanged += ReloadConfigForCustomModel;
-        }
+        _subscribedSkinBehavior = PlayerModelSkinSubscription.Subscribe(entity, ReloadConfigForCustomModel, invokeCurrentModel: false);
     }
     private void ReloadConfigForCustomModel(string modelCode)
     {
@@ -526,36 +558,43 @@ public sealed class PlayerDamageModelBehavior : EntityBehavior
         SecondChanceAvailable = customModelConfig.DamageModel.SecondChanceAvailable;
         SecondChanceDefaultGracePeriod = TimeSpan.FromSeconds(customModelConfig.DamageModel.SecondChanceGracePeriodSec);
     }
-    private void DamageArmor(IEnumerable<ArmorSlot> slots, DamageZone zone, EnumDamageType damageType, int durabilityDamage, out int totalDurabilityDamage)
+    private void DamageArmor(IEnumerable<(ArmorSlot Slot, DamageResistData Resists)> slots, EnumDamageType damageType, int durabilityDamage, out int totalDurabilityDamage)
     {
-        float totalProtection = slots.Select(slot => slot.GetResists(zone).Resists[damageType]).Sum();
+        List<(ArmorSlot Slot, DamageResistData Resists)> slotList = slots.ToList();
+        float totalProtection = slotList.Select(slot => GetProtection(slot.Resists, damageType)).Sum();
 
         if (totalProtection <= float.Epsilon * 2)
         {
-            durabilityDamage /= slots.Count();
+            durabilityDamage /= slotList.Count;
             durabilityDamage = Math.Max(durabilityDamage, 1);
-            foreach (ArmorSlot slot in slots)
+            foreach ((ArmorSlot slot, _) in slotList)
             {
                 if (slot.Itemstack.Item.GetMaxDurability(slot.Itemstack) <= 0) continue;
                 slot.Itemstack.Item.DamageItem(entity.Api.World, entity, slot, durabilityDamage);
                 slot.MarkDirty();
             }
-            totalDurabilityDamage = durabilityDamage * slots.Count();
+            totalDurabilityDamage = durabilityDamage * slotList.Count;
             return;
         }
 
         totalDurabilityDamage = 0;
-        foreach (ArmorSlot slot in slots)
+        foreach ((ArmorSlot slot, DamageResistData resists) in slotList)
         {
             if (slot.Itemstack.Item.GetMaxDurability(slot.Itemstack) <= 0) continue;
 
-            float protection = slot.GetResists(zone).Resists[damageType];
+            float protection = GetProtection(resists, damageType);
+            if (protection <= 0) continue;
+
             int durabilityDamagePerSlot = (int)Math.Ceiling(durabilityDamage * protection / totalProtection);
             totalDurabilityDamage += durabilityDamagePerSlot;
 
             slot.Itemstack.Item.DamageItem(entity.Api.World, entity, slot, durabilityDamagePerSlot);
             slot.MarkDirty();
         }
+    }
+    private static float GetProtection(DamageResistData resists, EnumDamageType damageType)
+    {
+        return resists.Resists.TryGetValue(damageType, out float protection) ? protection : 0;
     }
     private void ApplyDamageFromHotClothes()
     {

@@ -8,6 +8,9 @@ public sealed class Settings
     public string BowsAimingCursorType { get; set; } = "Fixed";
     public float BowsAimingHorizontalLimit { get; set; } = 0.125f;
     public float BowsAimingVerticalLimit { get; set; } = 0.35f;
+    public bool BowTwoHanded { get; set; } = true;
+    public float BowAimingHorisontalLimit { get => BowsAimingHorizontalLimit; set => BowsAimingHorizontalLimit = value; }
+    public float BowAimingVerticalLimit { get => BowsAimingVerticalLimit; set => BowsAimingVerticalLimit = value; }
 
     public string ThrownWeaponsCursorType { get; set; } = "Fixed";
     public float ThrownWeaponsAimingHorizontalLimit { get; set; } = 0.125f;
@@ -30,6 +33,8 @@ public sealed class Settings
     public bool VanillaActionsWhileBlocking { get; set; } = true;
 
     public bool VanillaArmorGridRecipes { get; set; } = true;
+
+    public bool ToolsmithIntegrationEnabled { get; set; } = true;
 
     public float CollisionRadius { get; set; } = 16f;
 
@@ -74,4 +79,74 @@ public sealed class Settings
     public float FueledItemUpdateInGameHours { get; set; } = 0.1f;
 
     public bool ShortEntityInfo { get; set; } = true;
+}
+
+[ProtoBuf.ProtoContract(ImplicitFields = ProtoBuf.ImplicitFields.AllPublic)]
+public sealed class ServerGameplaySettingsPacket
+{
+    public float BowsAimingHorizontalLimit { get; set; }
+    public float BowsAimingVerticalLimit { get; set; }
+    public bool BowTwoHanded { get; set; }
+    public float ThrownWeaponsAimingHorizontalLimit { get; set; }
+    public float ThrownWeaponsAimingVerticalLimit { get; set; }
+    public float SlingsAimingHorizontalLimit { get; set; }
+    public float SlingsAimingVerticalLimit { get; set; }
+    public bool VanillaActionsWhileBlocking { get; set; }
+    public float CollisionRadius { get; set; }
+    public float DefaultColliderPenetrationResistance { get; set; }
+    public bool MeleeWeaponStopOnTerrainHit { get; set; }
+    public bool MeleeWeaponIgnoreTerrainBehind { get; set; }
+    public float MeleeWeaponAttackSpeedMultiplier { get; set; }
+    public int GlobalAttackCooldownMs { get; set; }
+    public bool SecondChanceAvailable { get; set; }
+    public float EntityProtectionMultiplier { get; set; }
+    public float WeaponQuenchDamageMultiplier { get; set; }
+    public bool RangedWeaponsDamageSupport { get; set; }
+    public float FueledItemUpdateInGameHours { get; set; }
+
+    public static ServerGameplaySettingsPacket From(Settings settings) => new()
+    {
+        BowsAimingHorizontalLimit = settings.BowsAimingHorizontalLimit,
+        BowsAimingVerticalLimit = settings.BowsAimingVerticalLimit,
+        BowTwoHanded = settings.BowTwoHanded,
+        ThrownWeaponsAimingHorizontalLimit = settings.ThrownWeaponsAimingHorizontalLimit,
+        ThrownWeaponsAimingVerticalLimit = settings.ThrownWeaponsAimingVerticalLimit,
+        SlingsAimingHorizontalLimit = settings.SlingsAimingHorizontalLimit,
+        SlingsAimingVerticalLimit = settings.SlingsAimingVerticalLimit,
+        VanillaActionsWhileBlocking = settings.VanillaActionsWhileBlocking,
+        CollisionRadius = settings.CollisionRadius,
+        DefaultColliderPenetrationResistance = settings.DefaultColliderPenetrationResistance,
+        MeleeWeaponStopOnTerrainHit = settings.MeleeWeaponStopOnTerrainHit,
+        MeleeWeaponIgnoreTerrainBehind = settings.MeleeWeaponIgnoreTerrainBehind,
+        MeleeWeaponAttackSpeedMultiplier = settings.MeleeWeaponAttackSpeedMultiplier,
+        GlobalAttackCooldownMs = settings.GlobalAttackCooldownMs,
+        SecondChanceAvailable = settings.SecondChanceAvailable,
+        EntityProtectionMultiplier = settings.EntityProtectionMultiplier,
+        WeaponQuenchDamageMultiplier = settings.WeaponQuenchDamageMultiplier,
+        RangedWeaponsDamageSupport = settings.RangedWeaponsDamageSupport,
+        FueledItemUpdateInGameHours = settings.FueledItemUpdateInGameHours
+    };
+
+    public void ApplyTo(Settings settings)
+    {
+        settings.BowsAimingHorizontalLimit = BowsAimingHorizontalLimit;
+        settings.BowsAimingVerticalLimit = BowsAimingVerticalLimit;
+        settings.BowTwoHanded = BowTwoHanded;
+        settings.ThrownWeaponsAimingHorizontalLimit = ThrownWeaponsAimingHorizontalLimit;
+        settings.ThrownWeaponsAimingVerticalLimit = ThrownWeaponsAimingVerticalLimit;
+        settings.SlingsAimingHorizontalLimit = SlingsAimingHorizontalLimit;
+        settings.SlingsAimingVerticalLimit = SlingsAimingVerticalLimit;
+        settings.VanillaActionsWhileBlocking = VanillaActionsWhileBlocking;
+        settings.CollisionRadius = CollisionRadius;
+        settings.DefaultColliderPenetrationResistance = DefaultColliderPenetrationResistance;
+        settings.MeleeWeaponStopOnTerrainHit = MeleeWeaponStopOnTerrainHit;
+        settings.MeleeWeaponIgnoreTerrainBehind = MeleeWeaponIgnoreTerrainBehind;
+        settings.MeleeWeaponAttackSpeedMultiplier = MeleeWeaponAttackSpeedMultiplier;
+        settings.GlobalAttackCooldownMs = GlobalAttackCooldownMs;
+        settings.SecondChanceAvailable = SecondChanceAvailable;
+        settings.EntityProtectionMultiplier = EntityProtectionMultiplier;
+        settings.WeaponQuenchDamageMultiplier = WeaponQuenchDamageMultiplier;
+        settings.RangedWeaponsDamageSupport = RangedWeaponsDamageSupport;
+        settings.FueledItemUpdateInGameHours = FueledItemUpdateInGameHours;
+    }
 }

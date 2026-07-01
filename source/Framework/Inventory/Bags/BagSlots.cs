@@ -1,7 +1,5 @@
-﻿using ConfigLib;
 using Vintagestory.API.Common;
 using Vintagestory.API.Datastructures;
-using Vintagestory.API.Server;
 using Vintagestory.API.Util;
 
 namespace CombatOverhaul.Armor;
@@ -69,17 +67,6 @@ public class ItemSlotTakeOutOnly : ItemSlotBagContent, IHasSlotBackpackCategory
     public ItemSlotTakeOutOnly(InventoryBase inventory, int BagIndex, int SlotIndex, EnumItemStorageFlags storageType, ItemStack sourceBag, string? color = null) : base(inventory, BagIndex, SlotIndex, storageType)
     {
         HexBackgroundColor = color;
-        inventory.SlotModified += index => EnqueueTryEmpty(inventory, index);
-
-        if (inventory is InventoryBasePlayer playerInventory)
-        {
-            InventoryBasePlayer? hotbar = playerInventory.Player?.InventoryManager?.GetHotbarInventory() as InventoryBasePlayer;
-
-            if (hotbar != null)
-            {
-                hotbar.SlotModified += index => EnqueueTryEmpty(hotbar, index);
-            }
-        }
 
         ToolBagId = sourceBag.Item?.Code?.ToString() ?? "";
         ToolBagIndex = BagIndex;
@@ -88,50 +75,4 @@ public class ItemSlotTakeOutOnly : ItemSlotBagContent, IHasSlotBackpackCategory
     public override bool CanTakeFrom(ItemSlot sourceSlot, EnumMergePriority priority = EnumMergePriority.AutoMerge) => CanHoldNow;
 
     public override bool CanHold(ItemSlot sourceSlot) => CanHoldNow;
-
-    protected long Callback = 0;
-
-    protected virtual void EnqueueTryEmpty(InventoryBase inventory, int index)
-    {
-        if (Empty) return;
-
-        ICoreServerAPI? api = (inventory as InventoryBasePlayer)?.Player?.Entity?.Api as ICoreServerAPI;
-
-        if (api == null) return;
-
-        if (Callback == 0)
-        {
-            Callback = api.World.RegisterCallback(_ => TryEmpty(inventory, index), 1000);
-        }
-    }
-
-    protected virtual void TryEmpty(InventoryBase inventory, int index)
-    {
-        Callback = 0;
-        
-        if (itemstack?.StackSize == 0)
-        {
-            itemstack = null;
-            MarkDirty();
-            return;
-        }
-        
-        if (CanHoldNow) return;
-        if ((inventory as InventoryBasePlayer)?.Player?.Entity?.Api?.Side != EnumAppSide.Server) return;
-        if (CanHoldNow || Empty || SlotIndex == index && Inventory.InventoryID == inventory.InventoryID) return;
-
-        DummySlot dummySlot = new(itemstack);
-        ItemSlot? targetSlot = (inventory as InventoryBasePlayer)?.Player?.InventoryManager?.GetHotbarInventory()?.GetBestSuitedSlot(dummySlot)?.slot;
-        targetSlot ??= (inventory as InventoryBasePlayer)?.Player?.InventoryManager?.GetHotbarInventory().FirstOrDefault(slot => slot?.CanTakeFrom(dummySlot) == true && slot is not ItemSlotTakeOutOnly, null);
-        targetSlot ??= inventory.FirstOrDefault(slot => slot?.CanTakeFrom(dummySlot) == true && slot is not ItemSlotTakeOutOnly, null);
-
-        if (targetSlot == null) return;
-
-        if (dummySlot.TryPutInto(inventory.Api.World, targetSlot, dummySlot.Itemstack.StackSize) > 0)
-        {
-            targetSlot.MarkDirty();
-            itemstack = dummySlot.Itemstack?.StackSize == 0 ? null : dummySlot.Itemstack;
-            MarkDirty();
-        }
-    }
 }

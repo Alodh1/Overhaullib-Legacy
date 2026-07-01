@@ -14,6 +14,8 @@ namespace CombatOverhaul.Implementations;
 
 public class VanillaShield : MeleeWeapon, IContainedMeshSource
 {
+    private const string HandbookRepresentativeAttribute = "combatOverhaulHandbookRepresentative";
+
     public string Construction => Variant["construction"];
 
     private Dictionary<int, MultiTextureMeshRef> Meshrefs => ObjectCacheUtil.GetOrCreate(api, "shieldmeshrefs", () => new Dictionary<int, MultiTextureMeshRef>());
@@ -63,6 +65,55 @@ public class VanillaShield : MeleeWeapon, IContainedMeshSource
         }
 
         return base.GetMaxDurability(itemstack) + gain;
+    }
+
+    public override List<ItemStack> GetHandBookStacks(ICoreClientAPI capi)
+    {
+        if (Code == null) return null;
+        if (Attributes?["handbook"]?["exclude"].AsBool() == true) return null;
+        if (Construction == "crude" || Construction == "blackguard") return base.GetHandBookStacks(capi);
+
+        ItemStack stack = new(this);
+        stack.Attributes.SetBool(HandbookRepresentativeAttribute, true);
+        stack.TempAttributes.SetBool(HandbookRepresentativeAttribute, true);
+
+        switch (Construction)
+        {
+            case "woodmetal":
+                stack.Attributes.SetString("metal", "tinbronze");
+                stack.Attributes.SetString("wood", "generic");
+                stack.Attributes.SetString("deco", "none");
+                break;
+
+            case "woodmetalleather":
+                stack.Attributes.SetString("metal", "tinbronze");
+                stack.Attributes.SetString("wood", "generic");
+                stack.Attributes.SetString("color", "brown");
+                stack.Attributes.SetString("deco", "none");
+                break;
+
+            case "metal":
+                stack.Attributes.SetString("metal", "tinbronze");
+                stack.Attributes.SetString("color", "brown");
+                stack.Attributes.SetString("deco", "none");
+                break;
+        }
+
+        return new List<ItemStack> { stack };
+    }
+
+    public override bool Satisfies(ItemStack thisStack, ItemStack otherStack)
+    {
+        if (IsHandbookRepresentative(otherStack)
+            && thisStack?.Collectible == this
+            && otherStack.Collectible == this
+            && thisStack.Class == otherStack.Class
+            && thisStack.Id == otherStack.Id)
+        {
+            return true;
+        }
+
+        return base.Satisfies(thisStack, otherStack);
     }
 
     public void AddAllTypesToCreativeInventory()
@@ -232,6 +283,17 @@ public class VanillaShield : MeleeWeapon, IContainedMeshSource
 
     public override string GetHeldItemName(ItemStack itemStack)
     {
+        if (IsHandbookRepresentative(itemStack))
+        {
+            return Construction switch
+            {
+                "woodmetal" => Lang.Get("Wooden shield"),
+                "woodmetalleather" => Lang.Get("Leather reinforced wooden shield"),
+                "metal" => Lang.Get("Metal shield"),
+                _ => base.GetHeldItemName(itemStack)
+            };
+        }
+
         bool ornate = itemStack.Attributes.GetString("deco") == "ornate";
         string metal = itemStack.Attributes.GetString("metal");
         string wood = itemStack.Attributes.GetString("wood");
@@ -286,11 +348,15 @@ public class VanillaShield : MeleeWeapon, IContainedMeshSource
         switch (Construction)
         {
             case "woodmetal":
+                if (IsHandbookRepresentative(inSlot.Itemstack)) return;
+
                 dsc.AppendLine(Lang.Get("shield-woodtype", Lang.Get("material-" + inSlot.Itemstack.Attributes.GetString("wood"))));
                 dsc.AppendLine(Lang.Get("shield-metaltype", Lang.Get("material-" + inSlot.Itemstack.Attributes.GetString("metal"))));
                 break;
 
             case "woodmetalleather":
+                if (IsHandbookRepresentative(inSlot.Itemstack)) return;
+
                 dsc.AppendLine(Lang.Get("shield-metaltype", Lang.Get("material-" + inSlot.Itemstack.Attributes.GetString("metal"))));
                 break;
         }
@@ -324,5 +390,11 @@ public class VanillaShield : MeleeWeapon, IContainedMeshSource
 
         GeneralUtils.MarkItemStack(outputSlot);
         outputSlot.MarkDirty();
+    }
+
+    private static bool IsHandbookRepresentative(ItemStack? itemStack)
+    {
+        return itemStack?.TempAttributes?.GetBool(HandbookRepresentativeAttribute, false) == true
+            || itemStack?.Attributes?.GetBool(HandbookRepresentativeAttribute, false) == true;
     }
 }

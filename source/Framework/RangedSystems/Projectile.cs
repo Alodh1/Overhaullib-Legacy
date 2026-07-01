@@ -21,12 +21,18 @@ namespace CombatOverhaul.RangedSystems;
 public sealed class ProjectileServer
 {
     public ProjectileServer(ProjectileEntity projectile, ProjectileStats projectileStats, ProjectileSpawnStats spawnStats, ICoreAPI api, Action<Guid> clearCallback, ItemStack projectileStack, ItemSlot? weaponSlot = null)
+        : this(projectile, projectileStats, spawnStats, api, clearCallback, projectileStack, weaponSlot, applyBuffs: true)
+    {
+    }
+
+    public ProjectileServer(ProjectileEntity projectile, ProjectileStats projectileStats, ProjectileSpawnStats spawnStats, ICoreAPI api, Action<Guid> clearCallback, ItemStack projectileStack, ItemSlot? weaponSlot, bool applyBuffs)
     {
         _stats = projectileStats;
         _spawnStats = spawnStats;
         _api = api;
         _shooter = _api.World.GetEntityById(spawnStats.ProducerEntityId);
         _weaponSlot = weaponSlot;
+        _applyBuffs = applyBuffs;
 
         _system = _api.ModLoader.GetModSystem<CombatOverhaulSystem>().ServerProjectileSystem ?? throw new Exception();
         _settings = _api.ModLoader.GetModSystem<CombatOverhaulSystem>().Settings;
@@ -100,6 +106,7 @@ public sealed class ProjectileServer
     private readonly ProjectileSystemServer _system;
     private readonly Settings _settings;
     private readonly ItemSlot? _weaponSlot;
+    private readonly bool _applyBuffs;
 
     private void DealCollisionDamage(Entity receiver, Vector3d collisionPoint, string collider, double relativeSpeed)
     {
@@ -150,10 +157,13 @@ public sealed class ProjectileServer
             IgnoreInvFrames = _entity.IgnoreInvFrames,
         };
 
-        _system.OnDealDamage(target, damageSource, _entity.WeaponStack, _entity.ProjectileStack, ref damage);
+        _system.OnDealDamage(target, damageSource, _entity.WeaponStack, _entity.ProjectileStack, ref damage, _applyBuffs);
 
         bool damageReceived = target.ReceiveDamage(damageSource, damage);
-        if (damageReceived)
+        DamageBlockEventArgs? block = target.GetBehavior<PlayerDamageModelBehavior>()?.GetLastDamageBlock(damageSource);
+        _system.EmitRangedDamageResolved(target, damageSource, _entity.WeaponStack, _entity.ProjectileStack, damage, damageReceived, block);
+
+        if (damageReceived && _applyBuffs)
         {
             if (WeaponBuffSystem.ConsumeInternal(_entity.WeaponStack, WeaponBuffConsumptionTrigger.RangedHit) > 0)
             {
@@ -213,6 +223,7 @@ public class ProjectileEntity : Entity
     public float PenetrationStrength { get; set; }
     public long ShooterId { get; set; }
     public long OwnerId { get; set; }
+    public Vec3d ShooterPosition { get; } = new(0, 0, 0);
     public Vec3d PreviousPosition { get; private set; } = new(0, 0, 0);
     public Vec3d PreviousVelocity { get; private set; } = new(0, 0, 0);
     public List<long> CollidedWith { get; set; } = new();
@@ -264,9 +275,9 @@ public class ProjectileEntity : Entity
         }
         physicsBehavior.OnPhysicsTickCallback = OnPhysicsTickCallback;
 
-        PreviousPosition = Pos.XYZ.Clone();
-        PreviousVelocity = Pos.Motion.Clone();
-        StartingPos = Pos.XYZ.Clone();
+        PreviousPosition.Set(Pos.X, Pos.Y, Pos.Z);
+        PreviousVelocity.Set(Pos.Motion.X, Pos.Motion.Y, Pos.Motion.Z);
+        StartingPos.Set(Pos.X, Pos.Y, Pos.Z);
     }
     public override void OnGameTick(float dt)
     {
@@ -422,8 +433,8 @@ public class ProjectileEntity : Entity
             ServerProjectile.TryCollide();
         }
 
-        PreviousPosition = SidedPos.XYZ.Clone();
-        PreviousVelocity = SidedPos.Motion.Clone();
+        PreviousPosition.Set(SidedPos.X, SidedPos.Y, SidedPos.Z);
+        PreviousVelocity.Set(SidedPos.Motion.X, SidedPos.Motion.Y, SidedPos.Motion.Z);
     }
     protected void OnTerrainCollision(EntityPos pos, double impactSpeed)
     {

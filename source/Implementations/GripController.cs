@@ -12,11 +12,7 @@ public sealed class GripController
 
     public void ChangeGrip(float delta, bool mainHand, float gripFactor, float min, float max)
     {
-        if (min > max)
-        {
-            min = 0;
-            max = 0;
-        }
+        NormalizeRange(ref min, ref max);
 
         if (min == 0 && max == 0)
         {
@@ -40,11 +36,7 @@ public sealed class GripController
     }
     public void AdjustGrip(bool mainHand, float min, float max)
     {
-        if (min > max)
-        {
-            min = 0;
-            max = 0;
-        }
+        NormalizeRange(ref min, ref max);
 
         if (min == 0 && max == 0)
         {
@@ -61,18 +53,27 @@ public sealed class GripController
     private readonly Animations.Animation _gripAnimation = Animations.Animation.Zero.Clone();
     private readonly FirstPersonAnimationsBehavior? _animationBehavior;
 
-    private PLayerKeyFrame GetAimingFrame()
+    private static void NormalizeRange(ref float min, ref float max)
+    {
+        if (min <= max) return;
+
+        (min, max) = (max, min);
+    }
+
+    private PLayerKeyFrame GetAimingFrame(bool mainHand)
     {
         AnimationElement element = new(_grip, null, null, null, null, null);
         AnimationElement nullElement = new(null, null, null, null, null, null);
 
-        PlayerFrame frame = new(rightHand: new(element, nullElement, nullElement));
+        PlayerFrame frame = mainHand
+            ? new(rightHand: new(element, nullElement, nullElement))
+            : new(leftHand: new(element, nullElement, nullElement));
 
         return new PLayerKeyFrame(frame, TimeSpan.Zero, EasingFunctionType.Linear);
     }
     private void PlayAnimation(bool mainHand)
     {
-        _gripAnimation.PlayerKeyFrames[0] = GetAimingFrame();
+        _gripAnimation.PlayerKeyFrames[0] = GetAimingFrame(mainHand);
         _gripAnimation.Hold = true;
 
         AnimationRequest request = new(_gripAnimation, 1.0f, 0, "grip", TimeSpan.FromSeconds(0.2), TimeSpan.FromSeconds(0.2), true);

@@ -8,7 +8,9 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
+using System.Linq.Expressions;
 using System.Reflection;
+using Vintagestory.API.Client;
 using Vintagestory.API.Common;
 using Vintagestory.API.Common.Entities;
 using Vintagestory.API.Config;
@@ -23,14 +25,19 @@ internal static class HarmonyPatches
     public static Settings ServerSettings { get; set; } = new();
 
     // Set to true only while testing. It can spam client-main.log.
-    private const bool DebugWearableLights = false;
+    private static readonly bool DebugWearableLights = false;
 
     private static ICoreAPI? _api;
     internal static readonly HashSet<long> _reportedEntities = new();
     private static Type? _offhandSlotType;
 
-    private static readonly FieldInfo? _entity = typeof(Vintagestory.API.Common.AnimationManager).GetField("entity", BindingFlags.NonPublic | BindingFlags.Instance);
+    private static readonly System.Func<Vintagestory.API.Common.AnimationManager, Entity?> _animationManagerEntityGetter = CreateAnimationManagerEntityGetter();
     private static readonly FieldInfo? _smoothedBodyYaw = typeof(EntityPlayerShapeRenderer).GetField("smoothedBodyYaw", BindingFlags.NonPublic | BindingFlags.Instance);
+    private static readonly Dictionary<long, WearableLightHsvCacheEntry> _wearableLightHsvCache = [];
+    private const long _wearableLightHsvCacheDurationMs = 250;
+    private const int _wearableLightHsvCachePruneThreshold = 256;
+    private static readonly List<long> _wearableLightHsvPruneScratch = [];
+    private static bool _reportedWearableLightHsvException;
 
     private const string _fallDamageThresholdMultiplierStat = "fallDamageThreshold";
     private const float _fallDamageMultiplier = 0.2f;
@@ -41,6 +48,7 @@ internal static class HarmonyPatches
     {
         _api = api;
         _reportedEntities.Clear();
+        _wearableLightHsvCache.Clear();
 
         Harmony harmony = new(harmonyId);
 
@@ -91,6 +99,7 @@ internal static class HarmonyPatches
         TryPatchStopRaiseShieldAnim(harmony, api);
         TryPatchOffhandDaggerSlot(harmony, api);
         TryPatchVanillaArmorStandInteract(harmony, api);
+        TryPatchVanillaBowInteract(harmony, api);
 
         // BehaviorHealingItem was removed/renamed in newer VS versions.
         // Skip that old patch; it is unrelated to wearable lights.
@@ -114,6 +123,7 @@ internal static class HarmonyPatches
         TryUnpatchStopRaiseShieldAnim(harmony, harmonyId);
         TryUnpatchOffhandDaggerSlot(harmony, harmonyId);
         TryUnpatchVanillaArmorStandInteract(harmony, harmonyId);
+        TryUnpatchVanillaBowInteract(harmony, harmonyId);
         // Old BehaviorHealingItem patch skipped; nothing to unpatch here.
 
         if (!api.ModLoader.IsModEnabled("svanaxfdc"))
@@ -122,6 +132,73 @@ internal static class HarmonyPatches
         }
 
         _api = null;
+        _wearableLightHsvCache.Clear();
+    }
+
+    private static void TryPatchVanillaBowInteract(Harmony harmony, ICoreAPI api)
+    {
+        MethodInfo? method = AccessTools.Method(
+            typeof(ItemBow),
+            nameof(ItemBow.OnHeldInteractStart),
+            [typeof(ItemSlot), typeof(EntityAgent), typeof(BlockSelection), typeof(EntitySelection), typeof(bool), typeof(EnumHandHandling).MakeByRefType()]
+        );
+
+        if (method == null)
+        {
+            api.Logger.Warning("[OverhaullibLegacyCompat] Could not find vanilla ItemBow.OnHeldInteractStart. Vanilla-style bows may ignore the bow two-handed setting.");
+            return;
+        }
+
+        harmony.Patch(method, prefix: new HarmonyMethod(AccessTools.Method(typeof(HarmonyPatches), nameof(VanillaBow_OnHeldInteractStart_Prefix))));
+    }
+
+    private static void TryUnpatchVanillaBowInteract(Harmony harmony, string harmonyId)
+    {
+        MethodInfo? method = AccessTools.Method(
+            typeof(ItemBow),
+            nameof(ItemBow.OnHeldInteractStart),
+            [typeof(ItemSlot), typeof(EntityAgent), typeof(BlockSelection), typeof(EntitySelection), typeof(bool), typeof(EnumHandHandling).MakeByRefType()]
+        );
+
+        if (method != null)
+        {
+            harmony.Unpatch(method, HarmonyPatchType.Prefix, harmonyId);
+        }
+    }
+
+    private static bool VanillaBow_OnHeldInteractStart_Prefix(ItemSlot slot, EntityAgent byEntity, ref EnumHandHandling handling)
+    {
+        Settings settings = byEntity.World.Side == EnumAppSide.Client ? ClientSettings : ServerSettings;
+        if (!settings.BowTwoHanded || byEntity is not EntityPlayer player) return true;
+
+        bool mainHand = IsSameHandSlot(slot, player.RightHandItemSlot);
+        bool offHand = IsSameHandSlot(slot, player.LeftHandItemSlot);
+
+        if (!mainHand && !offHand)
+        {
+            mainHand = true;
+        }
+
+        if (mainHand && !player.LeftHandItemSlot.Empty)
+        {
+            (player.World.Api as ICoreClientAPI)?.TriggerIngameError(typeof(ItemBow), "offhandShouldBeEmpty", Lang.Get("combatoverhaul:message-offhand-empty"));
+            handling = EnumHandHandling.PreventDefault;
+            return false;
+        }
+
+        if (offHand && !player.RightHandItemSlot.Empty)
+        {
+            (player.World.Api as ICoreClientAPI)?.TriggerIngameError(typeof(ItemBow), "mainHandShouldBeEmpty", Lang.Get("combatoverhaul:message-mainhand-empty"));
+            handling = EnumHandHandling.PreventDefault;
+            return false;
+        }
+
+        return true;
+    }
+
+    private static bool IsSameHandSlot(ItemSlot slot, ItemSlot handSlot)
+    {
+        return ReferenceEquals(slot, handSlot) || (slot.Itemstack != null && ReferenceEquals(slot.Itemstack, handSlot.Itemstack));
     }
 
 
@@ -294,9 +371,29 @@ internal static class HarmonyPatches
             ?? typeof(EntityPlayer).GetProperty(nameof(EntityPlayer.LightHsv), AccessTools.all)?.GetGetMethod(true);
     }
 
+    private static System.Func<Vintagestory.API.Common.AnimationManager, Entity?> CreateAnimationManagerEntityGetter()
+    {
+        FieldInfo? entityField = typeof(Vintagestory.API.Common.AnimationManager).GetField("entity", BindingFlags.NonPublic | BindingFlags.Instance);
+        if (entityField == null)
+        {
+            return _ => null;
+        }
+
+        try
+        {
+            ParameterExpression instance = Expression.Parameter(typeof(Vintagestory.API.Common.AnimationManager), "instance");
+            UnaryExpression field = Expression.Convert(Expression.Field(instance, entityField), typeof(Entity));
+            return Expression.Lambda<System.Func<Vintagestory.API.Common.AnimationManager, Entity?>>(field, instance).Compile();
+        }
+        catch
+        {
+            return instance => entityField.GetValue(instance) as Entity;
+        }
+    }
+
     private static bool CreateColliders(Vintagestory.API.Common.AnimationManager __instance, float dt)
     {
-        EntityPlayer? entity = (Entity?)_entity?.GetValue(__instance) as EntityPlayer;
+        EntityPlayer? entity = _animationManagerEntityGetter(__instance) as EntityPlayer;
 
         if (entity?.Api?.Side != EnumAppSide.Client) return true;
 
@@ -404,6 +501,7 @@ internal static class HarmonyPatches
     {
         if (parentinv is not InventoryBasePlayer inventory) return;
 
+        InvalidateWearableLightHsvCache(inventory.Owner);
         bagSlots = AppendGearInventorySlots(bagSlots, inventory.Owner);
 
         if (bagSlots.Length == 4)
@@ -438,6 +536,7 @@ internal static class HarmonyPatches
 
     private static bool BagInventory_SaveSlotIntoBag(BagInventory __instance, ItemSlotBagContent slot)
     {
+        InvalidateWearableLightHsvCache((slot.Inventory as InventoryBasePlayer)?.Owner);
         ItemStack? backPackStack = __instance.BagSlots[slot.BagIndex]?.Itemstack;
 
         try
@@ -508,18 +607,83 @@ internal static class HarmonyPatches
         if (!__instance.Alive) return;
         if (__instance.Player.WorldData.CurrentGameMode == EnumGameMode.Spectator) return;
 
-        if (__result == null || __result.Length < 3)
+        try
         {
-            __result = new byte[] { 0, 0, 0 };
+            __result = CopyLightHsvToOutputBuffer(__result);
+
+            if (DebugWearableLights)
+            {
+                _api?.Logger.Notification("[OverhaullibLegacyCompat] LightHsv postfix called for " + __instance.Player.PlayerName);
+            }
+
+            byte[] wearableLightHsv = GetCachedWearableLightHsv(__instance);
+            AddLight(ref __result, wearableLightHsv);
+        }
+        catch (Exception exception)
+        {
+            ReportWearableLightHsvException(exception);
+        }
+    }
+
+    private static byte[] GetCachedWearableLightHsv(EntityPlayer player)
+    {
+        long nowMs = _api?.World?.ElapsedMilliseconds ?? Environment.TickCount64;
+        long entityId = player.EntityId;
+
+        if (_wearableLightHsvCache.TryGetValue(entityId, out WearableLightHsvCacheEntry? entry))
+        {
+            if (entry != null && nowMs < entry.ExpiresAtMs && entry.Hsv is { Length: >= 3 })
+            {
+                return entry.Hsv;
+            }
+
+            _wearableLightHsvCache.Remove(entityId);
         }
 
-        if (DebugWearableLights)
+        byte[] hsv = [0, 0, 0];
+        AddInventoryLights(player, GetGearInventory(player), ref hsv, "gear");
+        AddBackpackLights(player, ref hsv);
+        _wearableLightHsvCache[entityId] = new WearableLightHsvCacheEntry(hsv, nowMs + _wearableLightHsvCacheDurationMs);
+        PruneExpiredWearableLightHsvCache(nowMs);
+        return hsv;
+    }
+
+    // Invalidate only the affected owner's cached light instead of wiping every entity's entry.
+    // A null owner (couldn't resolve the player) falls back to a full clear, which is correct but
+    // rare. This both bounds growth for that owner and stops one player's bag edit from defeating
+    // the 250 ms cache for every other player on the client.
+    private static void InvalidateWearableLightHsvCache(Entity? owner)
+    {
+        if (owner == null)
         {
-            _api?.Logger.Notification("[OverhaullibLegacyCompat] LightHsv postfix called for " + __instance.Player.PlayerName);
+            _wearableLightHsvCache.Clear();
+            return;
         }
 
-        AddInventoryLights(__instance, GetGearInventory(__instance), ref __result, "gear");
-        AddBackpackLights(__instance, ref __result);
+        _wearableLightHsvCache.Remove(owner.EntityId);
+    }
+
+    // Entries for entities that stop being queried (despawned / out of view) never refresh and would
+    // otherwise linger forever. Only runs once the cache grows past a threshold, so normal play pays
+    // nothing; pathological accumulation is bounded.
+    private static void PruneExpiredWearableLightHsvCache(long nowMs)
+    {
+        if (_wearableLightHsvCache.Count < _wearableLightHsvCachePruneThreshold) return;
+
+        long staleBeforeMs = nowMs - _wearableLightHsvCacheDurationMs;
+        _wearableLightHsvPruneScratch.Clear();
+        foreach ((long id, WearableLightHsvCacheEntry cached) in _wearableLightHsvCache)
+        {
+            if (cached.ExpiresAtMs < staleBeforeMs)
+            {
+                _wearableLightHsvPruneScratch.Add(id);
+            }
+        }
+
+        foreach (long id in _wearableLightHsvPruneScratch)
+        {
+            _wearableLightHsvCache.Remove(id);
+        }
     }
 
     private static void AddBackpackLights(EntityPlayer player, ref byte[] result)
@@ -531,6 +695,19 @@ internal static class HarmonyPatches
         for (int index = 0; index < count; index++)
         {
             AddSlotLight(player, backpackInventory[index], ref result, "backpack");
+        }
+
+        AddBackpackStoredLightSlots(player, backpackInventory, ref result);
+    }
+
+    private static void AddBackpackStoredLightSlots(EntityPlayer player, IInventory backpackInventory, ref byte[] result)
+    {
+        foreach (ItemSlot slot in backpackInventory)
+        {
+            if (slot is not ItemSlotBagContentWithWildcardMatch bagSlot) continue;
+            if (bagSlot.Config.StoredItemLightLevelOffset == 0) continue;
+
+            AddSlotLight(player, bagSlot, ref result, "backpack-content");
         }
     }
 
@@ -554,35 +731,46 @@ internal static class HarmonyPatches
         IWearableLightSource? wearableLightSource = collectible.GetCollectibleInterface<IWearableLightSource>();
         if (wearableLightSource != null)
         {
-            byte[]? hsv = wearableLightSource.GetLightHsv(player, slot);
+            byte[]? hsv = null;
+            try
+            {
+                hsv = wearableLightSource.GetLightHsv(player, slot);
+            }
+            catch (Exception exception)
+            {
+                ReportWearableLightHsvException(exception);
+            }
 
             if (DebugWearableLights)
             {
                 _api?.Logger.Notification(
                     "[OverhaullibLegacyCompat] " + source + " wearable light " + collectible.Code +
-                    " -> " + FormatHsv(hsv)
+                    " -> " + FormatHsv(ApplySlotLightLevelOffset(slot, hsv))
                 );
             }
 
-            AddLight(ref result, hsv);
+            AddLight(ref result, ApplySlotLightLevelOffset(slot, hsv));
         }
 
         byte[]? normalLightHsv = collectible.LightHsv;
         if (normalLightHsv != null && normalLightHsv.Length >= 3 && normalLightHsv[2] > 0)
         {
+            byte[] adjustedLightHsv = ApplySlotLightLevelOffset(slot, normalLightHsv);
+
             if (DebugWearableLights)
             {
                 _api?.Logger.Notification(
                     "[OverhaullibLegacyCompat] " + source + " normal light " + collectible.Code +
-                    " -> " + FormatHsv(normalLightHsv)
+                    " -> " + FormatHsv(adjustedLightHsv)
                 );
             }
 
-            AddLight(ref result, normalLightHsv);
+            AddLight(ref result, adjustedLightHsv);
         }
     }
 
-    private static readonly byte[] _lightHsvBuffer = new byte[] { 0, 0, 0 };
+    [ThreadStatic]
+    private static byte[]? _lightHsvOutputBuffer;
 
     private static void AddLight(ref byte[] result, byte[]? hsv)
     {
@@ -608,11 +796,57 @@ internal static class HarmonyPatches
         byte oldSat = result[1];
         byte oldVal = result[2];
 
-        _lightHsvBuffer[0] = (byte)(hsv[0] * brightnessFraction + oldHue * (1 - brightnessFraction));
-        _lightHsvBuffer[1] = (byte)(hsv[1] * brightnessFraction + oldSat * (1 - brightnessFraction));
-        _lightHsvBuffer[2] = Math.Max(hsv[2], oldVal);
+        result[0] = (byte)(hsv[0] * brightnessFraction + oldHue * (1 - brightnessFraction));
+        result[1] = (byte)(hsv[1] * brightnessFraction + oldSat * (1 - brightnessFraction));
+        result[2] = Math.Max(hsv[2], oldVal);
+    }
 
-        result = _lightHsvBuffer;
+    private static byte[] CopyLightHsvToOutputBuffer(byte[]? hsv)
+    {
+        byte[] buffer = _lightHsvOutputBuffer ??= new byte[] { 0, 0, 0 };
+        if (hsv == null || hsv.Length < 3)
+        {
+            buffer[0] = 0;
+            buffer[1] = 0;
+            buffer[2] = 0;
+            return buffer;
+        }
+
+        buffer[0] = hsv[0];
+        buffer[1] = hsv[1];
+        buffer[2] = hsv[2];
+        return buffer;
+    }
+
+    private static byte[] ApplySlotLightLevelOffset(ItemSlot slot, byte[]? hsv)
+    {
+        if (hsv == null || hsv.Length < 3)
+        {
+            return CopyLightHsvToOutputBuffer(null);
+        }
+
+        int offset = GetStoredItemLightLevelOffset(slot);
+        if (offset == 0)
+        {
+            return hsv;
+        }
+
+        byte[] adjusted = CopyLightHsvToOutputBuffer(hsv);
+        adjusted[2] = (byte)Math.Clamp(adjusted[2] + offset, 0, byte.MaxValue);
+        return adjusted;
+    }
+
+    private static int GetStoredItemLightLevelOffset(ItemSlot slot)
+    {
+        return slot is ItemSlotBagContentWithWildcardMatch bagSlot
+            ? bagSlot.Config.StoredItemLightLevelOffset
+            : 0;
+    }
+
+    private sealed class WearableLightHsvCacheEntry(byte[] hsv, long expiresAtMs)
+    {
+        public byte[] Hsv { get; } = hsv;
+        public long ExpiresAtMs { get; } = expiresAtMs;
     }
 
     private static string FormatHsv(byte[]? hsv)
@@ -620,6 +854,14 @@ internal static class HarmonyPatches
         if (hsv == null) return "null";
         if (hsv.Length < 3) return "invalid";
         return hsv[0] + "," + hsv[1] + "," + hsv[2];
+    }
+
+    private static void ReportWearableLightHsvException(Exception exception)
+    {
+        if (_reportedWearableLightHsvException) return;
+
+        _reportedWearableLightHsvException = true;
+        LoggerUtil.Error(_api, typeof(HarmonyPatches), $"Error while applying wearable light HSV. Wearable light contribution will be skipped for this render call:\n{exception}");
     }
 
     private static bool BehaviorHealingItem_OnHeldInteractStart(EntityAgent byEntity)

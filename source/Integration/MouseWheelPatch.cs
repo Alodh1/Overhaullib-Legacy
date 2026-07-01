@@ -16,6 +16,7 @@ internal static class MouseWheelPatch
     public static void Patch(string harmonyId, ICoreClientAPI api)
     {
         _clientApi = api;
+        api.Event.MouseWheelMove += OnMouseWheelEvent;
         Harmony harmony = new(harmonyId);
 
         harmony.Patch(
@@ -29,15 +30,32 @@ internal static class MouseWheelPatch
         Harmony harmony = new(harmonyId);
 
         harmony.Unpatch(typeof(HudHotbar).GetMethod("OnMouseWheel", AccessTools.all), HarmonyPatchType.Prefix, harmonyId);
+        if (_clientApi != null)
+        {
+            _clientApi.Event.MouseWheelMove -= OnMouseWheelEvent;
+            _clientApi = null;
+        }
     }
 
     private static ICoreClientAPI? _clientApi;
-    private static int _prevValue = int.MaxValue;
+
+    public static float GetDelta(MouseWheelEventArgs args)
+    {
+        return args.deltaPrecise != 0 ? args.deltaPrecise : args.delta;
+    }
+
+    private static void OnMouseWheelEvent(MouseWheelEventArgs args)
+    {
+        OnMouseWheel(args);
+    }
+
     private static bool OnMouseWheel(MouseWheelEventArgs args)
     {
         if (_clientApi == null) return true;
-        if (args.delta == 0 || args.value == _prevValue) return true;
-        _prevValue = args.value;
+        if (args.IsHandled) return true;
+
+        float delta = GetDelta(args);
+        if (delta == 0) return true;
 
         ItemSlot slot = _clientApi.World.Player.InventoryManager.ActiveHotbarSlot;
 
@@ -46,7 +64,11 @@ internal static class MouseWheelPatch
         if (item != null)
         {
             IClientPlayer player = _clientApi.World.Player;
-            bool handled = item.OnMouseWheel(slot, player, args.deltaPrecise);
+            bool handled = item.OnMouseWheel(slot, player, delta);
+            if (handled)
+            {
+                args.SetHandled();
+            }
 
             return !handled;
         }

@@ -169,5 +169,7 @@
   "quenchable-armor-durability-gain": "Armor durability gain: +10%",
   "quenchable-armor-flat-reduction-gain": "Armor flat damage reduction gain: +0.2",
   "quenchable-armor-penalty-reduction": "Armor penalties reduced: {0}%",
-  "quenchable-weapon-damage-multiplier": "Hardened: +{0}% weapon damage"
+  "quenchable-weapon-damage-multiplier": "Hardened: +{0}% weapon damage",
+  "split-material-description": "{0} blade, {1} body",
+  "split-material-item-name": "{0} ({1} blade, {2} body)"
 }

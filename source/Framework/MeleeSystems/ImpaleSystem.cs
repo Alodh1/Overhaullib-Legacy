@@ -120,7 +120,6 @@ public sealed class ImpaleSystemServer : IDisposable
             .RegisterMessageType<ImpaleThrowRequestPacket>()
             .SetMessageHandler<ImpaleThrowRequestPacket>(HandlePacket);
 
-        _tickListener = api.Event.RegisterGameTickListener(OnTick, 20);
         api.Event.OnEntityDeath += OnEntityDeath;
         api.Event.OnEntityDespawn += OnEntityDespawn;
         api.Event.PlayerDisconnect += OnPlayerDisconnect;
@@ -154,6 +153,7 @@ public sealed class ImpaleSystemServer : IDisposable
 
         _states[key] = state;
         _targets[target.EntityId] = key;
+        EnsureTickListener();
         target.WatchedAttributes.SetLong("combatOverhaulImpaledBy", attacker.EntityId);
         target.WatchedAttributes.SetBool("combatOverhaulImpaledMainHand", packet.MainHand);
         target.WatchedAttributes.MarkPathDirty("combatOverhaulImpaledBy");
@@ -168,12 +168,18 @@ public sealed class ImpaleSystemServer : IDisposable
 
     public void Dispose()
     {
-        _api.Event.UnregisterGameTickListener(_tickListener);
+        if (_tickListener != 0)
+        {
+            _api.Event.UnregisterGameTickListener(_tickListener);
+            _tickListener = 0;
+        }
+
         _api.Event.OnEntityDeath -= OnEntityDeath;
         _api.Event.OnEntityDespawn -= OnEntityDespawn;
         _api.Event.PlayerDisconnect -= OnPlayerDisconnect;
 
-        foreach (ImpaleKey key in _states.Keys.ToArray())
+        CopyStateKeys(_clearKeysScratch);
+        foreach (ImpaleKey key in _clearKeysScratch)
         {
             Clear(key, applyVelocity: false, Vec3d.Zero);
         }
@@ -183,7 +189,9 @@ public sealed class ImpaleSystemServer : IDisposable
     private readonly IServerNetworkChannel _channel;
     private readonly Dictionary<ImpaleKey, ImpaleState> _states = [];
     private readonly Dictionary<long, ImpaleKey> _targets = [];
-    private readonly long _tickListener;
+    private readonly List<ImpaleKey> _tickKeysScratch = [];
+    private readonly List<ImpaleKey> _clearKeysScratch = [];
+    private long _tickListener;
 
     private void HandlePacket(IServerPlayer player, ImpaleThrowRequestPacket packet)
     {
@@ -194,7 +202,14 @@ public sealed class ImpaleSystemServer : IDisposable
 
     private void OnTick(float dt)
     {
-        foreach (ImpaleKey key in _states.Keys.ToArray())
+        if (_states.Count == 0)
+        {
+            StopTickListenerIfIdle();
+            return;
+        }
+
+        CopyStateKeys(_tickKeysScratch);
+        foreach (ImpaleKey key in _tickKeysScratch)
         {
             if (!_states.TryGetValue(key, out ImpaleState? state)) continue;
 
@@ -223,6 +238,8 @@ public sealed class ImpaleSystemServer : IDisposable
             target.ServerPos.Motion.Set(0, 0, 0);
             target.Pos.Motion.Set(0, 0, 0);
         }
+
+        StopTickListenerIfIdle();
     }
 
     private void Clear(ImpaleKey key, bool applyVelocity, Vec3d direction)
@@ -258,6 +275,8 @@ public sealed class ImpaleSystemServer : IDisposable
             TargetEntityId = state.TargetEntityId,
             MainHand = state.MainHand
         });
+
+        StopTickListenerIfIdle();
     }
 
     private void OnEntityDeath(Entity entity, DamageSource damageSource)
@@ -277,9 +296,10 @@ public sealed class ImpaleSystemServer : IDisposable
 
     private void ClearEntity(long entityId)
     {
-        foreach (ImpaleKey key in _states.Keys.ToArray())
+        CopyStateKeys(_clearKeysScratch);
+        foreach (ImpaleKey key in _clearKeysScratch)
         {
-            ImpaleState state = _states[key];
+            if (!_states.TryGetValue(key, out ImpaleState? state)) continue;
             if (state.AttackerEntityId == entityId || state.TargetEntityId == entityId)
             {
                 Clear(key, applyVelocity: false, Vec3d.Zero);
@@ -357,6 +377,30 @@ public sealed class ImpaleSystemServer : IDisposable
     {
         if (value == null || value.Length < 3) return new Vec3d(fallback.X, fallback.Y, fallback.Z);
         return new Vec3d(value[0], value[1], value[2]);
+    }
+
+    private void EnsureTickListener()
+    {
+        if (_tickListener != 0) return;
+
+        _tickListener = _api.Event.RegisterGameTickListener(OnTick, 20);
+    }
+
+    private void StopTickListenerIfIdle()
+    {
+        if (_tickListener == 0 || _states.Count > 0) return;
+
+        _api.Event.UnregisterGameTickListener(_tickListener);
+        _tickListener = 0;
+    }
+
+    private void CopyStateKeys(List<ImpaleKey> buffer)
+    {
+        buffer.Clear();
+        foreach (ImpaleKey key in _states.Keys)
+        {
+            buffer.Add(key);
+        }
     }
 
     private sealed class ImpaleState

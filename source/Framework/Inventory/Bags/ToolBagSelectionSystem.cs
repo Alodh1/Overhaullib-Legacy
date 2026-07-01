@@ -1,5 +1,4 @@
 ﻿using CombatOverhaul.Utils;
-using System.Diagnostics;
 using System.Linq;
 using Vintagestory.API.Client;
 using Vintagestory.API.Common;
@@ -49,12 +48,12 @@ public sealed class ToolBagSelectionSystemClient
         }
 
         _api.Input.SetHotKeyHandler(HotkeyCode, OnHotkeyPress);
-
+        _api.Event.RegisterCallback(_ => MoveHotkeyToStart(), 1000);
 
         GuiDialogToolMode? toolModeDialog = _api.Gui.LoadedGuis.OfType<GuiDialogToolMode>().FirstOrDefault();
         if (toolModeDialog != null)
         {
-            toolModeDialog.OnClosed += () => _dialog?.TryClose();
+            toolModeDialog.OnClosed += () => _dialog.TryClose();
         }
     }
 
@@ -70,6 +69,7 @@ public sealed class ToolBagSelectionSystemClient
         return inventory
             .OfType<ItemSlotBagContentWithWildcardMatch>()
             .Where(slot => slot.Config.HandleHotkey || slot.Config.DisplayInToolDialog)
+            .Where(slot => slot.Config.BackpackCategoryCode != "ammunition")
             .Select(slot => new ToolSlotData(slot.Config, slot.Itemstack, slot.ToolBagId, slot.ToolBagIndex, slot.MainHand, slot.BackgroundIcon, slot.HexBackgroundColor ?? "", slot.SlotIndex));
     }
 
@@ -82,6 +82,7 @@ public sealed class ToolBagSelectionSystemClient
         return inventory
             .OfType<ItemSlotBagContentWithWildcardMatch>()
             .Where(slot => slot.Config.DisplayInToolDialog || slot.Config.HandleHotkey)
+            .Where(slot => slot.Config.BackpackCategoryCode != "ammunition")
             .Select(slot => new ToolSlotData(slot.Config, slot.Itemstack, slot.ToolBagId, slot.ToolBagIndex, slot.MainHand, slot.BackgroundIcon, slot.HexBackgroundColor ?? "", slot.SlotIndex));
     }
 
@@ -101,17 +102,56 @@ public sealed class ToolBagSelectionSystemClient
     private readonly ICoreClientAPI _api;
     private readonly ToolSelectionGuiDialog _dialog;
     private readonly ToolBagSystemClient _toolBagSystem;
+    private bool _dialogOpenQueued;
+
+    private void MoveHotkeyToStart()
+    {
+        if (!_api.Input.HotKeys.TryGetValue(HotkeyCode, out HotKey? hotkey))
+        {
+            return;
+        }
+
+        _api.Input.HotKeys.Remove(HotkeyCode);
+        _api.Input.HotKeys.Insert(0, HotkeyCode, hotkey);
+    }
 
     private bool OnHotkeyPress(KeyCombination combination)
     {
+        if (_dialog.IsOpened())
+        {
+            _dialog.TryClose();
+            return false;
+        }
+
         if (!GetSlotsForToolDialog().Any())
         {
             return false;
         }
 
-        _dialog.TryOpen(withFocus: true);
+        QueueDialogOpen();
 
         return false;
+    }
+
+    private void QueueDialogOpen()
+    {
+        if (_dialogOpenQueued)
+        {
+            return;
+        }
+
+        _dialogOpenQueued = true;
+        _api.Event.RegisterCallback(_ =>
+        {
+            _dialogOpenQueued = false;
+
+            if (_dialog.IsOpened() || !GetSlotsForToolDialog().Any())
+            {
+                return;
+            }
+
+            _dialog.TryOpen(withFocus: false);
+        }, 0);
     }
 
     private static IInventory? GetBackpackInventory(IPlayer player)

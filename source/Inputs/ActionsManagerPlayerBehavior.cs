@@ -156,36 +156,64 @@ public sealed class ActionsManagerPlayerBehavior : EntityBehavior
         _directionController.OnGameTick(forceNewDirection: configurationChanged);
         _ = CheckIfItemsInHandsChanged();
 
-        if (MainHandItemSlot.Itemstack?.Item is IOnGameTick mainhandTickListener)
+        ItemSlot mainHandSlot = MainHandItemSlot;
+        ItemStack? mainHandStack = mainHandSlot.Itemstack;
+        if (mainHandStack?.Item is IOnGameTick mainhandTickListener)
         {
-            mainhandTickListener.OnGameTick(MainHandItemSlot, _player, ref _mainHandState, true);
+            mainhandTickListener.OnGameTick(mainHandSlot, _player, ref _mainHandState, true);
         }
 
-        if (MainHandItemSlot.Itemstack?.Item != null)
+        foreach (IOnGameTick tickListener in GetBehaviorTickListeners(mainHandStack, ref _mainHandTickListenersItemId, ref _mainHandBehaviorTickListeners))
         {
-            foreach (IOnGameTick tickListener in MainHandItemSlot.Itemstack.Item.CollectibleBehaviors.OfType<IOnGameTick>())
-            {
-                tickListener.OnGameTick(MainHandItemSlot, _player, ref _mainHandState, true);
-            }
+            tickListener.OnGameTick(mainHandSlot, _player, ref _mainHandState, true);
         }
 
-        if (_player.LeftHandItemSlot.Itemstack?.Item is IOnGameTick offhandTickListener)
+        ItemSlot offHandSlot = _player.LeftHandItemSlot;
+        ItemStack? offHandStack = offHandSlot.Itemstack;
+        if (offHandStack?.Item is IOnGameTick offhandTickListener)
         {
-            offhandTickListener.OnGameTick(_player.LeftHandItemSlot, _player, ref _offHandState, false);
+            offhandTickListener.OnGameTick(offHandSlot, _player, ref _offHandState, false);
         }
 
-        if (_player.LeftHandItemSlot.Itemstack?.Item != null)
+        foreach (IOnGameTick tickListener in GetBehaviorTickListeners(offHandStack, ref _offHandTickListenersItemId, ref _offHandBehaviorTickListeners))
         {
-            foreach (IOnGameTick tickListener in _player.LeftHandItemSlot.Itemstack.Item.CollectibleBehaviors.OfType<IOnGameTick>())
-            {
-                tickListener.OnGameTick(_player.LeftHandItemSlot, _player, ref _offHandState, false);
-            }
+            tickListener.OnGameTick(offHandSlot, _player, ref _offHandState, false);
         }
 
         ActionListener.SuppressLMB = SuppressLMB;
         ActionListener.SuppressRMB = SuppressRMB;
 
 
+    }
+
+    private static IOnGameTick[] GetBehaviorTickListeners(ItemStack? stack, ref int cachedItemId, ref IOnGameTick[] cachedListeners)
+    {
+        int itemId = stack?.Item?.Id ?? -1;
+        if (itemId == cachedItemId)
+        {
+            return cachedListeners;
+        }
+
+        cachedItemId = itemId;
+        CollectibleBehavior[]? behaviors = stack?.Item?.CollectibleBehaviors;
+        if (behaviors == null || behaviors.Length == 0)
+        {
+            cachedListeners = [];
+            return cachedListeners;
+        }
+
+        List<IOnGameTick>? listeners = null;
+        foreach (CollectibleBehavior behavior in behaviors)
+        {
+            if (behavior is IOnGameTick listener)
+            {
+                listeners ??= [];
+                listeners.Add(listener);
+            }
+        }
+
+        cachedListeners = listeners?.ToArray() ?? [];
+        return cachedListeners;
     }
 
     public int GetState(bool mainHand = true) => mainHand ? _mainHandState : _offHandState;
@@ -242,6 +270,10 @@ public sealed class ActionsManagerPlayerBehavior : EntityBehavior
     private int _currentMainHandSlotId = -1;
     private int _mainHandState = 0;
     private int _offHandState = 0;
+    private int _mainHandTickListenersItemId = -1;
+    private int _offHandTickListenersItemId = -1;
+    private IOnGameTick[] _mainHandBehaviorTickListeners = [];
+    private IOnGameTick[] _offHandBehaviorTickListeners = [];
     private bool _mainHandRenderingOffset = true;
     private bool _offHandRenderingOffset = true;
     private void RegisterWeapons()

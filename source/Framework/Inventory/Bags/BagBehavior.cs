@@ -354,6 +354,8 @@ public class SlotHotkeyConfig
     public string HotkeyCode { get; set; } = "";
     public string HotkeyName { get; set; } = "";
     public GlKeys HotkeyKey { get; set; } = GlKeys.R;
+    public string RequiredTypeCode { get; set; } = "";
+    public string RequiredTypeValue { get; set; } = "";
 }
 
 public class ToolBag : GearEquipableBag
@@ -365,6 +367,7 @@ public class ToolBag : GearEquipableBag
     public string HotkeyCode { get; protected set; } = "";
     public string HotkeyName { get; protected set; } = "";
     public GlKeys HotKeyKey { get; protected set; } = GlKeys.R;
+    public List<SlotHotkeyConfig> HotkeyConfigs { get; protected set; } = [];
     public int RegularSlotsNumber { get; protected set; } = 0;
     public int ToolSlotNumber { get; protected set; } = 0;
     public int TakeOutSlotNumber { get; protected set; } = 0;
@@ -386,12 +389,36 @@ public class ToolBag : GearEquipableBag
             HotkeyCode = hotkeyConfig.HotkeyCode;
             HotkeyName = hotkeyConfig.HotkeyName;
             HotKeyKey = hotkeyConfig.HotkeyKey;
+            HotkeyConfigs.Add(hotkeyConfig);
         }
         else
         {
             HotkeyCode = properties["hotkeyCode"].AsString("");
             HotkeyName = properties["hotkeyName"].AsString("");
             HotKeyKey = Enum.Parse<GlKeys>(properties["hotkeyKey"].AsString("R"));
+            if (HotkeyCode != "")
+            {
+                HotkeyConfigs.Add(new SlotHotkeyConfig
+                {
+                    HotkeyCode = HotkeyCode,
+                    HotkeyName = HotkeyName,
+                    HotkeyKey = HotKeyKey
+                });
+            }
+        }
+
+        if (properties.KeyExists("hotkeys"))
+        {
+            SlotHotkeyConfig[] hotkeyConfigs = properties["hotkeys"].AsObject<SlotHotkeyConfig[]>() ?? [];
+            HotkeyConfigs.AddRange(hotkeyConfigs.Where(config => config.HotkeyCode != ""));
+
+            SlotHotkeyConfig? firstConfig = HotkeyConfigs.FirstOrDefault();
+            if (firstConfig != null)
+            {
+                HotkeyCode = firstConfig.HotkeyCode;
+                HotkeyName = firstConfig.HotkeyName;
+                HotKeyKey = firstConfig.HotkeyKey;
+            }
         }
 
         TakeOutSlotIcon = properties["takeOutSlotIcon"].AsString();
@@ -432,15 +459,19 @@ public class ToolBag : GearEquipableBag
 
         ClientApi = clientApi;
 
-        if (!clientApi.Input.HotKeys.TryGetValue(HotkeyCode, out HotKey? hotkey))
+        foreach (SlotHotkeyConfig hotkeyConfig in HotkeyConfigs)
         {
-            clientApi.Input.RegisterHotKey(HotkeyCode, HotkeyName, HotKeyKey);
-            hotkey = clientApi.Input.HotKeys[HotkeyCode];
+            if (hotkeyConfig.HotkeyCode == "") continue;
+
+            if (!clientApi.Input.HotKeys.TryGetValue(hotkeyConfig.HotkeyCode, out HotKey? hotkey))
+            {
+                clientApi.Input.RegisterHotKey(hotkeyConfig.HotkeyCode, hotkeyConfig.HotkeyName, hotkeyConfig.HotkeyKey);
+                hotkey = clientApi.Input.HotKeys[hotkeyConfig.HotkeyCode];
+            }
+
+            PreviousHotkeyHandlers[hotkeyConfig.HotkeyCode] = hotkey.Handler;
+            clientApi.Input.SetHotKeyHandler(hotkeyConfig.HotkeyCode, keyCombination => OnHotkeyPressed(keyCombination, hotkeyConfig));
         }
-
-        PreviousHotkeyHandler = hotkey.Handler;
-
-        clientApi.Input.SetHotKeyHandler(HotkeyCode, OnHotkeyPressed);
     }
 
     public override List<ItemSlotBagContent?> GetOrCreateSlots(ItemStack bagstack, InventoryBase parentinv, int bagIndex, IWorldAccessor world)
@@ -746,11 +777,26 @@ public class ToolBag : GearEquipableBag
     }
 
     protected ActionConsumable<KeyCombination>? PreviousHotkeyHandler;
+    protected Dictionary<string, ActionConsumable<KeyCombination>?> PreviousHotkeyHandlers { get; } = [];
     protected ICoreClientAPI? ClientApi;
     protected long HotkeyCooldownUntilMs = 0;
     protected const long HotkeyCooldown = 120;
 
-    protected virtual bool OnHotkeyPressed(KeyCombination keyCombination)
+    protected readonly struct HotkeyStoragePriority
+    {
+        public readonly bool HeldItemCanBeStored;
+        public readonly ItemSlotBagContentWithWildcardMatch? TargetSlot;
+
+        public HotkeyStoragePriority(bool heldItemCanBeStored, ItemSlotBagContentWithWildcardMatch? targetSlot)
+        {
+            HeldItemCanBeStored = heldItemCanBeStored;
+            TargetSlot = targetSlot;
+        }
+    }
+
+    protected virtual bool OnHotkeyPressed(KeyCombination keyCombination) => OnHotkeyPressed(keyCombination, null);
+
+    protected virtual bool OnHotkeyPressed(KeyCombination keyCombination, SlotHotkeyConfig? hotkeyConfig)
     {
         InventoryPlayerBackpacks? inventory = GetBackpackInventory();
 
@@ -758,35 +804,31 @@ public class ToolBag : GearEquipableBag
 
         if (inventory != null && Api != null && HotkeyCooldownUntilMs < Api.World.ElapsedMilliseconds)
         {
-            string toolBagId = collObj.Code.ToString();
             ToolBagSystemClient? system = ClientApi?.ModLoader?.GetModSystem<CombatOverhaulSystem>()?.ClientToolBagSystem;
 
             if (system != null)
             {
                 ItemSlotBagContentWithWildcardMatch? selectedSlot = null;
+                HotkeyStoragePriority storagePriority = GetSameHotkeyStoragePriority(inventory, keyCombination);
 
-                for (int slotIndex = 0; slotIndex < inventory.Count; slotIndex++)
+                if (storagePriority.TargetSlot != null)
                 {
-                    if (inventory[slotIndex] is not ItemSlotBagContentWithWildcardMatch slot) continue;
-                    if (!slot.Config.HandleHotkey) continue;
-                    if (slot.ToolBagId != toolBagId) continue;
+                    selectedSlot = storagePriority.TargetSlot;
+                }
+                else if (storagePriority.HeldItemCanBeStored)
+                {
+                    handled = true;
+                }
+                else
+                {
+                    List<ItemSlotBagContentWithWildcardMatch> slots = inventory
+                        .OfType<ItemSlotBagContentWithWildcardMatch>()
+                        .Where(slot => slot.Config.HandleHotkey)
+                        .Where(slot => SlotUsesKeyCombination(slot, keyCombination))
+                        .ToList();
 
-                    ItemSlot? handSlot = slot.MainHand ? ClientApi?.World?.Player?.Entity?.RightHandItemSlot : ClientApi?.World?.Player?.Entity?.LeftHandItemSlot;
-                    bool handHasItem = handSlot?.Itemstack != null;
-                    bool slotHasItem = slot.Itemstack != null;
-
-                    // Prefer slots that can accept the currently held item for that hand.
-                    if (handHasItem && handSlot != null && slot.CanHold(handSlot))
-                    {
-                        selectedSlot = slot;
-                        break;
-                    }
-
-                    // Otherwise, if hand is empty, prefer taking an item out of a non-empty slot.
-                    if (!handHasItem && slotHasItem)
-                    {
-                        selectedSlot ??= slot;
-                    }
+                    selectedSlot = slots.FirstOrDefault(slot => !HasHotkeyActionableStack(GetHandSlot(slot)) && HasHotkeyActionableStack(slot))
+                        ?? slots.FirstOrDefault(HasHotkeyActionableStack);
                 }
 
                 if (selectedSlot != null)
@@ -807,8 +849,106 @@ public class ToolBag : GearEquipableBag
             return true;
         }
 
-        bool previousHandled = PreviousHotkeyHandler?.Invoke(keyCombination) ?? false;
+        ActionConsumable<KeyCombination>? previousHandler = PreviousHotkeyHandler;
+        if (hotkeyConfig != null)
+        {
+            PreviousHotkeyHandlers.TryGetValue(hotkeyConfig.HotkeyCode, out previousHandler);
+        }
+
+        bool previousHandled = previousHandler?.Invoke(keyCombination) ?? false;
         return previousHandled;
+    }
+
+    protected virtual HotkeyStoragePriority GetSameHotkeyStoragePriority(InventoryPlayerBackpacks inventory, KeyCombination keyCombination)
+    {
+        bool heldItemCanBeStored = false;
+
+        foreach (ItemSlotBagContentWithWildcardMatch slot in inventory.OfType<ItemSlotBagContentWithWildcardMatch>())
+        {
+            if (!slot.Config.HandleHotkey || !SlotUsesKeyCombination(slot, keyCombination))
+            {
+                continue;
+            }
+
+            ItemSlot? handSlot = GetHandSlot(slot);
+            if (!HasHotkeyActionableStack(handSlot) || handSlot == null || !slot.CanHold(handSlot))
+            {
+                continue;
+            }
+
+            heldItemCanBeStored = true;
+
+            if (!HasHotkeyActionableStack(slot))
+            {
+                return new HotkeyStoragePriority(true, slot);
+            }
+        }
+
+        return new HotkeyStoragePriority(heldItemCanBeStored, null);
+    }
+
+    protected virtual bool SlotUsesKeyCombination(ItemSlotBagContentWithWildcardMatch slot, KeyCombination keyCombination)
+    {
+        if (slot.SourceBag?.Collectible?.CollectibleBehaviors == null)
+        {
+            return false;
+        }
+
+        foreach (ToolBag behavior in slot.SourceBag.Collectible.CollectibleBehaviors.OfType<ToolBag>())
+        {
+            foreach (SlotHotkeyConfig config in behavior.HotkeyConfigs)
+            {
+                if (behavior.MatchesHotkeyConfig(slot.SourceBag, config) && HotkeyConfigMatchesCurrentMapping(config, keyCombination))
+                {
+                    return true;
+                }
+            }
+        }
+
+        return false;
+    }
+
+    protected virtual bool HotkeyConfigMatchesCurrentMapping(SlotHotkeyConfig hotkeyConfig, KeyCombination keyCombination)
+    {
+        if (hotkeyConfig.HotkeyCode == "" || ClientApi?.Input.HotKeys.TryGetValue(hotkeyConfig.HotkeyCode, out HotKey? hotkey) != true)
+        {
+            return false;
+        }
+
+        return KeyCombinationsMatch(hotkey.CurrentMapping, keyCombination);
+    }
+
+    protected static bool KeyCombinationsMatch(KeyCombination? currentMapping, KeyCombination pressedCombination)
+    {
+        if (currentMapping == null)
+        {
+            return false;
+        }
+
+        return currentMapping.KeyCode == pressedCombination.KeyCode
+            && currentMapping.SecondKeyCode.GetValueOrDefault() == pressedCombination.SecondKeyCode.GetValueOrDefault()
+            && currentMapping.Ctrl == pressedCombination.Ctrl
+            && currentMapping.Alt == pressedCombination.Alt
+            && currentMapping.Shift == pressedCombination.Shift;
+    }
+
+    protected ItemSlot? GetHandSlot(ItemSlotBagContentWithWildcardMatch slot)
+    {
+        return slot.MainHand ? ClientApi?.World?.Player?.Entity?.RightHandItemSlot : ClientApi?.World?.Player?.Entity?.LeftHandItemSlot;
+    }
+
+    protected static bool HasHotkeyActionableStack(ItemSlot? slot)
+    {
+        return slot?.Itemstack != null && slot.Itemstack.StackSize > 0 && slot.Itemstack.Collectible != null;
+    }
+
+    protected virtual bool MatchesHotkeyConfig(ItemStack sourceBag, SlotHotkeyConfig hotkeyConfig)
+    {
+        if (hotkeyConfig.RequiredTypeCode == "" || hotkeyConfig.RequiredTypeValue == "") return true;
+        if (sourceBag.Attributes?["types"] is not ITreeAttribute types) return true;
+
+        string? actualValue = types[hotkeyConfig.RequiredTypeCode]?.GetValue()?.ToString();
+        return actualValue == null || actualValue == hotkeyConfig.RequiredTypeValue;
     }
 
     protected InventoryPlayerBackpacks? GetBackpackInventory()

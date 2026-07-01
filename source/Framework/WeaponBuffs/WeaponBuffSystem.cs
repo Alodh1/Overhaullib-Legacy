@@ -417,6 +417,7 @@ public sealed class WeaponBuffSystem : ModSystem
 
     public IReadOnlyList<WeaponBuffInstance> GetBuffs(ItemStack? stack, bool activeOnly = true)
     {
+        if (!HasBuffRoot(stack)) return Array.Empty<WeaponBuffInstance>();
         return OrderBuffs(GetBuffsInternal(stack, activeOnly)).ToArray();
     }
 
@@ -460,6 +461,8 @@ public sealed class WeaponBuffSystem : ModSystem
 
     internal static ItemStackMeleeWeaponStats ComposeMeleeStats(ItemStack stack, WeaponBuffMeleeStats stats)
     {
+        if (!HasBuffRoot(stack)) return stats.ToReadonly();
+
         WeaponBuffQueryContext context = new(stack, "melee");
         foreach (WeaponBuffInstance buff in GetActiveBuffs(stack))
         {
@@ -472,6 +475,8 @@ public sealed class WeaponBuffSystem : ModSystem
 
     internal static ItemStackRangedStats ComposeRangedStats(ItemStack stack, WeaponBuffRangedStats stats)
     {
+        if (!HasBuffRoot(stack)) return stats.ToReadonly();
+
         WeaponBuffQueryContext context = new(stack, "ranged");
         foreach (WeaponBuffInstance buff in GetActiveBuffs(stack))
         {
@@ -484,6 +489,8 @@ public sealed class WeaponBuffSystem : ModSystem
 
     internal static ItemStackProjectileStats ComposeProjectileStackStats(ItemStack stack, WeaponBuffProjectileStats stats)
     {
+        if (!HasBuffRoot(stack)) return stats.ToReadonly();
+
         WeaponBuffQueryContext context = new(stack, "projectile");
         foreach (WeaponBuffInstance buff in GetActiveBuffs(stack))
         {
@@ -496,6 +503,8 @@ public sealed class WeaponBuffSystem : ModSystem
 
     internal static void ModifyProjectileStats(ItemStack stack, ProjectileStats stats)
     {
+        if (!HasBuffRoot(stack)) return;
+
         WeaponBuffQueryContext context = new(stack, "projectile-stats");
         foreach (WeaponBuffInstance buff in GetActiveBuffs(stack))
         {
@@ -564,6 +573,7 @@ public sealed class WeaponBuffSystem : ModSystem
     public static void AppendTooltip(ItemStack? stack, StringBuilder description, IWorldAccessor world, bool withDebugInfo)
     {
         if (stack == null) return;
+        if (!HasBuffRoot(stack)) return;
 
         WeaponBuffTooltipContext context = new(stack, description, world, withDebugInfo);
         WeaponBuffQueryContext queryContext = new(stack, "tooltip");
@@ -702,7 +712,16 @@ public sealed class WeaponBuffSystem : ModSystem
 
     private static IEnumerable<WeaponBuffInstance> GetActiveBuffs(ItemStack? stack)
     {
+        // Fast path for the overwhelming common case of an un-buffed stack: skip the iterator
+        // state machine, the root.ToArray() copy, the per-entry FromTree deserialization and the
+        // 4-level OrderBy sort buffers entirely. These compose/modify methods run on combat events.
+        if (!HasBuffRoot(stack)) return Array.Empty<WeaponBuffInstance>();
         return OrderBuffs(GetBuffsInternal(stack, activeOnly: true));
+    }
+
+    private static bool HasBuffRoot(ItemStack? stack)
+    {
+        return stack?.Attributes?.GetTreeAttribute(AttributeKey) != null;
     }
 
     private static IOrderedEnumerable<WeaponBuffInstance> OrderBuffs(IEnumerable<WeaponBuffInstance> buffs)
@@ -842,6 +861,14 @@ public sealed class WeaponBuffSystem : ModSystem
                     Priority = modifierTree.GetInt(nameof(WeaponStatModifier.Priority), 0)
                 });
             }
+
+            // Sort by priority once here so ApplyFloat can apply modifiers in order with a plain
+            // loop instead of a per-stat-code Where(...).OrderBy(...). The tree's value order is
+            // already unspecified, so equal-priority ordering is no more defined than before.
+            if (instance.Modifiers.Count > 1)
+            {
+                instance.Modifiers.Sort(static (left, right) => left.Priority.CompareTo(right.Priority));
+            }
         }
 
         return instance;
@@ -906,10 +933,15 @@ public sealed class WeaponBuffSystem : ModSystem
 
     private static float ApplyFloat(WeaponBuffInstance buff, string statCode, float value)
     {
-        foreach (WeaponStatModifier modifier in buff.Modifiers
-            .Where(modifier => string.Equals(modifier.StatCode, statCode, StringComparison.OrdinalIgnoreCase))
-            .OrderBy(modifier => modifier.Priority))
+        // buff.Modifiers is pre-sorted by Priority (see FromTree), so iterating in order and
+        // filtering by stat code reproduces the previous Where(...).OrderBy(Priority) result
+        // without allocating a LINQ enumerator per stat code (~12 per melee compose, per buff).
+        List<WeaponStatModifier> modifiers = buff.Modifiers;
+        for (int index = 0; index < modifiers.Count; index++)
         {
+            WeaponStatModifier modifier = modifiers[index];
+            if (!string.Equals(modifier.StatCode, statCode, StringComparison.OrdinalIgnoreCase)) continue;
+
             float next = (value + modifier.Add) * modifier.Multiply;
             if (float.IsFinite(next))
             {

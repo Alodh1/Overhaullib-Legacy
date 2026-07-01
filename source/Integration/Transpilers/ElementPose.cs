@@ -16,20 +16,13 @@ public class ExtendedElementPose : ElementPose
 
     public EntityPlayer? Player { get; set; }
 
-    public static ObjectCache<ShapeElement, int>? NameHashCache { get; set; }
-
     public void ResolveElementName(ShapeElement element)
     {
-        if (element?.Name == null || NameHashCache == null) return;
+        if (element?.Name == null) return;
         
-        if (!NameHashCache.Get(element, out int hash))
-        {
-            hash = element.Name.GetHashCode();
-            NameHashCache.Add(element, hash);
-        }
-
+        int hash = element.Name.GetHashCode();
         ElementNameHash = hash;
-        if (_elementNameEnumCache.TryGetValue(hash, out EnumAnimatedElement enumValue))
+        if (_elementNameEnumCache.TryGetValue(element.Name, out EnumAnimatedElement enumValue))
         {
             ElementNameEnum = enumValue;
         }
@@ -39,8 +32,20 @@ public class ExtendedElementPose : ElementPose
         }
     }
 
-    private static Dictionary<int, EnumAnimatedElement> _elementNameEnumCache = Enum.GetNames<EnumAnimatedElement>()
-        .ToDictionary(name => name.GetHashCode(), name => Enum.Parse<EnumAnimatedElement>(name));
+    // Shared ordinal name->enum lookup so callers can resolve an element name without paying a
+    // per-call Enum.TryParse name scan (used on the per-pose first-person animation path).
+    public static EnumAnimatedElement GetElementNameEnum(string? name)
+    {
+        if (name != null && _elementNameEnumCache.TryGetValue(name, out EnumAnimatedElement enumValue))
+        {
+            return enumValue;
+        }
+
+        return EnumAnimatedElement.Unknown;
+    }
+
+    private static readonly Dictionary<string, EnumAnimatedElement> _elementNameEnumCache = Enum.GetNames<EnumAnimatedElement>()
+        .ToDictionary(name => name, name => Enum.Parse<EnumAnimatedElement>(name), StringComparer.Ordinal);
 }
 
 internal static class ElementPosePatches

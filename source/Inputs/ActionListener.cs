@@ -201,6 +201,8 @@ public partial class ActionListener : IDisposable
     private bool _suppressLMB = false;
     private bool _suppressRMB = false;
     private bool _disposed = false;
+    private EnumEntityAction[] _activeActionsSnapshot = [];
+    private bool _activeActionsSnapshotDirty = true;
 
     private void HandleMouseDownEvents(MouseEvent mouseEvent) => HandleMouseEvents(mouseEvent, true);
     private void HandleMouseUpEvents(MouseEvent mouseEvent) => HandleMouseEvents(mouseEvent, false);
@@ -284,7 +286,7 @@ public partial class ActionListener : IDisposable
 
     private void OnEntityAction(EnumEntityAction action, bool on, MouseEvent mouseEvent)
     {
-        _actionStates[action] = SwitchState(action, on);
+        SetActionState(action, SwitchState(action, on));
 
         switch (_actionStates[action])
         {
@@ -328,7 +330,7 @@ public partial class ActionListener : IDisposable
             return;
         }
 
-        _actionStates[action] = SwitchState(action, on);
+        SetActionState(action, SwitchState(action, on));
 
         switch (_actionStates[action])
         {
@@ -355,7 +357,7 @@ public partial class ActionListener : IDisposable
             _ => action
         };
 
-        _actionStates[mappedAction] = SwitchState(mappedAction, true);
+        SetActionState(mappedAction, SwitchState(mappedAction, true));
 
         if (_actionStates[mappedAction] == ActionState.Pressed)
         {
@@ -369,24 +371,24 @@ public partial class ActionListener : IDisposable
     }
     private void OnEntityActionInconsistent(EnumEntityAction action, ref EnumHandling handled)
     {
-        _actionStates[action] = SwitchStateInconsistent(action);
+        SetActionState(action, SwitchStateInconsistent(action));
 
         if (CallSubscriptions(action))
         {
             handled = EnumHandling.Handled;
         }
 
-        _actionStates[action] = SwitchStateInconsistent(action);
+        SetActionState(action, SwitchStateInconsistent(action));
     }
     private void OnHoldTimer(EnumEntityAction action)
     {
         _timers[action] = 0;
 
-        _actionStates[action] = _actionStates[action] switch
+        SetActionState(action, _actionStates[action] switch
         {
             ActionState.Pressed => ActionState.Hold,
             _ => _actionStates[action]
-        };
+        });
 
         CallSubscriptions(action);
     }
@@ -449,6 +451,11 @@ public partial class ActionListener : IDisposable
     }
     private EnumEntityAction[] GetActiveActions()
     {
+        if (!_activeActionsSnapshotDirty)
+        {
+            return _activeActionsSnapshot;
+        }
+
         int count = 0;
         foreach (EnumEntityAction action in _allActions)
         {
@@ -462,7 +469,19 @@ public partial class ActionListener : IDisposable
             if (IsActive(action)) activeActions[index++] = action;
         }
 
-        return activeActions;
+        _activeActionsSnapshot = activeActions;
+        _activeActionsSnapshotDirty = false;
+        return _activeActionsSnapshot;
+    }
+    private void SetActionState(EnumEntityAction action, ActionState state)
+    {
+        if (_actionStates.TryGetValue(action, out ActionState current) && current == state)
+        {
+            return;
+        }
+
+        _actionStates[action] = state;
+        _activeActionsSnapshotDirty = true;
     }
     private ActionState SwitchState(EnumEntityAction action, bool on)
     {

@@ -331,17 +331,20 @@ public class MeleeDamageType : IHasLineCollider
         return CollectibleClassifier.IsDagger(slot);
     }
 
-    
+    [ThreadStatic]
+    private static Cuboidf? _collisionBoxScratch;
+
     private static Cuboidf GetCollisionBox(Entity entity)
     {
-        Cuboidf collisionBox = entity.CollisionBox.Clone(); // @TODO: Refactor to not clone
+        Cuboidf source = entity.CollisionBox;
+        Cuboidf collisionBox = _collisionBoxScratch ??= new Cuboidf();
         EntityPos position = entity.Pos;
-        collisionBox.X1 += (float)position.X;
-        collisionBox.Y1 += (float)position.Y;
-        collisionBox.Z1 += (float)position.Z;
-        collisionBox.X2 += (float)position.X;
-        collisionBox.Y2 += (float)position.Y;
-        collisionBox.Z2 += (float)position.Z;
+        collisionBox.X1 = source.X1 + (float)position.X;
+        collisionBox.Y1 = source.Y1 + (float)position.Y;
+        collisionBox.Z1 = source.Z1 + (float)position.Z;
+        collisionBox.X2 = source.X2 + (float)position.X;
+        collisionBox.Y2 = source.Y2 + (float)position.Y;
+        collisionBox.Z2 = source.Z2 + (float)position.Z;
         return collisionBox;
     }
 }

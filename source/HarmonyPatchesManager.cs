@@ -30,6 +30,8 @@ internal static class HarmonyPatchesManager
     private const string _harmonyIdAiming = _harmonyId + "Aiming";
     private const string _harmonyIdMouseWheel = _harmonyId + "MouseWheel";
     private const string _harmonyIdGuiDialog = _harmonyId + "GuiDialog";
+    private const string _harmonyIdHandbook = _harmonyId + "Handbook";
+    private const string _harmonyIdNightVision = _harmonyId + "NightVision";
     private const string _harmonyIdTranspilers = _harmonyId + "Transpilers";
     private const string _harmonyIdInventory = _harmonyId + "Inventory";
     private const string _harmonyIdAnimation = _harmonyId + "Animation";
@@ -54,6 +56,9 @@ internal static class HarmonyPatchesManager
         AimingPatches.Patch(_harmonyIdAiming);
         MouseWheelPatch.Patch(_harmonyIdMouseWheel, api);
         GuiDialogPatches.Patch(_harmonyIdGuiDialog, api);
+        HandbookLinkPatches.Patch(_harmonyIdHandbook);
+        HandbookGroupedWeaponPatches.Patch(_harmonyIdHandbook, api);
+        NightVisionSlotPatches.Patch(_harmonyIdNightVision, api);
 #if DEBUG
         DetachedEditorCameraPatches.Patch(_harmonyIdDetachedCamera);
 #endif
@@ -70,6 +75,9 @@ internal static class HarmonyPatchesManager
         AimingPatches.Unpatch(_harmonyIdAiming);
         MouseWheelPatch.Unpatch(_harmonyIdMouseWheel);
         GuiDialogPatches.Unpatch(_harmonyIdGuiDialog);
+        HandbookLinkPatches.Unpatch(_harmonyIdHandbook);
+        HandbookGroupedWeaponPatches.Unpatch(_harmonyIdHandbook);
+        NightVisionSlotPatches.Unpatch(_harmonyIdNightVision);
 #if DEBUG
         DetachedEditorCameraPatches.Unpatch(_harmonyIdDetachedCamera);
 #endif

@@ -4,6 +4,7 @@ using CombatOverhaul.Integration.Transpilers;
 using CombatOverhaul.Utils;
 using HarmonyLib;
 using OpenTK.Mathematics;
+using System.Linq.Expressions;
 using System.Reflection;
 using System.Runtime.CompilerServices;
 using Vintagestory.API.Client;
@@ -23,8 +24,22 @@ internal static class AnimationPatches
     public static FirstPersonAnimationsBehavior? FirstPersonAnimationBehavior { get; set; }
     public static long OwnerEntityId { get; set; } = 0;
     public static HashSet<long> ActiveEntities { get; set; } = [];
-    public static ObjectCache<ClientAnimator, EntityPlayer>? Animators { get; private set; }
+    public static AnimatorPlayerMap? Animators { get; private set; }
     private static readonly FieldInfo? _lightrgbsField = typeof(EntityShapeRenderer).GetField("lightrgbs", BindingFlags.NonPublic | BindingFlags.Instance);
+    // Compiled accessor for the private 'lightrgbs' field, built once. Avoids a reflection
+    // FieldInfo.GetValue invoke on every animated held-item render (both hands, opaque + each
+    // shadow pass, every frame). Falls back to the reflection path if it can't be built.
+    private static readonly System.Func<EntityShapeRenderer, Vec4f?>? _getLightRgbs = BuildLightRgbsGetter();
+    // Resolve the collider behavior once per renderer instead of scanning the entity's behavior list
+    // on every render pass (opaque + each shadow cascade) every frame. Weak key: the entry is
+    // collected together with the renderer.
+    private static readonly ConditionalWeakTable<EntityShapeRenderer, StrongBox<CollidersEntityBehavior?>> _colliderBehaviorCache = new();
+    // Resolve the held item's Animatable collectible behavior once per item id instead of walking the
+    // collectible's behavior list on every held-item render (both hands, opaque + each shadow pass,
+    // every frame, for every visible entity). The behavior instance is per-collectible and stable for
+    // the session, so a plain id-keyed cache is safe; null results are cached too so plain vanilla
+    // items don't re-scan. Bounded by the number of registered item types.
+    private static readonly Dictionary<int, Animatable?> _heldItemAnimatableCache = [];
     private static bool _reportedColliderRenderError;
     private static bool _reportedHeldItemRenderError;
 
@@ -37,7 +52,7 @@ internal static class AnimationPatches
 
     public static void Patch(string harmonyId, ICoreAPI api)
     {
-        Animators = new(api, "animators to players cache", 10000, 5 * 60 * 1000, threadSafe: true);
+        Animators = new();
         Harmony harmony = new(harmonyId);
 
         harmony.Patch(
@@ -82,7 +97,39 @@ internal static class AnimationPatches
         harmony.Unpatch(typeof(EntityPlayer).GetMethod(nameof(EntityPlayer.OnSelfBeforeRender), AccessTools.all), HarmonyPatchType.Postfix, harmonyId);
         harmony.Unpatch(typeof(Vintagestory.API.Common.AnimationManager).GetMethod("OnClientFrame", AccessTools.all), HarmonyPatchType.Postfix, harmonyId);
 
-        Animators?.Dispose();
+        // Insurance for a within-process world reload: per-entity despawn/dispose normally clears
+        // these, but clear them here too so a new session never starts with stale entries.
+        AnimationBehaviors.Clear();
+        ActiveEntities.Clear();
+        _heldItemAnimatableCache.Clear();
+
+        Animators?.Clear();
+        Animators = null;
+    }
+
+    private static System.Func<EntityShapeRenderer, Vec4f?>? BuildLightRgbsGetter()
+    {
+        if (_lightrgbsField == null) return null;
+
+        try
+        {
+            ParameterExpression instance = Expression.Parameter(typeof(EntityShapeRenderer), "renderer");
+            Expression field = Expression.Field(instance, _lightrgbsField);
+            return Expression.Lambda<System.Func<EntityShapeRenderer, Vec4f?>>(field, instance).Compile();
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private static CollidersEntityBehavior? GetCachedColliderBehavior(EntityShapeRenderer renderer)
+    {
+        if (renderer.entity == null) return null;
+
+        return _colliderBehaviorCache.GetValue(
+            renderer,
+            static r => new StrongBox<CollidersEntityBehavior?>(r.entity?.GetBehavior<CollidersEntityBehavior>())).Value;
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
@@ -136,6 +183,7 @@ internal static class AnimationPatches
             return;
         }
 
+        DispatchBeforeFrame(__instance.entity, dt);
         OnBeforeFrame?.Invoke(__instance.entity, dt);
     }
 
@@ -143,7 +191,23 @@ internal static class AnimationPatches
     {
         if (ClientSettings.DisableAllAnimations) return;
 
+        DispatchBeforeFrame(__instance, dt);
         OnBeforeFrame?.Invoke(__instance, dt);
+    }
+
+    private static void DispatchBeforeFrame(Entity entity, float dt)
+    {
+        if (entity is not EntityPlayer player) return;
+
+        if (!ClientSettings.DisableThirdPersonAnimations && AnimationBehaviors.TryGetValue(player.EntityId, out ThirdPersonAnimationsBehavior? thirdPersonBehavior))
+        {
+            thirdPersonBehavior.OnBeforeFrame(entity, dt);
+        }
+
+        if (player.EntityId == OwnerEntityId)
+        {
+            FirstPersonAnimationBehavior?.OnBeforeFrame(entity, dt);
+        }
     }
 
     private static void AnimationManagerOnClientFrame(Vintagestory.API.Common.AnimationManager __instance, float dt)
@@ -158,7 +222,7 @@ internal static class AnimationPatches
     {
         try
         {
-            CollidersEntityBehavior behavior = __instance.entity?.GetBehavior<CollidersEntityBehavior>();
+            CollidersEntityBehavior? behavior = GetCachedColliderBehavior(__instance);
             behavior?.Render(__instance.entity?.Api as ICoreClientAPI, __instance.entity as EntityAgent, __instance);
         }
         catch (Exception exception)
@@ -168,11 +232,40 @@ internal static class AnimationPatches
 
     }
 
+    public sealed class AnimatorPlayerMap
+    {
+        // Keyed weakly by ClientAnimator so stale entries are collected automatically once the
+        // game drops an entity's animator (player leaves view range, renderer rebuild, respawn).
+        // A strong Dictionary here pins every ClientAnimator and its EntityPlayer for the whole
+        // session, which is a large entity-graph leak on populated servers.
+        private readonly ConditionalWeakTable<ClientAnimator, EntityPlayer> _mapping = new();
+
+        public void Add(ClientAnimator animator, EntityPlayer player)
+        {
+            if (_mapping.TryGetValue(animator, out EntityPlayer? existing) && existing.EntityId == player.EntityId)
+            {
+                return;
+            }
+
+            _mapping.AddOrUpdate(animator, player);
+        }
+
+        public bool Get(ClientAnimator animator, out EntityPlayer? player)
+        {
+            return _mapping.TryGetValue(animator, out player);
+        }
+
+        public void Clear()
+        {
+            _mapping.Clear();
+        }
+    }
+
     private static void DoRender3DOpaquePlayer(EntityPlayerShapeRenderer __instance, float dt, bool isShadowPass)
     {
         try
         {
-            CollidersEntityBehavior behavior = __instance.entity?.GetBehavior<CollidersEntityBehavior>();
+            CollidersEntityBehavior? behavior = GetCachedColliderBehavior(__instance);
             behavior?.Render(__instance.entity?.Api as ICoreClientAPI, __instance.entity as EntityAgent, __instance);
         }
         catch (Exception exception)
@@ -193,7 +286,12 @@ internal static class AnimationPatches
             return true;
         }
 
-        Animatable? behavior = slot.Itemstack.Item.GetCollectibleBehavior(typeof(Animatable), true) as Animatable;
+        int itemId = slot.Itemstack.Item.Id;
+        if (!_heldItemAnimatableCache.TryGetValue(itemId, out Animatable? behavior))
+        {
+            behavior = slot.Itemstack.Item.GetCollectibleBehavior(typeof(Animatable), true) as Animatable;
+            _heldItemAnimatableCache[itemId] = behavior;
+        }
         if (behavior == null) return true;
 
         // Keep the old working transform path: animated held items are positioned with the
@@ -210,12 +308,17 @@ internal static class AnimationPatches
 
         if (slot.Itemstack.Item.Textures.Count > 0)
         {
-            (string textureName, _) = slot.Itemstack.Item.Textures.First();
-            TextureAtlasPosition atlasPos = __instance.capi.ItemTextureAtlas.GetPosition(slot.Itemstack.Item, textureName);
-            renderInfo.TextureId = atlasPos.atlasTextureId;
+            // Manual first-entry read instead of LINQ .First() to avoid the boxed-enumerator
+            // allocation on every held-item render.
+            foreach ((string textureName, _) in slot.Itemstack.Item.Textures)
+            {
+                TextureAtlasPosition atlasPos = __instance.capi.ItemTextureAtlas.GetPosition(slot.Itemstack.Item, textureName);
+                renderInfo.TextureId = atlasPos.atlasTextureId;
+                break;
+            }
         }
 
-        Vec4f? lightrgbs = (Vec4f?)_lightrgbsField?.GetValue(__instance);
+        Vec4f? lightrgbs = _getLightRgbs != null ? _getLightRgbs(__instance) : (Vec4f?)_lightrgbsField?.GetValue(__instance);
 
         try
         {
@@ -284,106 +387,6 @@ internal static class AnimationPatches
         if (frame.Value.SwitchArms) return right ? "LeftHand" : "RightHand";
 
         return null;
-    }
-
-    private static void ApplyCurrentPlayerFrame(Entity? entity, ClientAnimator? explicitAnimator = null)
-    {
-        if (entity is not EntityPlayer player) return;
-        if ((explicitAnimator ?? player.AnimManager?.Animator) is not ClientAnimator animator) return;
-
-        PlayerItemFrame? frame = null;
-        bool applyCameraPitch = false;
-
-        if (player.EntityId == OwnerEntityId && FirstPersonAnimationBehavior?.HasActiveAnimationFrame == true)
-        {
-            frame = FirstPersonAnimationBehavior.CurrentFrame;
-
-            // In first person the vanilla player renderer already applies held-item pitch
-            // through HeldItemPitchFollowOverride. Applying camera pitch here too makes
-            // ranged weapons over-follow vertically. Keep it for third person only.
-            applyCameraPitch = !IsLocalFirstPerson(player);
-        }
-        else if (!ClientSettings.DisableThirdPersonAnimations && AnimationBehaviors.TryGetValue(player.EntityId, out ThirdPersonAnimationsBehavior? thirdPersonBehavior) && thirdPersonBehavior.HasActiveAnimationFrame)
-        {
-            frame = thirdPersonBehavior.CurrentFrame;
-            applyCameraPitch = true;
-        }
-
-        if (frame == null) return;
-
-        Vector3 eyePosition = new((float)player.LocalEyePos.X, (float)player.LocalEyePos.Y, (float)player.LocalEyePos.Z);
-        float eyeHeight = (float)player.Properties.EyeHeight;
-        float pitch = player.Pos.HeadPitch;
-        float[] identity = Mat4f.Create();
-
-        ApplyPlayerFrameToPoses(frame.Value, animator.RootPoses, identity, animator.TransformationMatrices, new HashSet<int>(), eyePosition, eyeHeight, pitch, applyCameraPitch);
-        RefreshAttachmentPointMatrices(animator);
-    }
-
-    private static void RefreshAttachmentPointMatrices(ClientAnimator animator)
-    {
-        foreach (AttachmentPointAndPose attachmentPoint in animator.AttachmentPointByCode.Values)
-        {
-            ElementPose? cachedPose = attachmentPoint.CachedPose;
-            if (cachedPose?.AnimModelMatrix == null || attachmentPoint.AnimModelMatrix == null) continue;
-
-            Array.Copy(cachedPose.AnimModelMatrix, attachmentPoint.AnimModelMatrix, Math.Min(cachedPose.AnimModelMatrix.Length, attachmentPoint.AnimModelMatrix.Length));
-        }
-    }
-
-    private static void ApplyPlayerFrameToPoses(PlayerItemFrame frame, List<ElementPose>? poses, float[] parentMatrix, float[]? transformationMatrices, HashSet<int> jointsDone, Vector3 eyePosition, float eyeHeight, float pitch, bool applyCameraPitch)
-    {
-        if (poses == null) return;
-
-        float[] localTransform = Mat4f.Create();
-        float[] jointTransform = Mat4f.Create();
-
-        foreach (ElementPose pose in poses)
-        {
-            ShapeElement element = pose.ForElement;
-            Array.Copy(parentMatrix, pose.AnimModelMatrix, Math.Min(parentMatrix.Length, pose.AnimModelMatrix.Length));
-
-            if (Enum.TryParse(element.Name, out EnumAnimatedElement animatedElement) && animatedElement != EnumAnimatedElement.Unknown)
-            {
-                // Do not let OverhaulLib wipe/apply leg poses here.
-                // Vintage Story's own locomotion animator already writes these every frame.
-                // Clearing or applying a zero combat frame to them makes players glide.
-                //
-                // Keep clearing the torso/arms/head/etc. though; otherwise camera pitch is added
-                // on top of the previous pose every render pass and the torso can spin around.
-                bool isLegElement = animatedElement is EnumAnimatedElement.UpperFootR
-                    or EnumAnimatedElement.UpperFootL
-                    or EnumAnimatedElement.LowerFootR
-                    or EnumAnimatedElement.LowerFootL;
-
-#if DEBUG
-                bool allowDebugLegPose = DebugWindowManager.DebugRigPoseOverrideActive || DebugWindowManager.DebugPoseFreezeActive;
-#else
-                const bool allowDebugLegPose = false;
-#endif
-                if (!isLegElement || allowDebugLegPose)
-                {
-                    pose.Clear();
-                    frame.Apply(pose, animatedElement, eyePosition, eyeHeight, pitch, applyCameraPitch);
-                }
-            }
-
-            Mat4f.Identity(localTransform);
-            element.GetLocalTransformMatrix(0, localTransform, pose);
-            Mat4f.Mul(pose.AnimModelMatrix, pose.AnimModelMatrix, localTransform);
-
-            if (transformationMatrices != null && element.JointId > 0 && jointsDone.Add(element.JointId))
-            {
-                int index = 16 * element.JointId;
-                if (index + 16 <= transformationMatrices.Length)
-                {
-                    Mat4f.Mul(jointTransform, pose.AnimModelMatrix, element.inverseModelTransform);
-                    Array.Copy(jointTransform, 0, transformationMatrices, index, 16);
-                }
-            }
-
-            ApplyPlayerFrameToPoses(frame, pose.ChildElementPoses, pose.AnimModelMatrix, transformationMatrices, jointsDone, eyePosition, eyeHeight, pitch, applyCameraPitch);
-        }
     }
 
     private static bool IsLocalPlayer(EntityPlayer player)

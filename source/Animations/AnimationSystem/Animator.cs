@@ -1,6 +1,5 @@
 ﻿using CombatOverhaul.Utils;
 using Vintagestory.API.Common;
-using Vintagestory.API.Util;
 
 namespace CombatOverhaul.Animations;
 
@@ -28,7 +27,7 @@ public class Animator
         _unfiredCallbacks.AddRange(animation.CallbackFrames.OrderBy(frame => frame.DurationFraction).Select(frame => frame.Code));
     }
 
-    public PlayerItemFrame Animate(TimeSpan delta, out IEnumerable<string> callbacks)
+    public PlayerItemFrame Animate(TimeSpan delta, List<string> callbacks)
     {
         TimeSpan previousDuration = _currentDuration * _animationSpeed;
         _currentDuration += delta;
@@ -37,9 +36,12 @@ public class Animator
         if (_soundsManager != null) _currentAnimation.PlaySounds(_soundsManager, previousDuration, adjustedDuration);
         if (_particleEffectsManager != null) _currentAnimation.SpawnParticles(_player, _particleEffectsManager, previousDuration, adjustedDuration);
 
-        callbacks = _currentAnimation.GetCallbacks(previousDuration, adjustedDuration);
-
-        callbacks.Foreach(callback => _unfiredCallbacks.Remove(callback));
+        callbacks.Clear();
+        _currentAnimation.GetCallbacks(previousDuration, adjustedDuration, callbacks);
+        foreach (string callback in callbacks)
+        {
+            _unfiredCallbacks.Remove(callback);
+        }
 
         _lastFrame = _currentAnimation.Interpolate(_previousAnimationFrame, adjustedDuration);
         return _lastFrame;

@@ -15,11 +15,16 @@ public static class ArmorAutoPatcher
         {
             if (item.Attributes == null) continue;
 
-            if (!IsVanillaArmor(item) || IsCOArmor(item)) continue;
+            if (!IsVanillaArmor(item)) continue;
 
             try
             {
-                Patch(item, api);
+                if (!IsCOArmor(item))
+                {
+                    Patch(item, api);
+                }
+
+                EnsureWearableArmorBehavior(item, api);
             }
             catch (Exception exception)
             {
@@ -39,6 +44,36 @@ public static class ArmorAutoPatcher
         item.CollectibleBehaviors = item.CollectibleBehaviors.Append(behavior).ToArray();
 
         RemoveVanillaStats(item);
+    }
+
+    private static void EnsureWearableArmorBehavior(Item item, ICoreAPI api)
+    {
+        if (item is ItemWearableArmor) return;
+
+        CollectibleBehavior[] behaviors = item.CollectibleBehaviors ?? [];
+        if (behaviors.Any(behavior => behavior is WearableArmorBehavior)) return;
+
+        WearableArmorBehavior behavior = new(item);
+        behavior.Initialize(new JsonObject(new JObject()));
+        behavior.OnLoaded(api);
+
+        int wearableIndex = Array.FindIndex(behaviors, IsVanillaWearableBehavior);
+        if (wearableIndex < 0)
+        {
+            item.CollectibleBehaviors = behaviors.Append(behavior).ToArray();
+            return;
+        }
+
+        item.CollectibleBehaviors = behaviors
+            .Take(wearableIndex)
+            .Append(behavior)
+            .Concat(behaviors.Skip(wearableIndex))
+            .ToArray();
+    }
+
+    private static bool IsVanillaWearableBehavior(CollectibleBehavior behavior)
+    {
+        return behavior is CollectibleBehaviorWearable || behavior.GetType().Name == "CollectibleBehaviorWearable";
     }
 
     private static List<string> _vanillaArmorParts = new()

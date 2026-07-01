@@ -9,7 +9,7 @@ using Vintagestory.GameContent;
 
 namespace CombatOverhaul;
 
-public class TextureFromAttributes : CollectibleBehavior, IContainedMeshSource
+public class TextureFromAttributes : CollectibleBehavior, IContainedMeshSource, IHandBookPageCodeProvider
 {
     private const string MeshrefsCacheKey = "CombatOverhaul:TextureFromAttributesMeshrefs";
     private const string MeshUploadFailedKey = "CombatOverhaul:TextureFromAttributesMeshUploadFailed";
@@ -54,6 +54,13 @@ public class TextureFromAttributes : CollectibleBehavior, IContainedMeshSource
         _textureAttribute = properties["textureAttribute"].AsString();
         _defaultTexture = properties["defaultTexture"].AsString();
         _creativeTabs = properties["creativeTabs"].AsObject<string[]>();
+    }
+
+    public string[] TextureAttributes => string.IsNullOrWhiteSpace(_textureAttribute) ? Array.Empty<string>() : new[] { _textureAttribute };
+
+    public string HandbookPageCodeForStack(IWorldAccessor world, ItemStack stack)
+    {
+        return TextureAttributeHandbook.PageCodeForStack(stack, TextureAttributes);
     }
 
     public override void OnBeforeRender(ICoreClientAPI capi, ItemStack itemstack, EnumItemRenderTarget target, ref ItemRenderInfo renderinfo)
@@ -223,11 +230,12 @@ public class TextureConfig
 public class TexturesFromAttributesProperties
 {
     public TextureConfig[] Textures { get; set; } = Array.Empty<TextureConfig>();
+    public Dictionary<string, TextureConfig[]> TexturesByType { get; set; } = new();
     public string[] CreativeTabs { get; set; } = Array.Empty<string>();
     public bool AddNoAttributesItem { get; set; } = true;
 }
 
-public class TexturesFromAttributes : CollectibleBehavior, IContainedMeshSource
+public class TexturesFromAttributes : CollectibleBehavior, IContainedMeshSource, IHandBookPageCodeProvider
 {
     private const string MeshrefsCacheKey = "CombatOverhaul:TexturesFromAttributesMeshrefs";
     private const string MeshUploadFailedKey = "CombatOverhaul:TexturesFromAttributesMeshUploadFailed";
@@ -265,6 +273,17 @@ public class TexturesFromAttributes : CollectibleBehavior, IContainedMeshSource
         base.Initialize(properties);
 
         _properties = properties.AsObject<TexturesFromAttributesProperties>();
+    }
+
+    public string[] TextureAttributes => GetAllTextureConfigs()
+        .Select(texture => texture.Attribute)
+        .Where(attribute => !string.IsNullOrWhiteSpace(attribute))
+        .Distinct(StringComparer.Ordinal)
+        .ToArray();
+
+    public string HandbookPageCodeForStack(IWorldAccessor world, ItemStack stack)
+    {
+        return TextureAttributeHandbook.PageCodeForStack(stack, TextureAttributes);
     }
 
     public override void OnBeforeRender(ICoreClientAPI capi, ItemStack itemstack, EnumItemRenderTarget target, ref ItemRenderInfo renderinfo)
@@ -316,7 +335,7 @@ public class TexturesFromAttributes : CollectibleBehavior, IContainedMeshSource
             }
         }
 
-        foreach (TextureConfig textureProperty in _properties.Textures)
+        foreach (TextureConfig textureProperty in GetTextureConfigs(itemstack))
         {
             string texturePath = itemstack.Attributes.GetString(textureProperty.Attribute) ?? textureProperty.Default;
 
@@ -348,34 +367,41 @@ public class TexturesFromAttributes : CollectibleBehavior, IContainedMeshSource
     {
         string cacheKey = _item.Code.ToShortString();
 
-        foreach (TextureConfig textureProperty in _properties.Textures)
+        foreach (TextureConfig textureProperty in GetTextureConfigs(itemstack))
         {
-            cacheKey += "-" + itemstack.Attributes.GetString(textureProperty.Attribute)?.Replace('/', '-') ?? "default";
+            string texturePath = itemstack.Attributes.GetString(textureProperty.Attribute) ?? textureProperty.Default;
+            cacheKey += "-" + texturePath.Replace('/', '-');
         }
 
         return cacheKey;
     }
     string IContainedMeshSource.GetMeshCacheKey(ItemSlot inSlot) => GetMeshCacheKey(inSlot.Itemstack);
 
-    private void ConstructStackRecursively(List<JsonItemStack> stacks, string jsonAttributes, int index)
+    private void ConstructStackRecursively(List<JsonItemStack> stacks, string jsonAttributes, TextureConfig[] textureConfigs, int index)
     {
         if (_properties == null) return;
 
-        if (_properties.Textures.Length <= index)
+        if (textureConfigs.Length <= index)
         {
             jsonAttributes += "}";
             stacks.Add(GenStackJson(jsonAttributes));
             return;
         }
 
-        TextureConfig textureProperties = _properties.Textures[index];
+        TextureConfig textureProperties = textureConfigs[index];
+
+        if (textureProperties.HandbookValues.Length == 0)
+        {
+            ConstructStackRecursively(stacks, jsonAttributes, textureConfigs, index + 1);
+            return;
+        }
 
         if (jsonAttributes != "{") jsonAttributes += ", ";
         foreach (string texturePath in textureProperties.HandbookValues)
         {
             string jsonAttributesCopy = (string)jsonAttributes.Clone();
             jsonAttributesCopy += $"{textureProperties.Attribute}: \"{texturePath}\"";
-            ConstructStackRecursively(stacks, jsonAttributesCopy, index + 1);
+            ConstructStackRecursively(stacks, jsonAttributesCopy, textureConfigs, index + 1);
         }
     }
 
@@ -385,7 +411,7 @@ public class TexturesFromAttributes : CollectibleBehavior, IContainedMeshSource
         
         List<JsonItemStack> stacks = new();
 
-        ConstructStackRecursively(stacks, "{", 0);
+        ConstructStackRecursively(stacks, "{", GetAllTextureConfigs(), 0);
 
         JsonItemStack noAttributesStack = new()
         {
@@ -427,6 +453,58 @@ public class TexturesFromAttributes : CollectibleBehavior, IContainedMeshSource
         stackJson.Resolve(_api?.World, "textures type");
 
         return stackJson;
+    }
+
+    private TextureConfig[] GetTextureConfigs(ItemStack itemstack)
+    {
+        if (_properties == null) return Array.Empty<TextureConfig>();
+
+        List<TextureConfig> textureConfigs = new();
+        textureConfigs.AddRange(_properties.Textures);
+
+        string stackCode = itemstack.Collectible?.Code?.ToShortString() ?? _item.Code.ToShortString();
+        bool matchedTypedConfig = false;
+
+        foreach ((string pattern, TextureConfig[] typedConfigs) in _properties.TexturesByType)
+        {
+            if (pattern == "*") continue;
+            if (!WildcardUtil.Match(pattern, stackCode)) continue;
+
+            textureConfigs.AddRange(typedConfigs);
+            matchedTypedConfig = true;
+            break;
+        }
+
+        if (!matchedTypedConfig && _properties.TexturesByType.TryGetValue("*", out TextureConfig[]? fallbackConfigs))
+        {
+            textureConfigs.AddRange(fallbackConfigs);
+        }
+
+        return textureConfigs.ToArray();
+    }
+
+    private TextureConfig[] GetAllTextureConfigs()
+    {
+        if (_properties == null) return Array.Empty<TextureConfig>();
+
+        Dictionary<string, TextureConfig> textureConfigs = new(StringComparer.Ordinal);
+        AddTextureConfigs(textureConfigs, _properties.Textures);
+
+        foreach (TextureConfig[] typedConfigs in _properties.TexturesByType.Values)
+        {
+            AddTextureConfigs(textureConfigs, typedConfigs);
+        }
+
+        return textureConfigs.Values.ToArray();
+    }
+
+    private static void AddTextureConfigs(Dictionary<string, TextureConfig> textureConfigs, IEnumerable<TextureConfig> configs)
+    {
+        foreach (TextureConfig config in configs)
+        {
+            string key = $"{config.Code}\n{config.Attribute}";
+            textureConfigs.TryAdd(key, config);
+        }
     }
 
     private bool TryUploadMeshRef(ICoreClientAPI capi, ItemStack itemstack, MeshData? mesh, int id, ref ItemRenderInfo renderinfo)

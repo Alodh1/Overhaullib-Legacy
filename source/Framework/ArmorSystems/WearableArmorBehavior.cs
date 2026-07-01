@@ -139,9 +139,82 @@ public class WearableArmorBehavior : CollectibleBehavior, IWearableStatsSupplier
         return false;
     }
 
+    public override int GetMergableQuantity(ItemStack sinkStack, ItemStack sourceStack, EnumMergePriority priority, ref EnumHandling handling)
+    {
+        if (priority != EnumMergePriority.DirectMerge || !IsClothingRepairMaterial(sourceStack))
+        {
+            handling = EnumHandling.PassThrough;
+            return 0;
+        }
+
+        if (!CanRepairCondition(sinkStack))
+        {
+            handling = EnumHandling.PreventSubsequent;
+            return 0;
+        }
+
+        handling = EnumHandling.PreventSubsequent;
+        return 1;
+    }
+
+    public override void TryMergeStacks(ItemStackMergeOperation op, ref EnumHandling handling)
+    {
+        if (op.CurrentPriority != EnumMergePriority.DirectMerge || !IsClothingRepairMaterial(op.SourceSlot?.Itemstack))
+        {
+            handling = EnumHandling.PassThrough;
+            return;
+        }
+
+        ItemStack? sinkStack = op.SinkSlot?.Itemstack;
+        if (!CanRepairCondition(sinkStack))
+        {
+            handling = EnumHandling.PreventSubsequent;
+            return;
+        }
+
+        float repairStrength = GetClothingRepairStrength(op.SourceSlot.Itemstack);
+        ApplyConditionRepair(op.SinkSlot, repairStrength);
+        op.MovedQuantity = 1;
+        op.SourceSlot.TakeOut(1);
+        handling = EnumHandling.PreventSubsequent;
+    }
+
     private static bool IsRepairRecipe(IRecipeBase? recipe)
     {
         return recipe?.Name?.Path?.Contains("repair", StringComparison.OrdinalIgnoreCase) == true;
+    }
+
+    private bool CanRepairCondition(ItemStack? stack)
+    {
+        if (stack == null) return false;
+
+        CollectibleBehaviorWearable? vanillaWearable = GetVanillaWearableBehavior();
+        if (vanillaWearable?.GetMaxWarmth(new DummySlot(stack)) == 0f) return false;
+
+        return stack.Attributes.GetFloat("condition", 0f) < 1f;
+    }
+
+    private static bool IsClothingRepairMaterial(ItemStack? stack)
+    {
+        return GetClothingRepairStrength(stack) > 0f;
+    }
+
+    private static float GetClothingRepairStrength(ItemStack? stack)
+    {
+        return stack?.ItemAttributes?["clothingRepairStrength"].AsFloat(0f) ?? 0f;
+    }
+
+    private void ApplyConditionRepair(ItemSlot slot, float repairStrength)
+    {
+        CollectibleBehaviorWearable? vanillaWearable = GetVanillaWearableBehavior();
+        if (vanillaWearable != null)
+        {
+            vanillaWearable.ChangeCondition(slot, repairStrength);
+            return;
+        }
+
+        slot.Itemstack.Attributes.SetFloat("condition", GameMath.Clamp(slot.Itemstack.Attributes.GetFloat("condition", 1f) + repairStrength, 0f, 1f));
+        slot.MarkDirty();
     }
 
     public bool IsArmorType(ItemSlot slot)

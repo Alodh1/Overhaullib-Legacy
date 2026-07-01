@@ -1,7 +1,6 @@
 ﻿using CombatOverhaul.Compatibility;
 using CombatOverhaul.Integration;
 using OpenTK.Mathematics;
-using PlayerModelLib;
 using System.Diagnostics;
 using Vintagestory.API.Client;
 using Vintagestory.API.Common;
@@ -115,6 +114,14 @@ public sealed class CollidersEntityBehavior : EntityBehavior
     {
     }
 
+    public override void OnEntityDespawn(EntityDespawnData despawn)
+    {
+        _subscribedSkinBehavior?.Dispose();
+        _subscribedSkinBehavior = null;
+
+        base.OnEntityDespawn(despawn);
+    }
+
     public override void OnGameTick(float deltaTime)
     {
         if (!_subscribed)
@@ -149,7 +156,7 @@ public sealed class CollidersEntityBehavior : EntityBehavior
                     AddPoseShapeElements(pose);
                 }
 
-                if (ShapeElementsToProcess.Any() && !_reportedMissingColliders)
+                if (ShapeElementsToProcess.Count != 0 && !_reportedMissingColliders)
                 {
                     _reportedMissingColliders = true;
                 }
@@ -167,7 +174,7 @@ public sealed class CollidersEntityBehavior : EntityBehavior
 
         ProcessCollidersForCustomModel();
 
-        if (entity.IsRendered && ShouldRecalculateColliders(Animator, clientApi))
+        if (entity.IsRendered && ShouldRecalculateColliders(Animator))
         {
             RecalculateColliders(Animator, clientApi);
         }
@@ -179,18 +186,34 @@ public sealed class CollidersEntityBehavior : EntityBehavior
         if (api.World.Player.Entity.EntityId == entityPlayer.EntityId && firstPerson) return;
         if (!HasOBBCollider || !entity.Alive) return;
 
+        // Colliders need a renderer reference for Transform(); assign it even when the debug overlay
+        // is off. Once every collider has a renderer there is nothing left to do here, so skip the
+        // whole loop on subsequent passes — it otherwise ran for every visible entity on the opaque
+        // pass plus each shadow cascade, every frame. The flag is reset whenever Colliders is rebuilt.
+        if (!_renderersAssigned)
+        {
+            foreach ((_, ShapeElementCollider collider) in Colliders)
+            {
+                if (!collider.HasRenderer)
+                {
+                    collider.Renderer ??= renderer;
+                    collider.HasRenderer = true;
+                }
+            }
+
+            _renderersAssigned = Colliders.Count > 0;
+        }
+
+        // The shader Stop()/Use() rebind is only needed for the debug RenderLine path below. Skipping
+        // it when the overlay is off avoids two GPU shader rebinds per visible entity every frame.
+        if (!RenderColliders) return;
+
         IShaderProgram? currentShader = api.Render.CurrentActiveShader;
         currentShader?.Stop();
 
         foreach ((string id, ShapeElementCollider collider) in Colliders)
         {
-            if (!collider.HasRenderer)
-            {
-                collider.Renderer ??= renderer;
-                collider.HasRenderer = true;
-            }
-
-            if (RenderColliders && CollidersTypes.TryGetValue(id, out ColliderTypes value))
+            if (CollidersTypes.TryGetValue(id, out ColliderTypes value))
             {
                 collider.Render(api, entityPlayer, _colliderColors[value]);
             }
@@ -454,7 +477,7 @@ public sealed class CollidersEntityBehavior : EntityBehavior
 
             if (Collide(head, tail, radius, out List<(string, double, Vector3d)> currentIntersections))
             {
-                intersections = intersections.Concat(currentIntersections).ToList();
+                intersections.AddRange(currentIntersections);
 
                 if (_settings.DebugWeaponTrailParticles)
                 {
@@ -492,7 +515,7 @@ public sealed class CollidersEntityBehavior : EntityBehavior
             }
         }
 
-        if (intersections.Any())
+        if (intersections.Count != 0)
         {
             intersections.Sort((first, second) => first.Item2.CompareTo(second.Item2));
 
@@ -547,8 +570,10 @@ public sealed class CollidersEntityBehavior : EntityBehavior
     private float _timeSinceLastUpdate = 0;
     private readonly Settings _settings;
     private bool _subscribed = false;
+    private PlayerModelSkinSubscription? _subscribedSkinBehavior;
     private int _lastColliderSignature = 0;
     private bool _collidersTransformed = false;
+    private bool _renderersAssigned = false;
 
     private void SetColliderElement(ShapeElement element)
     {
@@ -559,6 +584,8 @@ public sealed class CollidersEntityBehavior : EntityBehavior
             Colliders[element.Name] = new ShapeElementCollider(element);
             ShapeElementsToProcess.Remove(element.Name);
             UnprocessedElementsLeft = ShapeElementsToProcess.Count > 0;
+            // New collider has no renderer yet; let Render reassign on the next pass.
+            _renderersAssigned = false;
         }
     }
     private void AddPoseShapeElements(ElementPose pose)
@@ -580,9 +607,9 @@ public sealed class CollidersEntityBehavior : EntityBehavior
         _collidersTransformed = true;
     }
 
-    private bool ShouldRecalculateColliders(ClientAnimator animator, ICoreClientAPI clientApi)
+    private bool ShouldRecalculateColliders(ClientAnimator animator)
     {
-        int signature = GetColliderTransformSignature(animator, clientApi);
+        int signature = GetColliderTransformSignature(animator);
         if (!_collidersTransformed)
         {
             _lastColliderSignature = signature;
@@ -595,7 +622,7 @@ public sealed class CollidersEntityBehavior : EntityBehavior
         return true;
     }
 
-    private int GetColliderTransformSignature(ClientAnimator animator, ICoreClientAPI clientApi)
+    private int GetColliderTransformSignature(ClientAnimator animator)
     {
         HashCode hash = new();
         hash.Add(Colliders.Count);
@@ -605,11 +632,6 @@ public sealed class CollidersEntityBehavior : EntityBehavior
         hash.Add(entity.Pos.Yaw);
         hash.Add(entity.Pos.Pitch);
         hash.Add(entity.Pos.Roll);
-
-        EntityPos playerPos = clientApi.World.Player.Entity.Pos;
-        hash.Add(playerPos.X);
-        hash.Add(playerPos.Y);
-        hash.Add(playerPos.Z);
 
         float[] transformMatrices = animator.TransformationMatrices;
         foreach (ShapeElementCollider collider in Colliders.Values)
@@ -751,13 +773,7 @@ public sealed class CollidersEntityBehavior : EntityBehavior
     }
     private void SubscribeOnModelChange()
     {
-        PlayerSkinBehavior? skinBehavior = entity.GetBehavior<PlayerSkinBehavior>();
-
-        if (skinBehavior != null)
-        {
-            skinBehavior.OnModelChanged += ReloadCollidersForCustomModel;
-            ReloadCollidersForCustomModel(skinBehavior.CurrentModelCode);
-        }
+        _subscribedSkinBehavior = PlayerModelSkinSubscription.Subscribe(entity, ReloadCollidersForCustomModel, invokeCurrentModel: true);
     }
     private void ProcessCollidersForCustomModel()
     {
@@ -771,6 +787,7 @@ public sealed class CollidersEntityBehavior : EntityBehavior
 
         UnprocessedElementsLeft = UnprocessedElementsLeftCustom;
         Colliders.Clear();
+        _renderersAssigned = false;
 
         try
         {
@@ -779,7 +796,7 @@ public sealed class CollidersEntityBehavior : EntityBehavior
                 AddPoseShapeElements(pose);
             }
 
-            if (ShapeElementsToProcess.Any() && !_reportedMissingColliders)
+            if (ShapeElementsToProcess.Count != 0 && !_reportedMissingColliders)
             {
                 _reportedMissingColliders = true;
             }

@@ -1395,5 +1395,123 @@
   "SelfPropelled": false,
   "TerrainCollision": true,
   "WindAffectednes": 0.0
+},
+  "bleed": {
+  "HsvaColor": [
+    {
+      "offset": 0.0,
+      "avg": 0.0,
+      "var": 3.0,
+      "dist": 0
+    },
+    {
+      "offset": 0.0,
+      "avg": 255.0,
+      "var": 10.0,
+      "dist": 0
+    },
+    {
+      "offset": 0.0,
+      "avg": 120.0,
+      "var": 25.0,
+      "dist": 0
+    },
+    {
+      "offset": 0.0,
+      "avg": 230.0,
+      "var": 15.0,
+      "dist": 0
+    }
+  ],
+  "PosOffset": [
+    {
+      "offset": 0.0,
+      "avg": 0.0,
+      "var": 0.35,
+      "dist": 0
+    },
+    {
+      "offset": 0.0,
+      "avg": 0.0,
+      "var": 0.15,
+      "dist": 0
+    },
+    {
+      "offset": 0.0,
+      "avg": 0.0,
+      "var": 0.35,
+      "dist": 0
+    }
+  ],
+  "RandomVelocityChange": false,
+  "DieOnRainHeightmap": false,
+  "SecondarySpawnInterval": {
+    "offset": 0.0,
+    "avg": 0.0,
+    "var": 0.0,
+    "dist": 0
+  },
+  "Bounciness": 0.0,
+  "DieInAir": false,
+  "DieInLiquid": false,
+  "SwimOnLiquid": false,
+  "ColorByBlock": false,
+  "OpacityEvolve": {
+    "transform": 5,
+    "factor": -25.0
+  },
+  "GravityEffect": {
+    "offset": 0.0,
+    "avg": 1.25,
+    "var": 0.0,
+    "dist": 6
+  },
+  "LifeLength": {
+    "offset": 0.0,
+    "avg": 2.0,
+    "var": 0.0,
+    "dist": 0
+  },
+  "Quantity": {
+    "offset": 0.0,
+    "avg": 5.0,
+    "var": 2.0,
+    "dist": 0
+  },
+  "Size": {
+    "offset": 0.0,
+    "avg": 0.4,
+    "var": 0.03,
+    "dist": 0
+  },
+  "SizeEvolve": {
+    "transform": 0,
+    "factor": 0.0
+  },
+  "Velocity": [
+    {
+      "offset": 0.0,
+      "avg": 0.0,
+      "var": 0.45,
+      "dist": 0
+    },
+    {
+      "offset": 0.0,
+      "avg": 0.45,
+      "var": 0.35,
+      "dist": 0
+    },
+    {
+      "offset": 0.0,
+      "avg": 0.0,
+      "var": 0.45,
+      "dist": 0
+    }
+  ],
+  "ParticleModel": 1,
+  "VertexFlags": 0,
+  "SelfPropelled": false,
+  "TerrainCollision": true,
+  "WindAffectednes": 0.0
 }
 }

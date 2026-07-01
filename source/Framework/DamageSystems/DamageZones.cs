@@ -5,7 +5,6 @@ using CombatOverhaul.Implementations;
 using CombatOverhaul.Integration;
 using CombatOverhaul.MeleeSystems;
 using CombatOverhaul.Utils;
-using PlayerModelLib;
 using ProtoBuf;
 using Vintagestory.API.Client;
 using Vintagestory.API.Common;

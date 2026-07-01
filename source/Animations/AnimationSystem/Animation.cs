@@ -82,25 +82,40 @@ public sealed class Animation
             previousDuration = TimeSpan.FromMilliseconds(-1); // to fix sounds at 0 progress not playing
         }
 
-        foreach (SoundFrame frame in SoundFrames.Where(frame => frame.DurationFraction * TotalDuration > previousDuration && frame.DurationFraction * TotalDuration <= currentDuration))
+        TimeSpan totalDuration = TotalDuration;
+        foreach (SoundFrame frame in SoundFrames)
         {
+            TimeSpan frameTime = frame.DurationFraction * totalDuration;
+            if (frameTime <= previousDuration || frameTime > currentDuration) continue;
+
             soundsManager.Play(frame);
         }
     }
     public void SpawnParticles(EntityPlayer player, ParticleEffectsManager particlesManager, TimeSpan previousDuration, TimeSpan currentDuration)
     {
-        foreach (ParticlesFrame frame in ParticlesFrames.Where(frame => frame.DurationFraction * TotalDuration > previousDuration && frame.DurationFraction * TotalDuration <= currentDuration))
+        TimeSpan totalDuration = TotalDuration;
+        foreach (ParticlesFrame frame in ParticlesFrames)
         {
+            TimeSpan frameTime = frame.DurationFraction * totalDuration;
+            if (frameTime <= previousDuration || frameTime > currentDuration) continue;
+
             particlesManager.Spawn(player, frame.Code, frame.Position, frame.Velocity, frame.Intensity);
         }
     }
-    public IEnumerable<string> GetCallbacks(TimeSpan previousDuration, TimeSpan currentDuration)
+    public void GetCallbacks(TimeSpan previousDuration, TimeSpan currentDuration, List<string> callbacks)
     {
-        return CallbackFrames.Where(frame => frame.DurationFraction * TotalDuration > previousDuration && frame.DurationFraction * TotalDuration <= currentDuration).Select(element => element.Code);
+        TimeSpan totalDuration = TotalDuration;
+        foreach (CallbackFrame frame in CallbackFrames)
+        {
+            TimeSpan frameTime = frame.DurationFraction * totalDuration;
+            if (frameTime <= previousDuration || frameTime > currentDuration) continue;
+
+            callbacks.Add(frame.Code);
+        }
     }
     public PlayerItemFrame Interpolate(PlayerItemFrame previousAnimationFrame, TimeSpan currentDuration)
     {
-        if (Finished(currentDuration)) return new(PlayerKeyFrames[^1].Frame, ItemKeyFrames.Any() ? ItemKeyFrames[^1].Frame : null);
+        if (Finished(currentDuration)) return new(PlayerKeyFrames[^1].Frame, ItemKeyFrames.Count != 0 ? ItemKeyFrames[^1].Frame : null);
 
         PlayerFrame playerFrame = InterpolatePlayerFrame(previousAnimationFrame, currentDuration, out TimeSpan adjustedCurrentDuration);
         ItemFrame? itemFrame = InterpolateItemFrame(previousAnimationFrame, adjustedCurrentDuration);
@@ -226,7 +241,7 @@ public sealed class Animation
 
     private ItemFrame? InterpolateItemFrame(PlayerItemFrame previousAnimationFrame, TimeSpan currentDuration)
     {
-        if (!ItemKeyFrames.Any()) return null;
+        if (ItemKeyFrames.Count == 0) return null;
 
         int nextItemKeyFrame;
         TimeSpan totalDurationWithEasing = ItemAnimationEnd - ItemAnimationStart;

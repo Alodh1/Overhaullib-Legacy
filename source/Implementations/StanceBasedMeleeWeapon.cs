@@ -3,6 +3,7 @@ using CombatOverhaul.DamageSystems;
 using CombatOverhaul.Inputs;
 using CombatOverhaul.Integration;
 using CombatOverhaul.MeleeSystems;
+using CombatOverhaul.Utils;
 using CombatOverhaul.WeaponBuffs;
 using OpenTK.Mathematics;
 using System.Text;
@@ -11,6 +12,7 @@ using Vintagestory.API.Common;
 using Vintagestory.API.Common.Entities;
 using Vintagestory.API.MathTools;
 using Vintagestory.API.Server;
+using Vintagestory.GameContent;
 
 namespace CombatOverhaul.Implementations;
 
@@ -264,7 +266,7 @@ public class StanceBasedMeleeWeaponClient : IClientWeaponLogic, IHasDynamicIdleA
 
         SetState(MeleeWeaponState.Cooldown, mainHand);
 
-        if (stats.Blocks[stats.CurrentStance] != null) MeleeBlockSystem.StartBlock(stats.Blocks[stats.CurrentStance], mainHand);
+        if (stats.Blocks[stats.CurrentStance] != null) MeleeBlockSystem.StartBlock(stats.Blocks[stats.CurrentStance], mainHand, EnumDamageBlockKind.Block);
     }
     public virtual void OnDeselected(EntityPlayer player, bool mainHand, ref int state)
     {
@@ -297,13 +299,13 @@ public class StanceBasedMeleeWeaponClient : IClientWeaponLogic, IHasDynamicIdleA
 
     public virtual bool OnMouseWheel(ItemSlot slot, IClientPlayer byPlayer, float delta)
     {
-        if (PlayerBehavior?.ActionListener.IsActive(EnumEntityAction.RightMouseDown) == false) return false;
+        if (!IsRightMouseDown(byPlayer)) return false;
 
-        GripSpecificStats? stats = GetGripSpecificStats(true, byPlayer.Entity);
+        bool mainHand = IsMainHandSlot(slot, byPlayer.Entity);
+        GripSpecificStats? stats = GetGripSpecificStats(mainHand, byPlayer.Entity);
 
         if (stats == null) return false;
 
-        bool mainHand = byPlayer.Entity.RightHandItemSlot == slot;
         float canChangeGrip = stats.Stats?.GripLengthFactor ?? 0;
 
         if (canChangeGrip != 0 && Stats != null)
@@ -316,6 +318,21 @@ public class StanceBasedMeleeWeaponClient : IClientWeaponLogic, IHasDynamicIdleA
             stats.GripController?.ResetGrip(mainHand);
             return false;
         }
+    }
+
+    private bool IsRightMouseDown(IClientPlayer byPlayer)
+    {
+        return PlayerBehavior?.ActionListener.IsActive(EnumEntityAction.RightMouseDown) == true
+            || PlayerBehavior?.ActionListener.IsActive(EnumEntityAction.InWorldRightMouseDown) == true
+            || byPlayer.Entity.Controls.RightMouseDown
+            || byPlayer.Entity.ServerControls.RightMouseDown
+            || Api.Input.InWorldMouseButton.Right
+            || Api.Input.MouseButton.Right;
+    }
+
+    private static bool IsMainHandSlot(ItemSlot slot, EntityPlayer player)
+    {
+        return !ReferenceEquals(slot, player.LeftHandItemSlot);
     }
 
     public virtual void OnGameTick(ItemSlot slot, EntityPlayer player, ref int state, bool mainHand)
@@ -434,7 +451,7 @@ public class StanceBasedMeleeWeaponClient : IClientWeaponLogic, IHasDynamicIdleA
                 break;
             case "startParry":
                 DamageBlockJson? parry = stats.LeftClickParries[(stats.CurrentStance, stance)];
-                if (parry != null) MeleeBlockSystem.StartBlock(parry, mainHand);
+                if (parry != null) MeleeBlockSystem.StartBlock(parry, mainHand, EnumDamageBlockKind.Parry);
                 break;
             case "stopParry":
                 MeleeBlockSystem.StopBlock(mainHand);
@@ -445,7 +462,7 @@ public class StanceBasedMeleeWeaponClient : IClientWeaponLogic, IHasDynamicIdleA
 
                 if (stats?.Blocks[stats.CurrentStance] != null)
                 {
-                    MeleeBlockSystem.StartBlock(stats.Blocks[stats.CurrentStance], mainHand);
+                    MeleeBlockSystem.StartBlock(stats.Blocks[stats.CurrentStance], mainHand, EnumDamageBlockKind.Block);
                 }
                 break;
         }
@@ -522,7 +539,7 @@ public class StanceBasedMeleeWeaponClient : IClientWeaponLogic, IHasDynamicIdleA
                 break;
             case "startParry":
                 DamageBlockJson? parry = stats.RightClickParries[(stats.CurrentStance, stance)];
-                if (parry != null) MeleeBlockSystem.StartBlock(parry, mainHand);
+                if (parry != null) MeleeBlockSystem.StartBlock(parry, mainHand, EnumDamageBlockKind.Parry);
                 break;
             case "stopParry":
                 MeleeBlockSystem.StopBlock(mainHand);
@@ -533,7 +550,7 @@ public class StanceBasedMeleeWeaponClient : IClientWeaponLogic, IHasDynamicIdleA
 
                 if (stats?.Blocks[stats.CurrentStance] != null)
                 {
-                    MeleeBlockSystem.StartBlock(stats.Blocks[stats.CurrentStance], mainHand);
+                    MeleeBlockSystem.StartBlock(stats.Blocks[stats.CurrentStance], mainHand, EnumDamageBlockKind.Block);
                 }
                 break;
         }
@@ -544,7 +561,7 @@ public class StanceBasedMeleeWeaponClient : IClientWeaponLogic, IHasDynamicIdleA
         switch (callbackCode)
         {
             case "startBlock":
-                if (stats.Blocks[stance] != null) MeleeBlockSystem.StartBlock(stats.Blocks[stance], mainHand);
+                if (stats.Blocks[stance] != null) MeleeBlockSystem.StartBlock(stats.Blocks[stance], mainHand, EnumDamageBlockKind.Block);
                 break;
             case "stopBlock":
                 MeleeBlockSystem.StopBlock(mainHand);
@@ -567,15 +584,22 @@ public class StanceBasedMeleeWeaponClient : IClientWeaponLogic, IHasDynamicIdleA
                         mainHand,
                         out IEnumerable<(Block block, Vector3d point)> handleTerrainCollision,
                         out IEnumerable<(Vintagestory.API.Common.Entities.Entity entity, Vector3d point)> handleEntitiesCollision,
-                        stackStats);
+                        stackStats,
+                        collideWithTerrain: Settings.MeleeWeaponStopOnTerrainHit);
 
-            if (!stats.HandleHitTerrain && handleTerrainCollision.Any())
+            bool handleHitTerrain = handleTerrainCollision.Any();
+            if (handleHitTerrain && Settings.MeleeWeaponIgnoreTerrainBehind)
+            {
+                handleHitTerrain = !HasTerrainCollisionBehindPlayer(player, handleTerrainCollision);
+            }
+
+            if (!stats.HandleHitTerrain && handleHitTerrain)
             {
                 if (attackStats?.HandleHitSound != null) SoundsSystem.Play(attackStats.HandleHitSound);
                 stats.HandleHitTerrain = true;
             }
 
-            if (handleTerrainCollision.Any()) return;
+            if (handleHitTerrain) return;
         }
 
         if (attack == null) return;
@@ -586,7 +610,8 @@ public class StanceBasedMeleeWeaponClient : IClientWeaponLogic, IHasDynamicIdleA
             mainHand,
             out IEnumerable<(Block block, Vector3d point)> terrainCollision,
             out IEnumerable<(Vintagestory.API.Common.Entities.Entity entity, Vector3d point)> entitiesCollision,
-            stackStats);
+            stackStats,
+            collideWithTerrain: Settings.MeleeWeaponStopOnTerrainHit);
 
         if (handle != null) handle.AddAttackedEntities(attack);
 
@@ -599,6 +624,25 @@ public class StanceBasedMeleeWeaponClient : IClientWeaponLogic, IHasDynamicIdleA
         {
             AnimationBehavior?.SetSpeedModifier(AttackImpactFunction);
         }
+    }
+
+    private static bool HasTerrainCollisionBehindPlayer(EntityPlayer player, IEnumerable<(Block block, Vector3d point)> terrainCollision)
+    {
+        Vector3d playerPosition = player.Pos.XYZ.ToOpenTK();
+        Vector3d eyesPosition = player.LocalEyePos.ToOpenTK() + playerPosition;
+        Vector3d viewDirection = player.Pos.GetViewVector().ToVec3d().ToOpenTK();
+        double eyesProjection = Vector3d.Dot(viewDirection, eyesPosition);
+
+        foreach ((_, Vector3d point) in terrainCollision)
+        {
+            double hitProjection = Vector3d.Dot(viewDirection, point);
+            if (hitProjection < eyesProjection)
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     protected static void RegisterCollider(string item, string type, MeleeAttack attack)
@@ -690,7 +734,7 @@ public class StanceBasedMeleeWeaponClient : IClientWeaponLogic, IHasDynamicIdleA
     }
 }
 
-public class StanceBasedMeleeWeapon : Item, IHasWeaponLogic, IHasDynamicIdleAnimations, IHasMeleeWeaponActions, IHasServerBlockCallback, ISetsRenderingOffset, IMouseWheelInput, IOnGameTick, IRestrictAction
+public class StanceBasedMeleeWeapon : Item, IHasWeaponLogic, IHasDynamicIdleAnimations, IHasMeleeWeaponActions, IHasServerBlockCallback, ISetsRenderingOffset, IMouseWheelInput, IHeldItemOnMouseWheel, IOnGameTick, IRestrictAction
 {
     public StanceBasedMeleeWeaponClient? ClientLogic { get; private set; }
 
@@ -707,6 +751,7 @@ public class StanceBasedMeleeWeapon : Item, IHasWeaponLogic, IHasDynamicIdleAnim
 
         if (api is ICoreClientAPI clientAPI)
         {
+            ClientApi = clientAPI;
             ClientLogic = new(clientAPI, this);
             StanceBasedMeleeWeaponStats Stats = Attributes.AsObject<StanceBasedMeleeWeaponStats>();
             RenderingOffset = Stats.RenderingOffset;
@@ -759,11 +804,20 @@ public class StanceBasedMeleeWeapon : Item, IHasWeaponLogic, IHasDynamicIdleAnim
 
     public override void GetHeldItemInfo(ItemSlot inSlot, StringBuilder dsc, IWorldAccessor world, bool withDebugInfo)
     {
+        SplitMaterialWeaponUtil.Normalize(inSlot.Itemstack);
+        SplitMaterialWeaponUtil.NormalizeDurabilityIfNeeded(inSlot.Itemstack);
+
         ClientLogic?.GetHeldItemInfo(inSlot, dsc, world, withDebugInfo);
         WeaponBuffSystem.AppendTooltip(inSlot.Itemstack, dsc, world, withDebugInfo);
+        SplitMaterialWeaponUtil.AppendTooltip(inSlot.Itemstack, dsc);
         dsc.AppendLine("");
 
         base.GetHeldItemInfo(inSlot, dsc, world, withDebugInfo);
+    }
+
+    public override string GetHeldItemName(ItemStack itemStack)
+    {
+        return SplitMaterialWeaponUtil.GetHeldItemName(itemStack, base.GetHeldItemName(itemStack));
     }
 
     /*public override WorldInteraction?[]? GetHeldInteractionHelp(ItemSlot inSlot)
@@ -784,8 +838,22 @@ public class StanceBasedMeleeWeapon : Item, IHasWeaponLogic, IHasDynamicIdleAnim
     }
 
     public bool OnMouseWheel(ItemSlot slot, IClientPlayer byPlayer, float delta) => ClientLogic?.OnMouseWheel(slot, byPlayer, delta) ?? false;
+
+    public void OnMouseWheel(EntityPlayer byPlayer, ItemSlot inSlot, MouseWheelEventArgs args)
+    {
+        if (ClientApi?.World.Player == null) return;
+
+        float delta = MouseWheelPatch.GetDelta(args);
+        if (delta == 0) return;
+
+        if (OnMouseWheel(inSlot, ClientApi.World.Player, delta))
+        {
+            args.SetHandled();
+        }
+    }
     
 
     protected WorldInteraction? AltForInteractions;
     protected WorldInteraction? ChangeGripInteraction;
+    protected ICoreClientAPI? ClientApi;
 }
