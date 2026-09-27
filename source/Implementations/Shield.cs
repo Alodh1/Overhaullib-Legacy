@@ -321,7 +321,7 @@ public class VanillaShield : MeleeWeapon, IContainedMeshSource
                 return ornate ? Lang.Get("Ornate leather reinforced wooden shield") : Lang.Get("Leather reinforced wooden shield");
 
             case "metal":
-                return ornate ? Lang.Get("shield-ornatemetal", Lang.Get("color-" + color), Lang.Get("material-" + metal)) : Lang.Get("shield-withmaterial", Lang.Get("material-" + metal));
+                return GetMetalShieldName(metal, color, ornate);
 
             case "blackguard":
                 return Lang.Get("Blackguard shield");
@@ -334,16 +334,7 @@ public class VanillaShield : MeleeWeapon, IContainedMeshSource
     {
         base.GetHeldItemInfo(inSlot, dsc, world, withDebugInfo);
 
-        var attr = inSlot.Itemstack?.ItemAttributes?["shield"];
-        if (attr == null || !attr.Exists) return;
-
-        float acdmgabsorb = attr["damageAbsorption"]["active"].AsFloat(0);
-        float acchance = attr["protectionChance"]["active"].AsFloat(0);
-
-        float padmgabsorb = attr["damageAbsorption"]["passive"].AsFloat(0);
-        float pachance = attr["protectionChance"]["passive"].AsFloat(0);
-
-        dsc.AppendLine(Lang.Get("shield-stats", (int)(100 * acchance), (int)(100 * pachance), acdmgabsorb, padmgabsorb));
+        if (inSlot.Itemstack == null) return;
 
         switch (Construction)
         {
@@ -360,6 +351,43 @@ public class VanillaShield : MeleeWeapon, IContainedMeshSource
                 dsc.AppendLine(Lang.Get("shield-metaltype", Lang.Get("material-" + inSlot.Itemstack.Attributes.GetString("metal"))));
                 break;
         }
+    }
+
+    private string GetMetalShieldName(string? metal, string? color, bool ornate)
+    {
+        if (!string.IsNullOrEmpty(metal))
+        {
+            string key = ornate && !string.IsNullOrEmpty(color)
+                ? $"item-{Code.Path}-{metal}-{color}-ornate"
+                : $"item-{Code.Path}-{metal}-none";
+            string? vanillaName = Lang.GetMatchingIfExists(key);
+            if (!string.IsNullOrEmpty(vanillaName)) return vanillaName;
+        }
+
+        string materialName = GetMaterialName(metal);
+        return Lang.Get("{0} round shield", materialName);
+    }
+
+    private static string GetMaterialName(string? material)
+    {
+        if (string.IsNullOrEmpty(material)) return Lang.Get("Metal");
+
+        string key = "material-" + material;
+        string translated = Lang.Get(key);
+        return string.Equals(translated, key, StringComparison.Ordinal) ? HumanizeMaterialCode(material) : translated;
+    }
+
+    private static string HumanizeMaterialCode(string material)
+    {
+        return material switch
+        {
+            "tinbronze" => "Tin bronze",
+            "bismuthbronze" => "Bismuth bronze",
+            "blackbronze" => "Black bronze",
+            "meteoriciron" => "Meteoric iron",
+            _ when material.Length > 1 => char.ToUpperInvariant(material[0]) + material[1..],
+            _ => material.ToUpperInvariant()
+        };
     }
 
     public MeshData GenMesh(ItemStack itemstack, ITextureAtlasAPI targetAtlas, BlockPos atBlockPos)

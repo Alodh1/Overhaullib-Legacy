@@ -103,6 +103,7 @@ public sealed class ToolBagSelectionSystemClient
     private readonly ToolSelectionGuiDialog _dialog;
     private readonly ToolBagSystemClient _toolBagSystem;
     private bool _dialogOpenQueued;
+    private bool _suppressOpenAfterClose;
 
     private void MoveHotkeyToStart()
     {
@@ -120,10 +121,11 @@ public sealed class ToolBagSelectionSystemClient
         if (_dialog.IsOpened())
         {
             _dialog.TryClose();
+            SuppressOpenAfterClose();
             return false;
         }
 
-        if (!GetSlotsForToolDialog().Any())
+        if (_suppressOpenAfterClose || !GetSlotsForToolDialog().Any())
         {
             return false;
         }
@@ -131,6 +133,17 @@ public sealed class ToolBagSelectionSystemClient
         QueueDialogOpen();
 
         return false;
+    }
+
+    private void SuppressOpenAfterClose()
+    {
+        if (_suppressOpenAfterClose)
+        {
+            return;
+        }
+
+        _suppressOpenAfterClose = true;
+        _api.Event.RegisterCallback(_ => _suppressOpenAfterClose = false, 0);
     }
 
     private void QueueDialogOpen()

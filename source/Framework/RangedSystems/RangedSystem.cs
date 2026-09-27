@@ -234,6 +234,12 @@ public class RangedWeaponSystemServer
     {
         ItemSlot weaponSlot = packet.MainHand ? player.Entity.ActiveHandItemSlot : player.Entity.LeftHandItemSlot;
 
+        if (SlowDiagnostics.Enabled)
+        {
+            SlowDiagnostics.InvokeRangedWeaponStatusSubscribers(RangedWeaponStatusChanged, player, weaponSlot, packet.Status, packet.MainHand);
+            return;
+        }
+
         RangedWeaponStatusChanged?.Invoke(player.Entity, weaponSlot, packet.Status);
     }
 

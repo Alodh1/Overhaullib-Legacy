@@ -468,6 +468,10 @@ public sealed class FirstPersonAnimationsBehavior : EntityBehavior, IDisposable
     private void ApplyFrame(PlayerItemFrame frame, ElementPose pose, AnimatorBase animator, bool clearPose = false)
     {
         EnumAnimatedElement element;
+        Vector3 eyePosition = new(
+            _eyePosition.X,
+            EditorPreviewEyeAnchor.ResolveY(_eyePosition.Y, _eyeHeight, clearPose),
+            _eyePosition.Z);
 
         ExtendedElementPose? extendedPoseValue = null;
         if (pose is ExtendedElementPose extendedPose)
@@ -489,7 +493,7 @@ public sealed class FirstPersonAnimationsBehavior : EntityBehavior, IDisposable
 
         if (element == EnumAnimatedElement.Unknown)
         {
-            frame.Apply(pose, element, _eyePosition, _eyeHeight);
+            frame.Apply(pose, element, eyePosition, _eyeHeight);
             return;
         }
 
@@ -509,11 +513,11 @@ public sealed class FirstPersonAnimationsBehavior : EntityBehavior, IDisposable
 
         if (extendedPoseValue != null)
         {
-            frame.Apply(extendedPoseValue, element, _eyePosition, _eyeHeight);
+            frame.Apply(extendedPoseValue, element, eyePosition, _eyeHeight);
         }
         else
         {
-            frame.Apply(pose, element, _eyePosition, _eyeHeight);
+            frame.Apply(pose, element, eyePosition, _eyeHeight);
         }
 
         _player.HeadBobbingAmplitude /= _previousHeadBobbingAmplitudeFactor;

@@ -139,6 +139,7 @@ public partial class CombatOverhaulSystem : ModSystem
         StartConfigLibSubscription(api);
         ApplyConfigFileSettings(api);
         ApplyRuntimeSettings(Settings);
+        HarmonyPatchesManager.ConfigureDiagnostics(api, Settings);
 
         if (api.ModLoader.IsModEnabled("combatoverhaul") || api.ModLoader.IsModEnabled("combatoverhaulfork"))
         {
@@ -158,6 +159,9 @@ public partial class CombatOverhaulSystem : ModSystem
         api.RegisterEntityBehaviorClass("CombatOverhaul:WearableStats", typeof(WearableStatsBehavior));
         api.RegisterEntityBehaviorClass("CombatOverhaul:InInventory", typeof(InInventoryPlayerBehavior));
         api.RegisterEntityBehaviorClass("CombatOverhaul:ProjectilePhysics", typeof(ProjectilePhysicsBehavior));
+        api.RegisterEntityBehaviorClass("CombatOverhaul:CurvedFlight", typeof(CurvedFlightBehavior));
+        api.RegisterEntityBehaviorClass("CombatOverhaul:OvalFlight", typeof(OvalFlightBehavior));
+        api.RegisterEntityBehaviorClass("CombatOverhaul:AutoAnimation", typeof(AutoAnimationBehavior));
         api.RegisterEntityBehaviorClass("CombatOverhaul:Stagger", typeof(StaggerBehavior));
         api.RegisterEntityBehaviorClass("CombatOverhaul:PositionBeforeFalling", typeof(PositionBeforeFallingBehavior));
         api.RegisterEntityBehaviorClass("CombatOverhaul:ArmorStandInventory", typeof(EntityBehaviorCOArmorStandInventory));
@@ -215,6 +219,12 @@ public partial class CombatOverhaulSystem : ModSystem
             .RegisterMessageType<ServerGameplaySettingsPacket>();
         _playerNowPlayingSettingsHandler = SendGameplaySettings;
         api.Event.PlayerNowPlaying += _playerNowPlayingSettingsHandler;
+
+        if (ShieldAutoPatcher.IsCombatOverhaulEnabled(api))
+        {
+            ShieldAutoPatcher.Patch(api);
+            _shieldAutoPatchServerListener = api.Event.RegisterGameTickListener(PatchShieldsOnServerTick, 50, 50);
+        }
     }
     public override void StartClientSide(ICoreClientAPI api)
     {
@@ -301,6 +311,11 @@ public partial class CombatOverhaulSystem : ModSystem
 
         api.Event.PlayerEntitySpawn += EnsureOwnPlayerAnimationBehaviors;
         api.Event.LevelFinalize += EnsureOwnPlayerAnimationBehaviors;
+        if (ShieldAutoPatcher.IsCombatOverhaulEnabled(api))
+        {
+            api.Event.LevelFinalize += PatchShieldsOnClientLevelFinalize;
+            ShieldAutoPatcher.Patch(api);
+        }
         _ensureAnimationBehaviorsListener = api.Event.RegisterGameTickListener(_ => EnsureOwnPlayerAnimationBehaviors(), 1000, 1000);
     }
     public override void AssetsLoaded(ICoreAPI api)
@@ -308,6 +323,7 @@ public partial class CombatOverhaulSystem : ModSystem
         StartConfigLibSubscription(api);
         ApplyConfigFileSettings(api);
         ApplyRuntimeSettings(Settings);
+        HarmonyPatchesManager.ConfigureDiagnostics(api, Settings);
         QuenchablePatchGate.DisableCustomQuenchRecipeAssetsIfDisabled(api);
 
         if (api is not ICoreClientAPI clientApi) return;
@@ -342,11 +358,8 @@ public partial class CombatOverhaulSystem : ModSystem
     }
     public override void AssetsFinalize(ICoreAPI api)
     {
-        // Disabled for now: runtime shield autopatching is causing startup instability
-        // with mixed mod stacks on 1.22.1. We'll reintroduce with a safer pipeline.
-        // ShieldAutoPatcher.Patch(api);
-
         QuenchablePatchGate.RemoveCustomQuenchRecipesIfDisabled(api);
+        ArmorQuenchComponents.Apply(api);
 
         IAsset armorConfigAsset = api.Assets.Get("combatoverhaul:config/armor-config.json");
         JsonObject armorConfig = JsonObject.FromJson(armorConfigAsset.ToText());
@@ -429,15 +442,21 @@ public partial class CombatOverhaulSystem : ModSystem
         {
             _serverApi.Event.PlayerNowPlaying -= _playerNowPlayingSettingsHandler;
         }
+        if (_serverApi != null && _shieldAutoPatchServerListener != 0)
+        {
+            _serverApi.Event.UnregisterGameTickListener(_shieldAutoPatchServerListener);
+            _shieldAutoPatchServerListener = 0;
+        }
         _serverApi = null;
         _playerNowPlayingSettingsHandler = null;
 
-        _clientApi?.Event.UnregisterRenderer(ReticleRenderer, EnumRenderStage.Ortho);
-        _clientApi?.Event.UnregisterRenderer(DirectionCursorRenderer, EnumRenderStage.Ortho);
+        ClientThreadCleanup.DisposeRenderer(_clientApi, ReticleRenderer, EnumRenderStage.Ortho, "combat-overhaul-reticle-dispose");
+        ClientThreadCleanup.DisposeRenderer(_clientApi, DirectionCursorRenderer, EnumRenderStage.Ortho, "combat-overhaul-direction-cursor-dispose");
         if (_clientApi != null)
         {
             _clientApi.Event.PlayerEntitySpawn -= EnsureOwnPlayerAnimationBehaviors;
             _clientApi.Event.LevelFinalize -= EnsureOwnPlayerAnimationBehaviors;
+            _clientApi.Event.LevelFinalize -= PatchShieldsOnClientLevelFinalize;
             if (_ensureAnimationBehaviorsListener != 0)
             {
                 _clientApi.Event.UnregisterGameTickListener(_ensureAnimationBehaviorsListener);
@@ -447,8 +466,6 @@ public partial class CombatOverhaulSystem : ModSystem
 
         ActionListener?.Dispose();
         AimingSystem?.Dispose();
-        ReticleRenderer?.Dispose();
-        DirectionCursorRenderer?.Dispose();
 
         OnDispose?.Invoke();
         OnDispose = null;
@@ -551,6 +568,7 @@ public partial class CombatOverhaulSystem : ModSystem
     private const string _iconsPath = $"textures/{_iconsFolder}/";
     private long _cacheMissesReportedListener = 0;
     private long _ensureAnimationBehaviorsListener = 0;
+    private long _shieldAutoPatchServerListener = 0;
     private bool _reportedAnimationBehaviorFallback = false;
     private bool _reportedAnimationBehaviorFallbackError = false;
     private readonly HashSet<AssetLocation> _reportedMissingSvgIcons = [];
@@ -712,8 +730,13 @@ public partial class CombatOverhaulSystem : ModSystem
 
         if (applied)
         {
+            SaveArmorQuenchConfig(_configLibSubscriptionApi);
             ReapplyServerGameplaySettingsIfNeeded(_configLibSubscriptionApi);
             ApplyRuntimeSettings(Settings);
+            if (_configLibSubscriptionApi != null)
+            {
+                HarmonyPatchesManager.ConfigureDiagnostics(_configLibSubscriptionApi, Settings);
+            }
             if (_configLibSubscriptionApi?.Side == EnumAppSide.Server)
             {
                 BroadcastGameplaySettings();
@@ -731,6 +754,10 @@ public partial class CombatOverhaulSystem : ModSystem
         ApplyConfigFileSettings(_configLibSubscriptionApi);
         ReapplyServerGameplaySettingsIfNeeded(_configLibSubscriptionApi);
         ApplyRuntimeSettings(Settings);
+        if (_configLibSubscriptionApi != null)
+        {
+            HarmonyPatchesManager.ConfigureDiagnostics(_configLibSubscriptionApi, Settings);
+        }
         if (_configLibSubscriptionApi?.Side == EnumAppSide.Server)
         {
             BroadcastGameplaySettings();
@@ -773,6 +800,60 @@ public partial class CombatOverhaulSystem : ModSystem
     }
 
     private bool ApplyConfigFileSettings(ICoreAPI? api)
+    {
+        bool applied = ApplyYamlConfigFileSettings(api);
+        return ApplyArmorQuenchConfig(api) || applied;
+    }
+
+    private const string ArmorQuenchConfigFile = "overhaulliblegacy-armorquenching.json";
+    private bool _armorQuenchConfigLoaded;
+    private static readonly PropertyInfo[] ArmorQuenchProperties = typeof(Settings).GetProperties()
+        .Where(property => property.Name.StartsWith("ArmorQuench", StringComparison.Ordinal)).ToArray();
+
+    private bool ApplyArmorQuenchConfig(ICoreAPI? api)
+    {
+        if (api?.Side != EnumAppSide.Server) return false;
+        _armorQuenchConfigLoaded = false;
+        try
+        {
+            JObject? config = api.LoadModConfig<JObject>(ArmorQuenchConfigFile);
+            var values = new Dictionary<PropertyInfo, object?>();
+            foreach (PropertyInfo property in ArmorQuenchProperties)
+            {
+                JToken? token = config?.GetValue(property.Name, StringComparison.OrdinalIgnoreCase);
+                if (token == null) continue;
+                object? value = token.ToObject(property.PropertyType);
+                if (value == null || value is float number && !float.IsFinite(number))
+                    throw new FormatException($"Invalid value for {property.Name}.");
+                values[property] = value;
+            }
+            foreach (var (property, value) in values) property.SetValue(Settings, value);
+            _armorQuenchConfigLoaded = true;
+            SaveArmorQuenchConfig(api);
+            return true;
+        }
+        catch (Exception exception)
+        {
+            LoggerUtil.Warn(api, this, $"Could not load {ArmorQuenchConfigFile}; the file was left unchanged: {exception.Message}");
+            return false;
+        }
+    }
+
+    private void SaveArmorQuenchConfig(ICoreAPI? api)
+    {
+        if (api?.Side != EnumAppSide.Server || !_armorQuenchConfigLoaded) return;
+        try
+        {
+            api.StoreModConfig(ArmorQuenchProperties.ToDictionary(property => property.Name,
+                property => property.GetValue(Settings)), ArmorQuenchConfigFile);
+        }
+        catch (Exception exception)
+        {
+            LoggerUtil.Warn(api, this, $"Could not save {ArmorQuenchConfigFile}: {exception.Message}");
+        }
+    }
+
+    private bool ApplyYamlConfigFileSettings(ICoreAPI? api)
     {
         string configPath = System.IO.Path.Combine(GamePaths.ModConfig, "combatoverhaul.yaml");
         if (!System.IO.File.Exists(configPath)) return false;
@@ -1068,6 +1149,16 @@ public partial class CombatOverhaulSystem : ModSystem
     {
         DamageResistData.EntityProtectionFactor = settings.EntityProtectionMultiplier;
         QuenchableStatUtil.WeaponDamageMultiplier = Math.Max(0f, settings.WeaponQuenchDamageMultiplier);
+        QuenchableStatUtil.ArmorQuenchPlateOnly = settings.ArmorQuenchPlateOnly;
+        QuenchableStatUtil.ArmorQuenchFlatReduction = float.IsFinite(settings.ArmorQuenchFlatReduction) ? Math.Clamp(settings.ArmorQuenchFlatReduction, 0f, 100f) : 0.2f;
+        QuenchableStatUtil.ArmorQuenchDurabilityBonus = float.IsFinite(settings.ArmorQuenchDurabilityBonus) ? Math.Clamp(settings.ArmorQuenchDurabilityBonus, 0f, 10f) : 0.1f;
+        QuenchableStatUtil.ArmorQuenchPenaltyReduction = float.IsFinite(settings.ArmorQuenchPenaltyReduction) ? Math.Clamp(settings.ArmorQuenchPenaltyReduction, 0f, 1f) : 0.1f;
+        QuenchableStatUtil.ArmorQuenchMaxPenaltyReduction = float.IsFinite(settings.ArmorQuenchMaxPenaltyReduction) ? Math.Clamp(settings.ArmorQuenchMaxPenaltyReduction, 0f, 1f) : 0.5f;
+        QuenchableStatUtil.ArmorQuenchBaseShatterChance = float.IsFinite(settings.ArmorQuenchBaseShatterChance) ? Math.Clamp(settings.ArmorQuenchBaseShatterChance, 0f, 1f) : 0.05f;
+        QuenchableStatUtil.ArmorQuenchShatterChancePerQuench = float.IsFinite(settings.ArmorQuenchShatterChancePerQuench) ? Math.Clamp(settings.ArmorQuenchShatterChancePerQuench, 0f, 1f) : 0.05f;
+        QuenchableStatUtil.ArmorQuenchTemperShatterMultiplier = float.IsFinite(settings.ArmorQuenchTemperShatterMultiplier) ? Math.Clamp(settings.ArmorQuenchTemperShatterMultiplier, 0f, 1f) : 0.8f;
+        QuenchableStatUtil.ArmorQuenchTemperPowerMultiplier = float.IsFinite(settings.ArmorQuenchTemperPowerMultiplier) ? Math.Clamp(settings.ArmorQuenchTemperPowerMultiplier, 0f, 1f) : 0.92f;
+
     }
 
     private void EnsureOwnPlayerAnimationBehaviors(IClientPlayer player)
@@ -1139,6 +1230,27 @@ public partial class CombatOverhaulSystem : ModSystem
                 LoggerUtil.Warn(_clientApi, this, $"Could not attach OverhaulLib player animation behaviors at runtime: {exception}");
             }
         }
+    }
+
+    private void PatchShieldsOnClientLevelFinalize()
+    {
+        if (_clientApi != null)
+        {
+            ShieldAutoPatcher.Patch(_clientApi);
+        }
+    }
+
+    private void PatchShieldsOnServerTick(float dt)
+    {
+        if (_serverApi == null) return;
+
+        if (_shieldAutoPatchServerListener != 0)
+        {
+            _serverApi.Event.UnregisterGameTickListener(_shieldAutoPatchServerListener);
+            _shieldAutoPatchServerListener = 0;
+        }
+
+        ShieldAutoPatcher.Patch(_serverApi);
     }
 
     private void DetermineSlotsStatus(ICoreClientAPI api)

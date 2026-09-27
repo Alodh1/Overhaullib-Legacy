@@ -105,8 +105,15 @@ public readonly struct SoundFrame
     public readonly float Range;
     public readonly float Volume;
     public readonly bool Synchronize;
+    public readonly float Pitch;
+    public readonly bool PitchFollowsAnimationSpeed;
 
     public SoundFrame(string[] code, float durationFraction, bool randomizePitch = false, float range = 32, float volume = 1, bool synchronize = true)
+        : this(code, durationFraction, randomizePitch, range, volume, synchronize, 1, false)
+    {
+    }
+
+    public SoundFrame(string[] code, float durationFraction, bool randomizePitch, float range, float volume, bool synchronize, float pitch, bool pitchFollowsAnimationSpeed)
     {
         Code = code;
         DurationFraction = durationFraction;
@@ -114,6 +121,14 @@ public readonly struct SoundFrame
         Range = range;
         Volume = volume;
         Synchronize = synchronize;
+        Pitch = pitch;
+        PitchFollowsAnimationSpeed = pitchFollowsAnimationSpeed;
+    }
+
+    public float GetPitch(float animationSpeed)
+    {
+        float pitch = PitchFollowsAnimationSpeed ? Pitch * animationSpeed : Pitch;
+        return Math.Max(0.01f, pitch);
     }
 
 #if DEBUG
@@ -138,7 +153,13 @@ public readonly struct SoundFrame
         bool sync = Synchronize;
         ImGui.Checkbox($"Synchronize##{title}", ref sync);
 
-        return new(codes, time / (float)totalDuration.TotalMilliseconds, pitch, range, volume, sync);
+        float soundPitch = Pitch;
+        ImGui.InputFloat($"Pitch##{title}", ref soundPitch);
+
+        bool pitchFollowsAnimationSpeed = PitchFollowsAnimationSpeed;
+        ImGui.Checkbox($"Pitch follows animation speed##{title}", ref pitchFollowsAnimationSpeed);
+
+        return new(codes, time / (float)totalDuration.TotalMilliseconds, pitch, range, volume, sync, soundPitch, pitchFollowsAnimationSpeed);
     }
 #endif
 }
@@ -774,10 +795,15 @@ public readonly struct PLayerKeyFrame
     }
 
 #if DEBUG
-    public PLayerKeyFrame Edit(string title, out bool easingFunctionChanged)
+    public PLayerKeyFrame Edit(string title, double previousTimeMs, double nextTimeMs, out bool easingFunctionChanged)
     {
-        int milliseconds = (int)Time.TotalMilliseconds;
-        ImGui.DragInt($"Easing time##{title}", ref milliseconds);
+        int milliseconds = AnimationTimelineTiming.ToManualInputMilliseconds(Time.TotalMilliseconds);
+        ImGui.InputInt($"Keyframe time (ms)##{title}", ref milliseconds);
+        double clampedMilliseconds = AnimationTimelineTiming.ClampPlayerKeyframeTime(
+            milliseconds,
+            Time.TotalMilliseconds,
+            previousTimeMs,
+            nextTimeMs);
 
         EasingFunctionType function = VSImGui.EnumEditor<EasingFunctionType>.Combo($"Easing function##{title}", EasingType);
 
@@ -794,7 +820,7 @@ public readonly struct PLayerKeyFrame
             oldFunction = function;
         }
 
-        return new(frame, TimeSpan.FromMilliseconds(milliseconds), oldFunction, function, FrameProgressRange);
+        return new(frame, TimeSpan.FromMilliseconds(clampedMilliseconds), oldFunction, function, FrameProgressRange);
     }
 #endif
 }

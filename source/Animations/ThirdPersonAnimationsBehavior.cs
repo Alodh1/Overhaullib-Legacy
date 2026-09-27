@@ -259,6 +259,10 @@ public sealed class ThirdPersonAnimationsBehavior : EntityBehavior, IDisposable
     private void ApplyFrame(PlayerItemFrame frame, ElementPose pose, AnimatorBase animator, bool clearPose = false)
     {
         EnumAnimatedElement element = EnumAnimatedElement.Unknown;
+        Vector3 eyePosition = new(
+            _eyePosition.X,
+            EditorPreviewEyeAnchor.ResolveY(_eyePosition.Y, _eyeHeight, clearPose),
+            _eyePosition.Z);
 
         ExtendedElementPose? extendedPoseValue = null;
         if (pose is ExtendedElementPose extendedPose)
@@ -278,7 +282,7 @@ public sealed class ThirdPersonAnimationsBehavior : EntityBehavior, IDisposable
 
         if (element == EnumAnimatedElement.Unknown)
         {
-            frame.Apply(pose, element, _eyePosition, _eyeHeight, _pitch, _composer.AnyActiveAnimations());
+            frame.Apply(pose, element, eyePosition, _eyeHeight, _pitch, _composer.AnyActiveAnimations());
             return;
         }
 
@@ -296,11 +300,11 @@ public sealed class ThirdPersonAnimationsBehavior : EntityBehavior, IDisposable
 
         if (extendedPoseValue != null)
         {
-            frame.Apply(extendedPoseValue, element, _eyePosition, _eyeHeight, _pitch, _composer.AnyActiveAnimations());
+            frame.Apply(extendedPoseValue, element, eyePosition, _eyeHeight, _pitch, _composer.AnyActiveAnimations());
         }
         else
         {
-            frame.Apply(pose, element, _eyePosition, _eyeHeight, _pitch, _composer.AnyActiveAnimations());
+            frame.Apply(pose, element, eyePosition, _eyeHeight, _pitch, _composer.AnyActiveAnimations());
         }
     }
     private bool IsFirstPerson(Entity entity)

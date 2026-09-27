@@ -211,6 +211,14 @@ public sealed class ProjectileServer
 
 public class ProjectileEntity : Entity
 {
+    private const string FlightSecondsAttribute = "combatOverhaulProjectileFlightSeconds";
+
+    private static readonly (string Current, string Max)[] ToolsmithPartDurabilityAttributes =
+    [
+        ("tinkeredToolHandleDurability", "tinkeredToolHandleMaxDurability"),
+        ("tinkeredToolBindingDurability", "tinkeredToolBindingMaxDurability")
+    ];
+
     public ProjectileServer? ServerProjectile { get; set; }
     public Guid ProjectileId { get; set; }
     public ItemStack? ProjectileStack { get; set; }
@@ -229,10 +237,13 @@ public class ProjectileEntity : Entity
     public List<long> CollidedWith { get; set; } = new();
     public bool IgnoreInvFrames { get; set; } = true;
     public bool CanBeCollected { get; set; } = true;
+    public float FlightSeconds { get; private set; }
+    public IReadOnlyList<IProjectileMotionModifier> MotionModifiers => _motionModifiers;
 
     private const int TerrainBreakDelayMs = 150;
     private bool _terrainBreakPending;
     private long _terrainBreakAtMs;
+    private bool _impactDurabilityApplied;
 
 
     public bool Stuck
@@ -254,6 +265,12 @@ public class ProjectileEntity : Entity
     public override void Initialize(EntityProperties properties, ICoreAPI api, long InChunkIndex3d)
     {
         base.Initialize(properties, api, InChunkIndex3d);
+
+        _motionModifiers = SidedProperties.Behaviors
+            .OfType<IProjectileMotionModifier>()
+            .OrderBy(modifier => modifier.Priority)
+            .ToArray();
+        FlightSeconds = Attributes.GetFloat(FlightSecondsAttribute);
 
         SpawnTime = TimeSpan.FromMilliseconds(World.ElapsedMilliseconds);
 
@@ -281,12 +298,21 @@ public class ProjectileEntity : Entity
     }
     public override void OnGameTick(float dt)
     {
+        if (Api.Side == EnumAppSide.Server && _motionModifiers.Length > 0 && Alive && !ShouldDespawn && !Stuck)
+        {
+            FlightSeconds += Math.Max(0, dt);
+            Attributes.SetFloat(FlightSecondsAttribute, FlightSeconds);
+            ApplyMotionModifiers(dt);
+            if (!Alive || ShouldDespawn) return;
+        }
+
         base.OnGameTick(dt);
         if (ShouldDespawn) return;
 
         if (_terrainBreakPending && World.ElapsedMilliseconds >= _terrainBreakAtMs)
         {
             _terrainBreakPending = false;
+            if (!ApplyImpactDurabilityDamage()) return;
             TryDestroyOnCollision();
             if (ShouldDespawn || !Alive) return;
         }
@@ -320,13 +346,17 @@ public class ProjectileEntity : Entity
     }
     public override bool CanCollect(Entity byEntity)
     {
-        return CanBeCollected && Alive && TimeSpan.FromMilliseconds(World.ElapsedMilliseconds) - SpawnTime > CollisionDelay && ServerPos.Motion.Length() < 0.01;
+        return CanBeCollected
+            && Alive
+            && IsCollectibleProjectileStack(ProjectileStack)
+            && TimeSpan.FromMilliseconds(World.ElapsedMilliseconds) - SpawnTime > CollisionDelay
+            && ServerPos.Motion.Length() < 0.01;
     }
     public override ItemStack? OnCollected(Entity byEntity)
     {
         ClearCallback?.Invoke(ProjectileId);
         ProjectileStack?.ResolveBlockOrItem(World);
-        return CanBeCollected ? ProjectileStack : null;
+        return CanBeCollected && IsCollectibleProjectileStack(ProjectileStack) ? ProjectileStack : null;
     }
     public override void OnCollided()
     {
@@ -393,14 +423,8 @@ public class ProjectileEntity : Entity
     public void OnCollisionWithEntity(Entity target, string collider)
     {
         WatchedAttributes.MarkAllDirty();
-        if (DurabilityDamageOnImpact != 0)
-        {
-            ProjectileStack?.Item?.DamageItem(Api.World, target, new DummySlot(ProjectileStack), DurabilityDamageOnImpact);
-            if (ProjectileStack?.Item?.GetRemainingDurability(ProjectileStack) <= 0)
-            {
-                Die();
-            }
-        }
+        _terrainBreakPending = false;
+        if (!ApplyImpactDurabilityDamage()) return;
         TryDestroyOnCollision();
     }
 
@@ -423,6 +447,18 @@ public class ProjectileEntity : Entity
     protected bool SetPosition = false;
     protected Vec3d StartingPos = new();
     protected ProjectilePhysicsBehavior? PhysicsBehavior;
+    private IProjectileMotionModifier[] _motionModifiers = [];
+
+    protected virtual void ApplyMotionModifiers(float dt)
+    {
+        ProjectileMotionContext context = new(this, ServerPos, FlightSeconds);
+
+        foreach (IProjectileMotionModifier modifier in _motionModifiers)
+        {
+            modifier.ModifyMotion(context, dt);
+            if (!Alive || ShouldDespawn) break;
+        }
+    }
 
     protected void OnPhysicsTickCallback(float dtFac)
     {
@@ -463,7 +499,38 @@ public class ProjectileEntity : Entity
             return;
         }
 
+        if (!ApplyImpactDurabilityDamage()) return;
         TryDestroyOnCollision();
+    }
+
+    private bool ApplyImpactDurabilityDamage()
+    {
+        if (_impactDurabilityApplied || DurabilityDamageOnImpact <= 0)
+        {
+            return true;
+        }
+
+        _impactDurabilityApplied = true;
+
+        if (ProjectileStack?.Collectible == null)
+        {
+            CanBeCollected = false;
+            Die();
+            return false;
+        }
+
+        DummySlot projectileSlot = new(ProjectileStack);
+        ProjectileStack.Collectible.DamageItem(Api.World, this, projectileSlot, DurabilityDamageOnImpact);
+        ProjectileStack = projectileSlot.Itemstack;
+
+        if (IsCollectibleProjectileStack(ProjectileStack))
+        {
+            return true;
+        }
+
+        CanBeCollected = false;
+        Die();
+        return false;
     }
     protected virtual void TryDestroyOnCollision()
     {
@@ -473,6 +540,31 @@ public class ProjectileEntity : Entity
             World.PlaySoundAt(new AssetLocation("sounds/effect/toolbreak"), this, null, randomizePitch: true, volume: 0.5f);
             Die();
         }
+    }
+
+    private static bool IsCollectibleProjectileStack(ItemStack? stack)
+    {
+        if (stack?.Collectible == null || stack.StackSize <= 0)
+        {
+            return false;
+        }
+
+        int maxDurability = stack.Collectible.GetMaxDurability(stack);
+        if (maxDurability > 0 && stack.Collectible.GetRemainingDurability(stack) <= 0)
+        {
+            return false;
+        }
+
+        foreach ((string currentAttribute, string maxAttribute) in ToolsmithPartDurabilityAttributes)
+        {
+            int maxPartDurability = stack.Attributes.GetInt(maxAttribute, 0);
+            if (maxPartDurability > 0 && stack.Attributes.GetInt(currentAttribute, maxPartDurability) <= 0)
+            {
+                return false;
+            }
+        }
+
+        return true;
     }
 }
 

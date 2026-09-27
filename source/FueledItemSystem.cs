@@ -52,11 +52,15 @@ public sealed class FueledItemSystem : ModSystem, IRenderer
 
     public override void Dispose()
     {
-        if (_clientApi != null)
+        ICoreClientAPI? clientApi = _clientApi;
+        if (clientApi != null)
         {
-            _clientApi.Event.UnregisterRenderer(this, EnumRenderStage.Before);
-            _clientApi.Event.LevelFinalize -= OnLevelFinalize;
-            _clientApi.Render.ShaderUniforms.NightVisionStrength = 0;
+            ClientThreadCleanup.Run(clientApi, () =>
+            {
+                clientApi.Event.UnregisterRenderer(this, EnumRenderStage.Before);
+                clientApi.Event.LevelFinalize -= OnLevelFinalize;
+                clientApi.Render.ShaderUniforms.NightVisionStrength = 0;
+            }, "fueled-item-system-client-dispose");
         }
 
         if (_serverApi != null && _serverTickListener != 0)

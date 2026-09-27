@@ -260,6 +260,7 @@ public sealed class ActionsManagerPlayerBehavior : EntityBehavior
     private readonly StatsSystemClient _statsSystem;
     private readonly Dictionary<string, HotkeyEventHandlerAttribute> _hotkeys = [];
     private readonly Dictionary<string, Dictionary<int, List<HotkeyEventCallbackDelegate>>> _hotkeysCallbacks = [];
+    private readonly Dictionary<ActionEventId, Dictionary<int, List<ActionEventCallbackDelegate>>> _actionCallbacks = [];
 
     private IClientWeaponLogic? _currentMainHandWeapon;
     private IClientWeaponLogic? _currentOffHandWeapon;
@@ -329,13 +330,7 @@ public sealed class ActionsManagerPlayerBehavior : EntityBehavior
 
         int itemId = weapon.ItemId;
 
-        foreach ((ActionEventId eventId, List<ActionEventCallbackDelegate> callbacks) in handlers)
-        {
-            callbacks.ForEach(callback =>
-            {
-                ActionListener.Subscribe(eventId, (eventData) => HandleActionEvent(eventData, itemId, callback));
-            });
-        }
+        RegisterActionHandlers(itemId, handlers);
 
         Dictionary<string, List<HotkeyEventCallbackDelegate>> hotkeyHandlers = CollectHotkeysHandlers(weapon);
 
@@ -362,6 +357,40 @@ public sealed class ActionsManagerPlayerBehavior : EntityBehavior
         }
 
         weapon.OnRegistered(this, _api);
+    }
+    private void RegisterActionHandlers(int itemId, Dictionary<ActionEventId, List<ActionEventCallbackDelegate>> handlers)
+    {
+        foreach ((ActionEventId eventId, List<ActionEventCallbackDelegate> callbacks) in handlers)
+        {
+            if (!_actionCallbacks.TryGetValue(eventId, out var items))
+            {
+                items = new();
+                _actionCallbacks[eventId] = items;
+                // One subscription must dispatch both items before the listener
+                // consumes the input; separate subscriptions starve the second hand.
+                ActionListener.Subscribe(eventId, eventData => DispatchActionEvent(eventData, items));
+            }
+            if (!items.TryGetValue(itemId, out var existing)) items[itemId] = existing = [];
+            existing.AddRange(callbacks);
+        }
+    }
+    private bool DispatchActionEvent(ActionEventData eventData, Dictionary<int, List<ActionEventCallbackDelegate>> items)
+    {
+        int mainHandId = MainHandItemSlot.Itemstack?.Item?.Id ?? -1;
+        int offHandId = _player.LeftHandItemSlot.Itemstack?.Item?.Id ?? -1;
+        bool handled = DispatchItem(mainHandId);
+        if (offHandId != mainHandId) handled |= DispatchItem(offHandId);
+        return handled;
+
+        bool DispatchItem(int itemId)
+        {
+            if (!items.TryGetValue(itemId, out var callbacks)) return false;
+            foreach (var callback in callbacks)
+            {
+                if (HandleActionEvent(eventData, itemId, callback)) return true;
+            }
+            return false;
+        }
     }
     private static Dictionary<ActionEventId, List<ActionEventCallbackDelegate>> CollectHandlers(object owner)
     {

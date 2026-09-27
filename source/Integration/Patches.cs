@@ -10,6 +10,7 @@ using System.Diagnostics;
 using System.Linq;
 using System.Linq.Expressions;
 using System.Reflection;
+using System.Reflection.Emit;
 using Vintagestory.API.Client;
 using Vintagestory.API.Common;
 using Vintagestory.API.Common.Entities;
@@ -97,6 +98,8 @@ internal static class HarmonyPatches
         );
 
         TryPatchStopRaiseShieldAnim(harmony, api);
+        TryPatchVanillaShieldIdle(harmony, api);
+        TryPatchVanillaShieldTooltip(harmony, api);
         TryPatchOffhandDaggerSlot(harmony, api);
         TryPatchVanillaArmorStandInteract(harmony, api);
         TryPatchVanillaBowInteract(harmony, api);
@@ -121,6 +124,8 @@ internal static class HarmonyPatches
 
         harmony.Unpatch(typeof(BagInventory).GetMethod("SaveSlotIntoBag", AccessTools.all), HarmonyPatchType.Prefix, harmonyId);
         TryUnpatchStopRaiseShieldAnim(harmony, harmonyId);
+        TryUnpatchVanillaShieldIdle(harmony, harmonyId);
+        TryUnpatchVanillaShieldTooltip(harmony, harmonyId);
         TryUnpatchOffhandDaggerSlot(harmony, harmonyId);
         TryUnpatchVanillaArmorStandInteract(harmony, harmonyId);
         TryUnpatchVanillaBowInteract(harmony, harmonyId);
@@ -574,6 +579,7 @@ internal static class HarmonyPatches
 
     private static bool ModSystemStopRaiseShieldAnim_OnGameTick_Prefix()
     {
+        if (!ShieldAutoPatcher.IsCombatOverhaulEnabled(_api)) return true;
         if (_api is not Vintagestory.API.Client.ICoreClientAPI capi) return true;
         if (capi.World?.Player?.Entity is not EntityPlayer player) return true;
 
@@ -599,6 +605,111 @@ internal static class HarmonyPatches
         player.StartAnimation("raiseshield-left");
         player.StartAnimation("raiseshield-left-fp");
         return false;
+    }
+
+    private static void TryPatchVanillaShieldIdle(Harmony harmony, ICoreAPI api)
+    {
+        MethodInfo? method = AccessTools.Method(
+            typeof(ItemShield),
+            nameof(ItemShield.OnHeldIdle),
+            [typeof(ItemSlot), typeof(EntityAgent)]
+        );
+
+        if (method == null)
+        {
+            api.Logger.Warning("[OverhaullibLegacyCompat] Could not find vanilla ItemShield.OnHeldIdle. CO-patched shields may keep vanilla idle shield behavior.");
+            return;
+        }
+
+        harmony.Patch(method, prefix: new HarmonyMethod(AccessTools.Method(typeof(HarmonyPatches), nameof(VanillaShield_OnHeldIdle_Prefix))));
+    }
+
+    private static void TryUnpatchVanillaShieldIdle(Harmony harmony, string harmonyId)
+    {
+        MethodInfo? method = AccessTools.Method(
+            typeof(ItemShield),
+            nameof(ItemShield.OnHeldIdle),
+            [typeof(ItemSlot), typeof(EntityAgent)]
+        );
+
+        if (method != null)
+        {
+            harmony.Unpatch(method, HarmonyPatchType.Prefix, harmonyId);
+        }
+    }
+
+    private static bool VanillaShield_OnHeldIdle_Prefix(ItemSlot slot)
+    {
+        return !ShieldAutoPatcher.IsCombatOverhaulEnabled(_api)
+            || !CollectibleClassifier.HasMeleeWeaponActions(slot.Itemstack?.Collectible);
+    }
+
+    private static void TryPatchVanillaShieldTooltip(Harmony harmony, ICoreAPI api)
+    {
+        MethodInfo? method = AccessTools.Method(
+            typeof(ItemShield),
+            nameof(ItemShield.GetHeldItemInfo),
+            [typeof(ItemSlot), typeof(System.Text.StringBuilder), typeof(IWorldAccessor), typeof(bool)]
+        );
+
+        if (method == null)
+        {
+            api.Logger.Warning("[OverhaullibLegacyCompat] Could not find vanilla ItemShield.GetHeldItemInfo. CO-patched shields may show vanilla shield tooltip stats.");
+            return;
+        }
+
+        harmony.Patch(method, transpiler: new HarmonyMethod(AccessTools.Method(typeof(HarmonyPatches), nameof(VanillaShield_GetHeldItemInfo_Transpiler))));
+    }
+
+    private static void TryUnpatchVanillaShieldTooltip(Harmony harmony, string harmonyId)
+    {
+        MethodInfo? method = AccessTools.Method(
+            typeof(ItemShield),
+            nameof(ItemShield.GetHeldItemInfo),
+            [typeof(ItemSlot), typeof(System.Text.StringBuilder), typeof(IWorldAccessor), typeof(bool)]
+        );
+
+        if (method != null)
+        {
+            harmony.Unpatch(method, HarmonyPatchType.Transpiler, harmonyId);
+        }
+    }
+
+    private static IEnumerable<CodeInstruction> VanillaShield_GetHeldItemInfo_Transpiler(IEnumerable<CodeInstruction> instructions, ILGenerator generator)
+    {
+        MethodInfo? baseTooltip = AccessTools.Method(
+            typeof(Item),
+            nameof(Item.GetHeldItemInfo),
+            [typeof(ItemSlot), typeof(System.Text.StringBuilder), typeof(IWorldAccessor), typeof(bool)]
+        );
+        MethodInfo shouldSkip = AccessTools.Method(typeof(HarmonyPatches), nameof(ShouldSkipVanillaShieldTooltip))
+            ?? throw new MissingMethodException(nameof(ShouldSkipVanillaShieldTooltip));
+        Label keepVanillaTooltip = generator.DefineLabel();
+        bool injected = false;
+
+        foreach (CodeInstruction instruction in instructions)
+        {
+            yield return instruction;
+
+            if (baseTooltip != null && !injected && instruction.Calls(baseTooltip))
+            {
+                yield return new CodeInstruction(OpCodes.Ldarg_0);
+                yield return new CodeInstruction(OpCodes.Ldarg_1);
+                yield return new CodeInstruction(OpCodes.Call, shouldSkip);
+                yield return new CodeInstruction(OpCodes.Brfalse_S, keepVanillaTooltip);
+                yield return new CodeInstruction(OpCodes.Ret);
+                CodeInstruction keepVanillaInstruction = new(OpCodes.Nop);
+                keepVanillaInstruction.labels.Add(keepVanillaTooltip);
+                yield return keepVanillaInstruction;
+                injected = true;
+            }
+        }
+    }
+
+    private static bool ShouldSkipVanillaShieldTooltip(ItemShield shield, ItemSlot slot)
+    {
+        return ShieldAutoPatcher.IsCombatOverhaulEnabled(_api)
+            && CollectibleClassifier.HasMeleeWeaponActions(slot.Itemstack?.Collectible);
     }
 
     private static void LightHsv(EntityPlayer __instance, ref byte[] __result)

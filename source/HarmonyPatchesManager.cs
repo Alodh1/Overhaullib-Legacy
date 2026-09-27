@@ -36,6 +36,7 @@ internal static class HarmonyPatchesManager
     private const string _harmonyIdInventory = _harmonyId + "Inventory";
     private const string _harmonyIdAnimation = _harmonyId + "Animation";
     private const string _harmonyIdGeneral = _harmonyId + "General";
+    private const string _harmonyIdDiagnostics = _harmonyId + "Diagnostics";
 #if DEBUG
     private const string _harmonyIdDetachedCamera = _harmonyId + "DetachedCamera";
 #endif
@@ -44,6 +45,10 @@ internal static class HarmonyPatchesManager
     private static bool _patchedUniversalSide = false;
     private static bool _patchedClientSide = false;
 
+    public static void ConfigureDiagnostics(ICoreAPI api, Settings settings)
+    {
+        SlowDiagnostics.Configure(api, settings, _harmonyIdDiagnostics);
+    }
 
     private static void PatchClientSide(ICoreClientAPI api)
     {
@@ -110,6 +115,7 @@ internal static class HarmonyPatchesManager
         QuenchablePatchGate.Enabled = false;
 
         InventorySafeguardsPatches.Unpatch(_harmonyIdInventory);
+        SlowDiagnostics.Shutdown(_harmonyIdDiagnostics);
         if (_api != null)
         {
             HarmonyPatches.Unpatch(_harmonyIdGeneral, _api);

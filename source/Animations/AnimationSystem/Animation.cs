@@ -77,6 +77,11 @@ public sealed class Animation
 
     public void PlaySounds(SoundsSynchronizerClient soundsManager, TimeSpan previousDuration, TimeSpan currentDuration)
     {
+        PlaySounds(soundsManager, previousDuration, currentDuration, 1);
+    }
+
+    public void PlaySounds(SoundsSynchronizerClient soundsManager, TimeSpan previousDuration, TimeSpan currentDuration, float animationSpeed)
+    {
         if (previousDuration == TimeSpan.Zero)
         {
             previousDuration = TimeSpan.FromMilliseconds(-1); // to fix sounds at 0 progress not playing
@@ -88,7 +93,7 @@ public sealed class Animation
             TimeSpan frameTime = frame.DurationFraction * totalDuration;
             if (frameTime <= previousDuration || frameTime > currentDuration) continue;
 
-            soundsManager.Play(frame);
+            soundsManager.Play(frame, animationSpeed);
         }
     }
     public void SpawnParticles(EntityPlayer player, ParticleEffectsManager particlesManager, TimeSpan previousDuration, TimeSpan currentDuration)
@@ -407,7 +412,13 @@ public sealed class Animation
 
         if (PlayerKeyFrames.Count > 0)
         {
-            PLayerKeyFrame frame = PlayerKeyFrames[_playerFrameIndex].Edit(title, out bool easingFunctionChanged);
+            double previousTimeMs = _playerFrameIndex == 0
+                ? double.NaN
+                : PlayerKeyFrames[_playerFrameIndex - 1].Time.TotalMilliseconds;
+            double nextTimeMs = _playerFrameIndex == PlayerKeyFrames.Count - 1
+                ? double.NaN
+                : PlayerKeyFrames[_playerFrameIndex + 1].Time.TotalMilliseconds;
+            PLayerKeyFrame frame = PlayerKeyFrames[_playerFrameIndex].Edit(title, previousTimeMs, nextTimeMs, out bool easingFunctionChanged);
             PlayerKeyFrames[_playerFrameIndex] = frame;
             /*if (easingFunctionChanged)
             {
@@ -573,10 +584,12 @@ public sealed class SoundFrameJson
     public float Range { get; set; }
     public float Volume { get; set; }
     public bool Synchronize { get; set; }
+    public float Pitch { get; set; } = 1;
+    public bool PitchFollowsAnimationSpeed { get; set; }
 
     public SoundFrame ToSoundFrame()
     {
-        return new(Code, DurationFraction, RandomizePitch, Range, Volume, Synchronize);
+        return new(Code, DurationFraction, RandomizePitch, Range, Volume, Synchronize, Pitch, PitchFollowsAnimationSpeed);
     }
 
     public static SoundFrameJson FromSoundFrame(SoundFrame frame)
@@ -588,7 +601,9 @@ public sealed class SoundFrameJson
             RandomizePitch = frame.RandomizePitch,
             Range = frame.Range,
             Volume = frame.Volume,
-            Synchronize = frame.Synchronize
+            Synchronize = frame.Synchronize,
+            Pitch = frame.Pitch,
+            PitchFollowsAnimationSpeed = frame.PitchFollowsAnimationSpeed
         };
     }
 }

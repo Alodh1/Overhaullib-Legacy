@@ -3,42 +3,76 @@ using CombatOverhaul.Utils;
 using Newtonsoft.Json.Linq;
 using Vintagestory.API.Common;
 using Vintagestory.API.Datastructures;
-using Vintagestory.GameContent;
 
 namespace CombatOverhaul.Integration;
 
 public static class ShieldAutoPatcher
 {
+    public static bool IsCombatOverhaulEnabled(ICoreAPI? api)
+    {
+        return api?.ModLoader.IsModEnabled("combatoverhaul") == true
+            || api?.ModLoader.IsModEnabled("combatoverhaulfork") == true;
+    }
+
     public static void Patch(ICoreAPI api)
     {
+        if (!IsCombatOverhaulEnabled(api)) return;
+
+        int patched = 0;
+
         foreach (Item item in api.World.Items)
         {
-            if (item.Code?.Domain != "game" && item.Code?.Domain != "survival") continue;
-            string path = item.Code?.Path ?? "";
-            if (!path.StartsWith("shield-") && !path.Contains("shield")) continue;
-
-            // Skip shields already handled by CO class/behavior.
-            if (item.GetCollectibleInterface<IHasMeleeWeaponActions>() != null) continue;
+            if (!CollectibleClassifier.IsShield(item)) continue;
+            if (CollectibleClassifier.HasMeleeWeaponActions(item)) continue;
 
             try
             {
-                ApplyCombatAttributes(item);
-                AttachMeleeBehavior(item, api);
+                EnsureCombatAttributes(item);
+                if (AttachMeleeBehavior(item, api))
+                {
+                    patched++;
+                }
             }
             catch (Exception exception)
             {
                 LoggerUtil.Error(api, typeof(ShieldAutoPatcher), $"Error while patching shield '{item.Code}':\n{exception}");
             }
         }
+
+        if (patched > 0)
+        {
+            api.Logger.Notification($"[OverhaullibLegacyCompat] Applied Combat Overhaul shield behavior to {patched} shield item(s).");
+        }
     }
 
-    private static void ApplyCombatAttributes(Item item)
+    private static void EnsureCombatAttributes(Item item)
     {
-        if (item.Attributes?.Token is not JObject attributes)
+        JObject attributes = item.Attributes?.Token as JObject ?? new JObject();
+        item.Attributes = new JsonObject(attributes);
+
+        JObject defaultOffHandStance = CreateDefaultOffHandStance(item);
+
+        if (attributes["Modes"] is JObject modes && modes.Properties().Any())
         {
+            foreach (JProperty mode in modes.Properties())
+            {
+                if (mode.Value is JObject modeStats && modeStats["OffHandStance"] == null)
+                {
+                    modeStats["OffHandStance"] = defaultOffHandStance.DeepClone();
+                }
+            }
+
             return;
         }
 
+        if (attributes["OffHandStance"] == null)
+        {
+            attributes["OffHandStance"] = defaultOffHandStance;
+        }
+    }
+
+    private static JObject CreateDefaultOffHandStance(Item item)
+    {
         bool metalShield = item.Code?.Path?.Contains("blackguard") == true;
 
         string heavySound = metalShield ? "game:sounds/held/shieldblock-metal-heavy" : "game:sounds/held/shieldblock-wood-heavy";
@@ -47,7 +81,7 @@ public static class ShieldAutoPatcher
         int blockTier = metalShield ? 4 : 2;
         int staggerTier = metalShield ? 8 : 4;
 
-        JObject offHandStance = new()
+        return new JObject
         {
             ["CanAttack"] = false,
             ["CanParry"] = false,
@@ -87,16 +121,17 @@ public static class ShieldAutoPatcher
             ["ReadyAnimation"] = "combatoverhaul:shield-light-ready",
             ["IdleAnimation"] = "combatoverhaul:shield-light-ready"
         };
-
-        attributes["OffHandStance"] = offHandStance;
     }
 
-    private static void AttachMeleeBehavior(Item item, ICoreAPI api)
+    private static bool AttachMeleeBehavior(Item item, ICoreAPI api)
     {
+        if (CollectibleClassifier.HasMeleeWeaponActions(item)) return false;
+
         MeleeWeaponBehavior behavior = new(item);
         behavior.Initialize(new JsonObject(new JObject()));
         behavior.OnLoaded(api);
 
         item.CollectibleBehaviors = (item.CollectibleBehaviors ?? []).Append(behavior).ToArray();
+        return true;
     }
 }

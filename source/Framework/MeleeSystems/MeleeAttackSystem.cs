@@ -350,7 +350,7 @@ public sealed class MeleeSystemServer : MeleeSystem
 
         if (packet.Tier < 0 || packet.Tier > limits.MaxTier)
         {
-            LogRejectedAttackPacket(player, packet, "tier-too-high");
+            LogRejectedAttackPacket(player, packet, "tier-too-high", $"allowedTier={limits.MaxTier}, serverSlashingTierBonus={player.Entity.Stats.GetBlended(MeleeDamageType.DamageTierPlayerStatPrefix + EnumDamageType.SlashingAttack) - 1}, serverPiercingTierBonus={player.Entity.Stats.GetBlended(MeleeDamageType.DamageTierPlayerStatPrefix + EnumDamageType.PiercingAttack) - 1}, serverBluntTierBonus={player.Entity.Stats.GetBlended(MeleeDamageType.DamageTierPlayerStatPrefix + EnumDamageType.BluntAttack) - 1}");
             return false;
         }
 
@@ -630,7 +630,8 @@ public sealed class MeleeSystemServer : MeleeSystem
 
         _rejectedAttackPacketLogs++;
         string detailsText = string.IsNullOrEmpty(details) ? "" : $", {details}";
-        LoggerUtil.Warn(_api, this, $"Rejected melee attack packet from '{player.PlayerName}' ({player.PlayerUID}): reason={reason}, attacker={packet.AttackerEntityId}, target={packet.TargetEntityId}, damage={packet.Damage}, type='{packet.DamageType}'{detailsText}");
+        ItemStack? weapon = GetWeaponSlot(player.Entity, packet.MainHand)?.Itemstack;
+        LoggerUtil.Warn(_api, this, $"Rejected melee attack packet from '{player.PlayerName}' ({player.PlayerUID}): reason={reason}, attacker={packet.AttackerEntityId}, target={packet.TargetEntityId}, damage={packet.Damage}, type='{packet.DamageType}', tier={packet.Tier}, weapon='{weapon?.Collectible.Code}', mainHand={packet.MainHand}, characterClass='{player.Entity.WatchedAttributes.GetString("characterClass")}'{detailsText}");
     }
 
     private readonly struct MeleeAttackLimits

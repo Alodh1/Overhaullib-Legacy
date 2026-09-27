@@ -124,9 +124,11 @@ public sealed class CollidersEntityBehavior : EntityBehavior
 
     public override void OnGameTick(float deltaTime)
     {
+        if (entity.Api is not ICoreClientAPI clientApi) return;
+
         if (!_subscribed)
         {
-            if (entity?.Api != null && entity.Api.ModLoader.IsModEnabled(PlayerModelLibId))
+            if (clientApi.ModLoader.IsModEnabled(PlayerModelLibId))
             {
                 SubscribeOnModelChange();
             }
@@ -141,49 +143,37 @@ public sealed class CollidersEntityBehavior : EntityBehavior
         }
         _timeSinceLastUpdate = 0;
 
-        if (entity.Api is not ICoreClientAPI clientApi || !HasOBBCollider || !entity.Alive) return;
+        if (!HasOBBCollider || !entity.Alive) return;
 
-        Animator = entity.AnimManager?.Animator as ClientAnimator;
+        bool needsElementProcessing = UnprocessedElementsLeft || UnprocessedElementsLeftCustom;
+        if (!entity.IsRendered && !needsElementProcessing) return;
 
-        if (Animator == null) return;
+        ClientAnimator? animator = entity.AnimManager?.Animator as ClientAnimator;
+        if (animator == null) return;
 
-        if (UnprocessedElementsLeft && !UnprocessedElementsLeftCustom)
+        Animator = animator;
+
+        if (UnprocessedElementsLeftCustom)
         {
-            try
-            {
-                foreach (ElementPose pose in Animator.RootPoses)
-                {
-                    AddPoseShapeElements(pose);
-                }
-
-                if (ShapeElementsToProcess.Count != 0 && !_reportedMissingColliders)
-                {
-                    _reportedMissingColliders = true;
-                }
-            }
-            catch (Exception exception)
-            {
-                if (!_reportedColliderCreationError)
-                {
-                    Utils.LoggerUtil.Error(entity.Api, typeof(HarmonyPatches), $"({entity.Code}) Error during creating colliders: \n{exception}");
-                }
-
-                _reportedColliderCreationError = true;
-            }
+            ProcessCollidersForCustomModel(animator);
+        }
+        else if (UnprocessedElementsLeft)
+        {
+            ProcessConfiguredColliderElements(animator);
         }
 
-        ProcessCollidersForCustomModel();
-
-        if (entity.IsRendered && ShouldRecalculateColliders(Animator))
+        if (entity.IsRendered && ShouldRecalculateColliders(animator))
         {
-            RecalculateColliders(Animator, clientApi);
+            RecalculateColliders(animator, clientApi);
         }
     }
 
-    public void Render(ICoreClientAPI api, EntityAgent entityPlayer, EntityShapeRenderer renderer, int color = ColorUtil.WhiteArgb)
+    public void Render(ICoreClientAPI? api, Entity? renderedEntity, EntityShapeRenderer renderer, int color = ColorUtil.WhiteArgb)
     {
+        if (api is null || renderedEntity is null) return;
+
         bool firstPerson = entity.Api is ICoreClientAPI { World.Player.CameraMode: EnumCameraMode.FirstPerson };
-        if (api.World.Player.Entity.EntityId == entityPlayer.EntityId && firstPerson) return;
+        if (api.World.Player.Entity.EntityId == renderedEntity.EntityId && firstPerson) return;
         if (!HasOBBCollider || !entity.Alive) return;
 
         // Colliders need a renderer reference for Transform(); assign it even when the debug overlay
@@ -215,7 +205,7 @@ public sealed class CollidersEntityBehavior : EntityBehavior
         {
             if (CollidersTypes.TryGetValue(id, out ColliderTypes value))
             {
-                collider.Render(api, entityPlayer, _colliderColors[value]);
+                collider.Render(api, api.World.Player.Entity, _colliderColors[value]);
             }
         }
 
@@ -567,13 +557,25 @@ public sealed class CollidersEntityBehavior : EntityBehavior
     private CollidersConfig _defaultConfig = new();
     private const int _updateFps = 30;
     private const float _updateTimeSec = 1f / _updateFps;
+    private const int _maxColliderElementResolutionAttempts = 10;
     private float _timeSinceLastUpdate = 0;
     private readonly Settings _settings;
     private bool _subscribed = false;
     private PlayerModelSkinSubscription? _subscribedSkinBehavior;
-    private int _lastColliderSignature = 0;
     private bool _collidersTransformed = false;
     private bool _renderersAssigned = false;
+    private int _colliderElementResolutionAttempts = 0;
+    private bool _colliderTransformSnapshotValid = false;
+    private int _lastTransformedColliderCount = -1;
+    private int _lastTransformationMatricesLength = -1;
+    private double _lastEntityPosX = double.NaN;
+    private double _lastEntityPosY = double.NaN;
+    private double _lastEntityPosZ = double.NaN;
+    private double _lastEntityYaw = double.NaN;
+    private double _lastEntityPitch = double.NaN;
+    private double _lastEntityRoll = double.NaN;
+    private int[] _lastColliderJointIds = [];
+    private float[] _lastColliderJointMatrices = [];
 
     private void SetColliderElement(ShapeElement element)
     {
@@ -609,42 +611,98 @@ public sealed class CollidersEntityBehavior : EntityBehavior
 
     private bool ShouldRecalculateColliders(ClientAnimator animator)
     {
-        int signature = GetColliderTransformSignature(animator);
-        if (!_collidersTransformed)
+        if (!_collidersTransformed || !_colliderTransformSnapshotValid)
         {
-            _lastColliderSignature = signature;
+            CaptureColliderTransformState(animator);
             return true;
         }
 
-        if (signature == _lastColliderSignature) return false;
+        if (!ColliderTransformStateChanged(animator)) return false;
 
-        _lastColliderSignature = signature;
+        CaptureColliderTransformState(animator);
         return true;
     }
 
-    private int GetColliderTransformSignature(ClientAnimator animator)
+    private bool ColliderTransformStateChanged(ClientAnimator animator)
     {
-        HashCode hash = new();
-        hash.Add(Colliders.Count);
-        hash.Add(entity.Pos.X);
-        hash.Add(entity.Pos.Y);
-        hash.Add(entity.Pos.Z);
-        hash.Add(entity.Pos.Yaw);
-        hash.Add(entity.Pos.Pitch);
-        hash.Add(entity.Pos.Roll);
+        if (Colliders.Count != _lastTransformedColliderCount) return true;
 
-        float[] transformMatrices = animator.TransformationMatrices;
-        foreach (ShapeElementCollider collider in Colliders.Values)
+        EntityPos position = entity.Pos;
+        if (position.X != _lastEntityPosX || position.Y != _lastEntityPosY || position.Z != _lastEntityPosZ ||
+            position.Yaw != _lastEntityYaw || position.Pitch != _lastEntityPitch || position.Roll != _lastEntityRoll)
         {
-            hash.Add(collider.JointId);
-            int offset = collider.JointId * 16;
-            for (int index = 0; index < 16 && offset + index < transformMatrices.Length; index++)
-            {
-                hash.Add(transformMatrices[offset + index]);
-            }
+            return true;
         }
 
-        return hash.ToHashCode();
+        float[] transformMatrices = animator.TransformationMatrices;
+        if (transformMatrices.Length != _lastTransformationMatricesLength) return true;
+        if (_lastColliderJointIds.Length != Colliders.Count || _lastColliderJointMatrices.Length != Colliders.Count * 16) return true;
+
+        int colliderIndex = 0;
+        foreach (ShapeElementCollider collider in Colliders.Values)
+        {
+            if (colliderIndex >= _lastColliderJointIds.Length || _lastColliderJointIds[colliderIndex] != collider.JointId)
+            {
+                return true;
+            }
+
+            int offset = collider.JointId * 16;
+            int snapshotOffset = colliderIndex * 16;
+            for (int index = 0; index < 16; index++)
+            {
+                float current = offset + index < transformMatrices.Length ? transformMatrices[offset + index] : 0f;
+                if (BitConverter.SingleToInt32Bits(current) != BitConverter.SingleToInt32Bits(_lastColliderJointMatrices[snapshotOffset + index]))
+                {
+                    return true;
+                }
+            }
+
+            colliderIndex++;
+        }
+
+        return false;
+    }
+
+    private void CaptureColliderTransformState(ClientAnimator animator)
+    {
+        EntityPos position = entity.Pos;
+        _lastEntityPosX = position.X;
+        _lastEntityPosY = position.Y;
+        _lastEntityPosZ = position.Z;
+        _lastEntityYaw = position.Yaw;
+        _lastEntityPitch = position.Pitch;
+        _lastEntityRoll = position.Roll;
+        _lastTransformedColliderCount = Colliders.Count;
+
+        float[] transformMatrices = animator.TransformationMatrices;
+        _lastTransformationMatricesLength = transformMatrices.Length;
+
+        int requiredMatrixValues = Colliders.Count * 16;
+        if (_lastColliderJointIds.Length != Colliders.Count)
+        {
+            _lastColliderJointIds = new int[Colliders.Count];
+        }
+        if (_lastColliderJointMatrices.Length != requiredMatrixValues)
+        {
+            _lastColliderJointMatrices = new float[requiredMatrixValues];
+        }
+
+        int colliderIndex = 0;
+        foreach (ShapeElementCollider collider in Colliders.Values)
+        {
+            _lastColliderJointIds[colliderIndex] = collider.JointId;
+
+            int offset = collider.JointId * 16;
+            int snapshotOffset = colliderIndex * 16;
+            for (int index = 0; index < 16; index++)
+            {
+                _lastColliderJointMatrices[snapshotOffset + index] = offset + index < transformMatrices.Length ? transformMatrices[offset + index] : 0f;
+            }
+
+            colliderIndex++;
+        }
+
+        _colliderTransformSnapshotValid = true;
     }
     private void CalculateBoundingBox()
     {
@@ -687,6 +745,10 @@ public sealed class CollidersEntityBehavior : EntityBehavior
 
         CollidersTypes.Clear();
         ShapeElementsToProcess.Clear();
+        Colliders.Clear();
+        _renderersAssigned = false;
+        ResetColliderResolutionState();
+        ResetColliderTransformState();
 
         ColliderTypesJson types = customModelConfig.Colliders.Elements;
         foreach (string collider in types.Torso)
@@ -731,6 +793,10 @@ public sealed class CollidersEntityBehavior : EntityBehavior
     {
         CollidersTypes.Clear();
         ShapeElementsToProcess.Clear();
+        Colliders.Clear();
+        _renderersAssigned = false;
+        ResetColliderResolutionState();
+        ResetColliderTransformState();
 
         ColliderTypesJson types = config.Elements;
         foreach (string collider in types.Torso)
@@ -768,30 +834,37 @@ public sealed class CollidersEntityBehavior : EntityBehavior
         PenetrationResistances = config.PenetrationResistances;
         ResistantCollidersStopProjectiles = config.ResistantCollidersStopProjectiles;
 
-        UnprocessedElementsLeft = true;
+        UnprocessedElementsLeft = ShapeElementsToProcess.Count > 0;
         HasOBBCollider = true;
     }
     private void SubscribeOnModelChange()
     {
         _subscribedSkinBehavior = PlayerModelSkinSubscription.Subscribe(entity, ReloadCollidersForCustomModel, invokeCurrentModel: true);
     }
-    private void ProcessCollidersForCustomModel()
+    private void ProcessCollidersForCustomModel(ClientAnimator animator)
     {
         if (!UnprocessedElementsLeftCustom) return;
 
         //entity.AnimManager.LoadAnimator(entity.World.Api, entity, customShape, entity.AnimManager.Animator?.Animations, true, ["head"]);
 
-        Animator = entity.AnimManager?.Animator as ClientAnimator;
-
-        if (Animator == null) return;
-
-        UnprocessedElementsLeft = UnprocessedElementsLeftCustom;
+        UnprocessedElementsLeft = ShapeElementsToProcess.Count > 0;
         Colliders.Clear();
         _renderersAssigned = false;
+        ResetColliderResolutionState();
+        ResetColliderTransformState();
+        ProcessConfiguredColliderElements(animator);
 
+        UnprocessedElementsLeftCustom = false;
+    }
+
+    private void ProcessConfiguredColliderElements(ClientAnimator animator)
+    {
+        if (!UnprocessedElementsLeft) return;
+
+        _colliderElementResolutionAttempts++;
         try
         {
-            foreach (ElementPose pose in Animator.RootPoses)
+            foreach (ElementPose pose in animator.RootPoses)
             {
                 AddPoseShapeElements(pose);
             }
@@ -811,6 +884,23 @@ public sealed class CollidersEntityBehavior : EntityBehavior
             _reportedColliderCreationError = true;
         }
 
-        UnprocessedElementsLeftCustom = false;
+        if (UnprocessedElementsLeft && _colliderElementResolutionAttempts >= _maxColliderElementResolutionAttempts)
+        {
+            UnprocessedElementsLeft = false;
+        }
+    }
+
+    private void ResetColliderResolutionState()
+    {
+        _colliderElementResolutionAttempts = 0;
+        _reportedMissingColliders = false;
+    }
+
+    private void ResetColliderTransformState()
+    {
+        _collidersTransformed = false;
+        _colliderTransformSnapshotValid = false;
+        _lastTransformedColliderCount = -1;
+        _lastTransformationMatricesLength = -1;
     }
 }

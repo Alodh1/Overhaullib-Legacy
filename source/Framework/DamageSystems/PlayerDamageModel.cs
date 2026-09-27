@@ -31,6 +31,9 @@ public class PlayerDamageModelConfig
 
 public sealed class PlayerDamageModelBehavior : EntityBehavior
 {
+    public const string FullBodyDamageFactorStat = "playerDamageFactor";
+    public const string FullBodyDamageTierReductionStat = "playerDamageTierReduction";
+
     public PlayerDamageModelBehavior(Entity entity) : base(entity)
     {
         _system = entity.Api.ModLoader.GetModSystem<CombatOverhaulSystem>();
@@ -85,6 +88,29 @@ public sealed class PlayerDamageModelBehavior : EntityBehavior
         {DamageZone.Hands, "playerHandsDamageFactor"},
         {DamageZone.Legs, "playerLegsDamageFactor"},
         {DamageZone.Feet, "playerFeetDamageFactor"}
+    };
+    public Dictionary<DamageZone, string> DamageTierReductionStats { get; private set; } = new()
+    {
+        {DamageZone.Head, "playerHeadDamageTierReduction"},
+        {DamageZone.Face, "playerFaceDamageTierReduction"},
+        {DamageZone.Neck, "playerNeckDamageTierReduction"},
+        {DamageZone.Torso, "playerTorsoDamageTierReduction"},
+        {DamageZone.Arms, "playerArmsDamageTierReduction"},
+        {DamageZone.Hands, "playerHandsDamageTierReduction"},
+        {DamageZone.Legs, "playerLegsDamageTierReduction"},
+        {DamageZone.Feet, "playerFeetDamageTierReduction"}
+    };
+    public Dictionary<EnumDamageType, string> DamageTypeMultiplierStats { get; private set; } = new()
+    {
+        {EnumDamageType.SlashingAttack, "playerSlashingDamageFactor"},
+        {EnumDamageType.PiercingAttack, "playerPiercingDamageFactor"},
+        {EnumDamageType.BluntAttack, "playerBluntDamageFactor"}
+    };
+    public Dictionary<EnumDamageType, string> DamageTypeTierReductionStats { get; private set; } = new()
+    {
+        {EnumDamageType.SlashingAttack, "playerSlashingDamageTierReduction"},
+        {EnumDamageType.PiercingAttack, "playerPiercingDamageTierReduction"},
+        {EnumDamageType.BluntAttack, "playerBluntDamageTierReduction"}
     };
     public List<EnumDamageType> DamageTypesToProcess { get; private set; } =
     [
@@ -191,7 +217,7 @@ public sealed class PlayerDamageModelBehavior : EntityBehavior
                 .Select(damageModelBehavior.DamageModel.GetMultiplier)
                 .Average();
 
-            damage *= zoneMultiplier * damageModelBehavior.GetStatsMultiplier(zone);
+            damage *= zoneMultiplier * damageModelBehavior.GetDamageMultiplier(zone, damageType);
         }
 
         if (calculationType == DamageReceivedCalculationType.HitChance && damageModelBehavior != null)
@@ -230,7 +256,7 @@ public sealed class PlayerDamageModelBehavior : EntityBehavior
 
             float totalWeight = damageModelBehavior.DamageModel.DamageZones
                 .Where(value => value.Directions.Check(direction))
-                .Select(value => value.Coverage * value.DamageMultiplier * damageModelBehavior.GetStatsMultiplier(damageModelBehavior.BodyPartsToZones[value.ZoneType]))
+                .Select(value => value.Coverage * value.DamageMultiplier * damageModelBehavior.GetDamageMultiplier(damageModelBehavior.BodyPartsToZones[value.ZoneType], damageType))
                 .Sum();
             if (totalWeight <= 0) return damage;
 
@@ -241,7 +267,7 @@ public sealed class PlayerDamageModelBehavior : EntityBehavior
             float zoneWieght = damageModelBehavior.DamageModel.DamageZones
                 .Where(value => bodyParts.Contains(value.ZoneType))
                 .Where(value => value.Directions.Check(direction))
-                .Select(value => value.Coverage * value.DamageMultiplier * damageModelBehavior.GetStatsMultiplier(damageModelBehavior.BodyPartsToZones[value.ZoneType]))
+                .Select(value => value.Coverage * value.DamageMultiplier * damageModelBehavior.GetDamageMultiplier(damageModelBehavior.BodyPartsToZones[value.ZoneType], damageType))
                 .Sum();
 
             damage *= zoneWieght / totalWeight;
@@ -255,6 +281,11 @@ public sealed class PlayerDamageModelBehavior : EntityBehavior
             .Where(slot => slot?.Itemstack?.Item != null)
             .Where(slot => slot?.Itemstack?.Item.GetRemainingDurability(slot.Itemstack) > 0 || slot?.Itemstack?.Item.GetMaxDurability(slot.Itemstack) == 0)
             .Select(slot => slot.GetResists(zone)));
+
+        if (damageModelBehavior != null)
+        {
+            damageTier = Math.Max(0, damageTier - damageModelBehavior.GetDamageTierReduction(zone, damageType));
+        }
 
 
         int durabilityDamage = 0;
@@ -291,7 +322,8 @@ public sealed class PlayerDamageModelBehavior : EntityBehavior
 
         DamageZone damageZone = BodyPartsToZones[detailedDamageZone];
 
-        multiplier *= GetStatsMultiplier(damageZone);
+        multiplier *= GetDamageMultiplier(damageZone, damageSource.Type);
+        damageSource.DamageTier = Math.Max(0, damageSource.DamageTier - GetDamageTierReduction(damageZone, damageSource.Type));
 
         ApplyBlock(damageSource, detailedDamageZone, ref damage, out string blockDamageLogMessage);
         PrintToDamageLog(blockDamageLogMessage);
@@ -319,14 +351,45 @@ public sealed class PlayerDamageModelBehavior : EntityBehavior
     }
 
 
-    private float GetStatsMultiplier(DamageZone part)
+    /// <summary>
+    /// Returns the multiplicative incoming-damage factor for the full body, damage type, and body zone.
+    /// Trait values use normal Vintage Story stat semantics: -0.25 produces a factor of 0.75.
+    /// </summary>
+    public float GetDamageMultiplier(DamageZone zone, EnumDamageType damageType)
     {
-        if (MultiplierStats.TryGetValue(part, out string? stat))
-        {
-            return _player.Stats.GetBlended(stat);
-        }
+        float fullBodyMultiplier = _player.Stats.GetBlended(FullBodyDamageFactorStat);
+        float damageTypeMultiplier = GetBlendedOrDefault(DamageTypeMultiplierStats, damageType, 1);
+        float bodyZoneMultiplier = GetBlendedOrDefault(MultiplierStats, zone, 1);
 
-        return 1;
+        return Math.Max(0, fullBodyMultiplier * damageTypeMultiplier * bodyZoneMultiplier);
+    }
+
+    /// <summary>
+    /// Returns the additive incoming damage-tier reduction for the full body, damage type, and body zone.
+    /// Positive trait values reduce the tier; negative values increase it. The caller clamps the final tier to zero.
+    /// </summary>
+    public int GetDamageTierReduction(DamageZone zone, EnumDamageType damageType)
+    {
+        float fullBodyReduction = GetStatDelta(FullBodyDamageTierReductionStat);
+        float damageTypeReduction = GetStatDeltaOrDefault(DamageTypeTierReductionStats, damageType);
+        float bodyZoneReduction = GetStatDeltaOrDefault(DamageTierReductionStats, zone);
+
+        return (int)(fullBodyReduction + damageTypeReduction + bodyZoneReduction);
+    }
+
+    private float GetBlendedOrDefault<TKey>(Dictionary<TKey, string> statsByKey, TKey key, float defaultValue) where TKey : notnull
+    {
+        return statsByKey.TryGetValue(key, out string? stat) ? _player.Stats.GetBlended(stat) : defaultValue;
+    }
+
+    private float GetStatDeltaOrDefault<TKey>(Dictionary<TKey, string> statsByKey, TKey key) where TKey : notnull
+    {
+        return statsByKey.TryGetValue(key, out string? stat) ? GetStatDelta(stat) : 0;
+    }
+
+    private float GetStatDelta(string stat)
+    {
+        return _player.Stats.GetBlended(stat) - 1;
     }
     private (PlayerBodyPart zone, float multiplier) DetermineHitZone(DamageSource damageSource)
     {
@@ -361,6 +424,11 @@ public sealed class PlayerDamageModelBehavior : EntityBehavior
         damageLogMessage = "";
 
         if (CurrentDamageBlock == null) return;
+        if (_serverSide && _player.Player is IServerPlayer serverPlayer && !ServerDamageBlockProfiles.IsStillAuthorized(serverPlayer, CurrentDamageBlock))
+        {
+            CurrentDamageBlock = null;
+            return;
+        }
 
         if (!CurrentDamageBlock.CanBlockProjectiles && IsCausedByProjectile(damageSource))
         {

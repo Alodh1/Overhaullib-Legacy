@@ -1,4 +1,5 @@
 using ProtoBuf;
+using CombatOverhaul.Utils;
 using Vintagestory.API.Client;
 using Vintagestory.API.Common;
 using Vintagestory.API.Config;
@@ -47,16 +48,15 @@ internal static class CriticalHitFeedback
 
     public static void Dispose()
     {
-        if (_clientApi != null && _renderer != null)
-        {
-            _clientApi.Event.UnregisterRenderer(_renderer, EnumRenderStage.Ortho);
-        }
+        ICoreClientAPI? clientApi = _clientApi;
+        CriticalHitFeedbackRenderer? renderer = _renderer;
 
-        _renderer?.Dispose();
         _renderer = null;
         _clientApi = null;
         _clientChannel = null;
         _serverChannel = null;
+
+        ClientThreadCleanup.DisposeRenderer(clientApi, renderer, EnumRenderStage.Ortho, "critical-hit-feedback-dispose");
     }
 
     private static void HandlePacket(CriticalHitFeedbackPacket packet)

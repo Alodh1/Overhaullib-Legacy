@@ -1,5 +1,7 @@
+using CombatOverhaul.Implementations;
 using Vintagestory.API.Common;
 using Vintagestory.API.Datastructures;
+using Vintagestory.GameContent;
 
 namespace CombatOverhaul.Utils;
 
@@ -46,6 +48,20 @@ public static class CollectibleClassifier
 
         string? assemblyName = collectibleType.Assembly.GetName().Name;
         return assemblyName?.Contains("Firearms", StringComparison.OrdinalIgnoreCase) == true;
+    }
+
+    public static bool IsShield(ItemStack? stack) => IsShield(stack, stack?.Collectible);
+
+    public static bool IsShield(CollectibleObject? collectible) => IsShield(null, collectible);
+
+    private static bool IsShield(ItemStack? stack, CollectibleObject? collectible)
+    {
+        if (collectible == null) return false;
+        if (HasClassification(stack, collectible, "isShield", "shield")) return true;
+        if (collectible is ItemShield) return true;
+        if (collectible.Tool == EnumTool.Shield) return true;
+
+        return IsShieldCode(collectible.Code);
     }
 
     private static bool IsBow(ItemStack? stack, CollectibleObject? collectible)
@@ -99,9 +115,27 @@ public static class CollectibleClassifier
             || path.StartsWith("crossbow-", StringComparison.OrdinalIgnoreCase);
     }
 
-    public static bool IsVanillaItemShield(Item? item)
+    public static bool IsVanillaItemShield(Item? item) => IsUnpatchedVanillaItemShield(item);
+
+    public static bool IsUnpatchedVanillaItemShield(Item? item)
     {
-        return item?.GetType().FullName == "Vintagestory.GameContent.ItemShield";
+        if (item?.GetType().FullName != "Vintagestory.GameContent.ItemShield") return false;
+
+        return item.GetCollectibleInterface<IHasMeleeWeaponActions>() == null;
+    }
+
+    public static bool HasMeleeWeaponActions(CollectibleObject? collectible)
+    {
+        return collectible?.GetCollectibleInterface<IHasMeleeWeaponActions>() != null;
+    }
+
+    private static bool IsShieldCode(AssetLocation? code)
+    {
+        string path = code?.Path ?? "";
+        return path.Equals("shield", StringComparison.OrdinalIgnoreCase)
+            || path.StartsWith("shield-", StringComparison.OrdinalIgnoreCase)
+            || path.Equals("roundshield", StringComparison.OrdinalIgnoreCase)
+            || path.StartsWith("roundshield-", StringComparison.OrdinalIgnoreCase);
     }
 
     private static bool HasClassification(ItemStack? stack, string attributeName, string tag)

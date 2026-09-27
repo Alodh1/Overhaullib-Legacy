@@ -223,7 +223,7 @@ internal static class AnimationPatches
         try
         {
             CollidersEntityBehavior? behavior = GetCachedColliderBehavior(__instance);
-            behavior?.Render(__instance.entity?.Api as ICoreClientAPI, __instance.entity as EntityAgent, __instance);
+            behavior?.Render(__instance.entity?.Api as ICoreClientAPI, __instance.entity, __instance);
         }
         catch (Exception exception)
         {
@@ -266,7 +266,7 @@ internal static class AnimationPatches
         try
         {
             CollidersEntityBehavior? behavior = GetCachedColliderBehavior(__instance);
-            behavior?.Render(__instance.entity?.Api as ICoreClientAPI, __instance.entity as EntityAgent, __instance);
+            behavior?.Render(__instance.entity?.Api as ICoreClientAPI, __instance.entity, __instance);
         }
         catch (Exception exception)
         {
@@ -370,7 +370,7 @@ internal static class AnimationPatches
 
         PlayerItemFrame? frame = null;
 
-        if (player.EntityId == OwnerEntityId && FirstPersonAnimationBehavior?.HasActiveAnimationFrame == true)
+        if (IsLocalFirstPerson(player) && FirstPersonAnimationBehavior?.HasActiveAnimationFrame == true)
         {
             frame = FirstPersonAnimationBehavior.CurrentFrame;
         }

@@ -11,6 +11,7 @@ using OpenTK.Mathematics;
 using Vintagestory.API.Client;
 using Vintagestory.API.Common;
 using Vintagestory.API.Common.Entities;
+using Vintagestory.GameContent;
 
 namespace OverhaullibLegacy.Tests;
 
@@ -84,12 +85,10 @@ public sealed class PerformanceOptimizationContractTests
     }
 
     [Fact]
-    public void CollidersEntityBehavior_ReusesTransformedColliderGeometryWhenPoseSignatureIsUnchanged()
+    public void CollidersEntityBehavior_ReusesTransformedColliderGeometryWhenInputsAreUnchanged()
     {
         EntityPlayer entity = new();
-        CollidersEntityBehavior behavior = (CollidersEntityBehavior)RuntimeHelpers.GetUninitializedObject(typeof(CollidersEntityBehavior));
-        SetInstanceField(behavior, "entity", entity, typeof(EntityBehavior));
-        SetInstanceField(behavior, "<Colliders>k__BackingField", new Dictionary<string, ShapeElementCollider>());
+        CollidersEntityBehavior behavior = CreateColliderBehaviorForReflectionTests(entity);
 
         ClientAnimator animator = (ClientAnimator)RuntimeHelpers.GetUninitializedObject(typeof(ClientAnimator));
         animator.TransformationMatrices = [];
@@ -105,15 +104,101 @@ public sealed class PerformanceOptimizationContractTests
     }
 
     [Fact]
-    public void CollidersEntityBehavior_TransformSignatureDoesNotDependOnClientApiOrViewerPosition()
+    public void CollidersEntityBehavior_TransformDirtyTrackingChecksUsedJointMatricesExactly()
     {
-        MethodInfo signatureMethod = GetInstanceMethod(typeof(CollidersEntityBehavior), "GetColliderTransformSignature");
+        EntityPlayer entity = new();
+        ShapeElementCollider collider = (ShapeElementCollider)RuntimeHelpers.GetUninitializedObject(typeof(ShapeElementCollider));
+        collider.JointId = 0;
 
-        Assert.Equal([typeof(ClientAnimator)], signatureMethod.GetParameters().Select(parameter => parameter.ParameterType).ToArray());
+        CollidersEntityBehavior behavior = CreateColliderBehaviorForReflectionTests(entity);
+        SetInstanceField(behavior, "<Colliders>k__BackingField", new Dictionary<string, ShapeElementCollider>
+        {
+            ["Torso"] = collider
+        });
 
-        MethodBase[] calls = GetCalledMethods(signatureMethod).ToArray();
-        Assert.DoesNotContain(calls, call => call.DeclaringType == typeof(ICoreClientAPI));
-        Assert.DoesNotContain(calls, call => call.Name is "get_Player" or "get_World");
+        ClientAnimator animator = (ClientAnimator)RuntimeHelpers.GetUninitializedObject(typeof(ClientAnimator));
+        animator.TransformationMatrices = new float[16];
+
+        Assert.True(InvokeShouldRecalculateColliders(behavior, animator));
+        SetInstanceField(behavior, "_collidersTransformed", true);
+        Assert.False(InvokeShouldRecalculateColliders(behavior, animator));
+
+        animator.TransformationMatrices[5] = 1f;
+
+        Assert.True(InvokeShouldRecalculateColliders(behavior, animator));
+        Assert.False(InvokeShouldRecalculateColliders(behavior, animator));
+        Assert.Null(typeof(CollidersEntityBehavior).GetMethod("GetColliderTransformSignature", BindingFlags.NonPublic | BindingFlags.Instance));
+    }
+
+    [Fact]
+    public void CollidersEntityBehavior_OnGameTickSkipsServerSideWorkBeforeTimerAndSubscription()
+    {
+        CollidersEntityBehavior behavior = CreateColliderBehaviorForReflectionTests(new EntityPlayer());
+
+        behavior.OnGameTick(1f);
+
+        Assert.False(GetInstanceField<bool>(behavior, "_subscribed"));
+        Assert.Equal(0f, GetInstanceField<float>(behavior, "_timeSinceLastUpdate"));
+    }
+
+    [Fact]
+    public void CollidersEntityBehavior_RenderAcceptsNonAgentEntities()
+    {
+        MethodInfo render = typeof(CollidersEntityBehavior).GetMethod(
+            nameof(CollidersEntityBehavior.Render),
+            [typeof(ICoreClientAPI), typeof(Entity), typeof(EntityShapeRenderer), typeof(int)])
+            ?? throw new MissingMethodException(
+                typeof(CollidersEntityBehavior).FullName,
+                nameof(CollidersEntityBehavior.Render));
+
+        Assert.Equal(typeof(Entity), render.GetParameters()[1].ParameterType);
+    }
+
+    [Fact]
+    public void CollidersEntityBehavior_BoundsMissingElementResolutionAndApplyConfigResetsRetryState()
+    {
+        CollidersEntityBehavior behavior = CreateColliderBehaviorForReflectionTests(new EntityPlayer());
+        CollidersConfig config = new()
+        {
+            Elements = new ColliderTypesJson
+            {
+                Torso = ["MissingColliderElement"]
+            }
+        };
+
+        InvokeApplyConfig(behavior, config);
+        Assert.True(behavior.UnprocessedElementsLeft);
+
+        int maxAttempts = (int)(typeof(CollidersEntityBehavior)
+            .GetField("_maxColliderElementResolutionAttempts", BindingFlags.NonPublic | BindingFlags.Static)
+            ?.GetRawConstantValue() ?? throw new MissingFieldException(typeof(CollidersEntityBehavior).FullName, "_maxColliderElementResolutionAttempts"));
+        SetInstanceField(behavior, "_colliderElementResolutionAttempts", maxAttempts - 1);
+
+        ClientAnimator animator = (ClientAnimator)RuntimeHelpers.GetUninitializedObject(typeof(ClientAnimator));
+        animator.RootPoses =
+        [
+            new ElementPose
+            {
+                ForElement = new ShapeElement
+                {
+                    Name = "SomeOtherElement",
+                    From = [0, 0, 0],
+                    To = [1, 1, 1]
+                }
+            }
+        ];
+        animator.TransformationMatrices = [];
+
+        InvokeProcessConfiguredColliderElements(behavior, animator);
+
+        Assert.False(behavior.UnprocessedElementsLeft);
+        Assert.Empty(behavior.Colliders);
+        Assert.Equal(maxAttempts, GetInstanceField<int>(behavior, "_colliderElementResolutionAttempts"));
+
+        InvokeApplyConfig(behavior, config);
+
+        Assert.True(behavior.UnprocessedElementsLeft);
+        Assert.Equal(0, GetInstanceField<int>(behavior, "_colliderElementResolutionAttempts"));
     }
 
     [Fact]
@@ -335,6 +420,16 @@ public sealed class PerformanceOptimizationContractTests
         return (bool)GetInstanceMethod(typeof(CollidersEntityBehavior), "ShouldRecalculateColliders").Invoke(behavior, [animator])!;
     }
 
+    private static void InvokeApplyConfig(CollidersEntityBehavior behavior, CollidersConfig config)
+    {
+        GetInstanceMethod(typeof(CollidersEntityBehavior), "ApplyConfig").Invoke(behavior, [config]);
+    }
+
+    private static void InvokeProcessConfiguredColliderElements(CollidersEntityBehavior behavior, ClientAnimator animator)
+    {
+        GetInstanceMethod(typeof(CollidersEntityBehavior), "ProcessConfiguredColliderElements").Invoke(behavior, [animator]);
+    }
+
     private static MethodInfo GetShapeElementColliderRadiusSweep(bool withSegmentClosestPoint)
     {
         Type[] parameters = withSegmentClosestPoint
@@ -368,6 +463,26 @@ public sealed class PerformanceOptimizationContractTests
         FieldInfo field = type.GetField(fieldName, BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)
             ?? throw new MissingFieldException(type.FullName, fieldName);
         field.SetValue(instance, value);
+    }
+
+    private static T GetInstanceField<T>(object instance, string fieldName, Type? declaringType = null)
+    {
+        Type type = declaringType ?? instance.GetType();
+        FieldInfo field = type.GetField(fieldName, BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)
+            ?? throw new MissingFieldException(type.FullName, fieldName);
+        return (T)field.GetValue(instance)!;
+    }
+
+    private static CollidersEntityBehavior CreateColliderBehaviorForReflectionTests(Entity entity)
+    {
+        CollidersEntityBehavior behavior = (CollidersEntityBehavior)RuntimeHelpers.GetUninitializedObject(typeof(CollidersEntityBehavior));
+        SetInstanceField(behavior, "entity", entity, typeof(EntityBehavior));
+        SetInstanceField(behavior, "<Colliders>k__BackingField", new Dictionary<string, ShapeElementCollider>());
+        SetInstanceField(behavior, "<CollidersTypes>k__BackingField", new Dictionary<string, ColliderTypes>());
+        SetInstanceField(behavior, "<ShapeElementsToProcess>k__BackingField", new HashSet<string>());
+        SetInstanceField(behavior, "_lastColliderJointIds", Array.Empty<int>());
+        SetInstanceField(behavior, "_lastColliderJointMatrices", Array.Empty<float>());
+        return behavior;
     }
 
     private static void AssertDoesNotCallLinqOrListAllocations(MethodInfo method)

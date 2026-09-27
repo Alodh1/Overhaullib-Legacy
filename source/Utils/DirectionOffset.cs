@@ -396,8 +396,8 @@ public readonly struct DirectionConstrain
         {
             PitchTop.Degrees,
             -PitchBottom.Degrees,
-            YawLeft.Degrees,
-            -YawRight.Degrees
+            YawRight.Degrees,
+            -YawLeft.Degrees
         };
     }
 

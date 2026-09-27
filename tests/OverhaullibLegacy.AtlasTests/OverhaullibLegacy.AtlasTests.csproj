@@ -1,0 +1,39 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <IsPackable>false</IsPackable>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <VintageStoryPath Condition="'$(VintageStoryPath)' == '' and '$(VINTAGE_STORY)' != ''">$(VINTAGE_STORY)</VintageStoryPath>
+    <VintageStoryPath Condition="'$(VintageStoryPath)' == ''">$(AppData)\Vintagestory</VintageStoryPath>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.11.1" />
+    <PackageReference Include="xunit" Version="2.9.*" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="2.8.2" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Reference Include="VintagestoryAPI">
+      <HintPath>$(VintageStoryPath)\VintagestoryAPI.dll</HintPath>
+    </Reference>
+    <ProjectReference Include="..\..\Overhaullib.csproj" ReferenceOutputAssembly="false" PrivateAssets="all" />
+    <ProjectReference Include="..\..\..\Atlas\src\Atlas.XUnit\Atlas.XUnit.csproj" />
+  </ItemGroup>
+
+  <Target Name="StageOverhaullibForAtlas" AfterTargets="Build">
+    <ItemGroup>
+      <OverhaullibAtlasModFiles Include="..\..\bin\$(Configuration)\Mods\overhaulliblegacycompat\**\*.*" />
+    </ItemGroup>
+    <RemoveDir Directories="$(TargetDir)mods\overhaulliblegacycompat" />
+    <MakeDir Directories="$(TargetDir)mods\overhaulliblegacycompat" />
+    <Copy SourceFiles="@(OverhaullibAtlasModFiles)"
+          DestinationFiles="@(OverhaullibAtlasModFiles->'$(TargetDir)mods\overhaulliblegacycompat\%(RecursiveDir)%(Filename)%(Extension)')"
+          SkipUnchangedFiles="false" />
+  </Target>
+
+  <Import Project="..\..\..\Atlas\build\Atlas.E2E.targets" />
+
+</Project>

@@ -231,22 +231,21 @@ public sealed class MeleeBlockSystemServer : MeleeSystem
 
     private readonly ICoreServerAPI _api;
     private readonly IServerNetworkChannel _serverChannel;
-    private bool _lastBlockMainHand = false;
 
     private void HandlePacket(IServerPlayer player, DamageBlockPacket packet)
     {
         PlayerDamageModelBehavior? behavior = player.Entity.GetBehavior<PlayerDamageModelBehavior>();
-        if (behavior != null)
-        {
-            _lastBlockMainHand = packet.MainHand;
-            behavior.CurrentDamageBlock = packet.ToBlockStats((damageBlocked, attackTier, blockTier) => BlockCallback(player, packet.MainHand, damageBlocked, attackTier, blockTier, packet.Id));
-        }
+        if (behavior == null) return;
+        if (!ServerDamageBlockProfiles.TryResolve(player, packet, out DamageBlockPacket authorized)) return;
+
+        behavior.CurrentDamageBlock = authorized.ToBlockStats((damageBlocked, attackTier, blockTier) =>
+            BlockCallback(player, authorized.MainHand, damageBlocked, attackTier, blockTier, authorized.Id));
     }
 
     private void HandlePacket(IServerPlayer player, DamageStopBlockPacket packet)
     {
         PlayerDamageModelBehavior? behavior = player.Entity.GetBehavior<PlayerDamageModelBehavior>();
-        if (behavior != null && _lastBlockMainHand == packet.MainHand)
+        if (behavior?.CurrentDamageBlock?.MainHand == packet.MainHand)
         {
             behavior.CurrentDamageBlock = null;
         }

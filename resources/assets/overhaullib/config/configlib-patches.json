@@ -8,6 +8,92 @@
       "type": "float",
       "ingui": "combatoverhaul:setting-fueled_item_update_in_game_hours",
       "default": 0.1
+    },
+    {
+      "code": "armor_quench_plate_only",
+      "type": "boolean",
+      "ingui": "combatoverhaul:setting-armor_quench_plate_only",
+      "default": false
+    },
+    {
+      "code": "armor_quench_flat_reduction",
+      "type": "float",
+      "ingui": "combatoverhaul:setting-armor_quench_flat_reduction",
+      "default": 0.2,
+      "range": {
+        "min": 0,
+        "max": 100
+      }
+    },
+    {
+      "code": "armor_quench_durability_bonus",
+      "type": "float",
+      "ingui": "combatoverhaul:setting-armor_quench_durability_bonus",
+      "default": 0.1,
+      "range": {
+        "min": 0,
+        "max": 10
+      }
+    },
+    {
+      "code": "armor_quench_penalty_reduction",
+      "type": "float",
+      "ingui": "combatoverhaul:setting-armor_quench_penalty_reduction",
+      "default": 0.1,
+      "range": {
+        "min": 0,
+        "max": 1
+      }
+    },
+    {
+      "code": "armor_quench_max_penalty_reduction",
+      "type": "float",
+      "ingui": "combatoverhaul:setting-armor_quench_max_penalty_reduction",
+      "default": 0.5,
+      "range": {
+        "min": 0,
+        "max": 1
+      }
+    },
+    {
+      "code": "armor_quench_base_shatter_chance",
+      "type": "float",
+      "ingui": "combatoverhaul:setting-armor_quench_base_shatter_chance",
+      "default": 0.05,
+      "range": {
+        "min": 0,
+        "max": 1
+      }
+    },
+    {
+      "code": "armor_quench_shatter_chance_per_quench",
+      "type": "float",
+      "ingui": "combatoverhaul:setting-armor_quench_shatter_chance_per_quench",
+      "default": 0.05,
+      "range": {
+        "min": 0,
+        "max": 1
+      }
+    },
+    {
+      "code": "armor_quench_temper_shatter_multiplier",
+      "type": "float",
+      "ingui": "combatoverhaul:setting-armor_quench_temper_shatter_multiplier",
+      "default": 0.8,
+      "range": {
+        "min": 0,
+        "max": 1
+      }
+    },
+    {
+      "code": "armor_quench_temper_power_multiplier",
+      "type": "float",
+      "ingui": "combatoverhaul:setting-armor_quench_temper_power_multiplier",
+      "default": 0.92,
+      "range": {
+        "min": 0,
+        "max": 1
+      }
     }
   ]
 }

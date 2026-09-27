@@ -97,7 +97,8 @@ public static class QuenchableStateUtil
         {
             MigrateLegacyArmorQuenchState(stack);
 
-            if (GetArmorQuenchState(stack) > 0 || HasDirectArmorQuench(stack))
+            if (GetArmorQuenchState(stack) > 0 || HasDirectArmorQuench(stack)
+                || stack.Attributes.GetFloat("armorQuenchDurabilityBonus") > 0f)
             {
                 return true;
             }
@@ -127,6 +128,9 @@ public static class QuenchableStateUtil
 
     public static void ApplyArmorQuenchState(ItemStack stack, int state)
     {
+        stack.Attributes.RemoveAttribute("armorQuenchFlatBonus");
+        stack.Attributes.RemoveAttribute("armorQuenchDurabilityBonus");
+        stack.Attributes.RemoveAttribute("armorQuenchPenaltyBonus");
         if (state <= 0)
         {
             stack.Attributes.RemoveAttribute("armorQuenchLevel");
@@ -146,7 +150,7 @@ public static class QuenchableStateUtil
         stack.Attributes.SetInt("quenchIteration", 1);
         stack.Attributes.SetInt("temperIteration", 0);
         stack.Attributes.SetFloat("powervalue", 0f);
-        stack.Attributes.SetFloat("durationbonus", 0.10f);
+        stack.Attributes.SetFloat("durationbonus", QuenchableStatUtil.ArmorQuenchDurabilityBonus);
         stack.Attributes.SetBool("clayCovered", false);
         RemoveBuffs(stack, "attackpower", "miningspeed");
         SanitizeArmorQuenchBuffs(stack);
@@ -184,7 +188,7 @@ public static class QuenchableStateUtil
         }
 
         stack.Attributes.SetFloat("powervalue", 0f);
-        stack.Attributes.SetFloat("durationbonus", 0.10f);
+        stack.Attributes.SetFloat("durationbonus", QuenchableStatUtil.ArmorQuenchDurabilityBonus);
         stack.Attributes.SetBool("clayCovered", false);
         RemoveBuffs(stack, "attackpower", "miningspeed");
         SanitizeArmorQuenchBuffs(stack);
@@ -192,6 +196,10 @@ public static class QuenchableStateUtil
 
     public static void ApplyDirectArmorQuench(ItemStack stack)
     {
+        if (stack.Attributes.HasAttribute("armorQuenchFlatBonus"))
+            stack.Attributes.SetFloat("armorQuenchFlatBonus", QuenchableStatUtil.ArmorQuenchFlatReduction);
+        if (stack.Attributes.HasAttribute("armorQuenchDurabilityBonus"))
+            stack.Attributes.SetFloat("armorQuenchDurabilityBonus", QuenchableStatUtil.ArmorQuenchDurabilityBonus);
         int clayQuenchIteration = Math.Max(0, stack.Attributes.GetInt("quenchIteration", 0));
         int clayTemperIteration = Math.Clamp(stack.Attributes.GetInt("temperIteration", 0), 0, clayQuenchIteration);
 
@@ -203,7 +211,7 @@ public static class QuenchableStateUtil
         stack.Attributes.SetInt("quenchIteration", clayQuenchIteration);
         stack.Attributes.SetInt("temperIteration", clayTemperIteration);
         stack.Attributes.SetFloat("powervalue", 0f);
-        stack.Attributes.SetFloat("durationbonus", 0.10f);
+        stack.Attributes.SetFloat("durationbonus", QuenchableStatUtil.ArmorQuenchDurabilityBonus);
         stack.Attributes.SetBool("clayCovered", false);
         RemoveBuffs(stack, "attackpower", "miningspeed");
         SanitizeArmorQuenchBuffs(stack);
@@ -211,6 +219,11 @@ public static class QuenchableStateUtil
 
     public static void ApplyClayArmorQuench(ItemStack stack)
     {
+        if (stack.Attributes.HasAttribute("armorQuenchPenaltyBonus"))
+            stack.Attributes.SetFloat("armorQuenchPenaltyBonus", Math.Min(QuenchableStatUtil.ArmorQuenchMaxPenaltyReduction,
+                1f - QuenchableStatUtil.GetArmorPenaltyMultiplier(stack) + QuenchableStatUtil.ArmorQuenchPenaltyReduction * QuenchableStatUtil.GetTemperPowerFactor(stack)));
+        if (stack.Attributes.HasAttribute("armorQuenchDurabilityBonus"))
+            stack.Attributes.SetFloat("armorQuenchDurabilityBonus", QuenchableStatUtil.ArmorQuenchDurabilityBonus);
         int quenchIteration = stack.Attributes.GetInt("quenchIteration", 0) + 1;
         stack.Attributes.SetInt("armorQuenchLevel", 1);
         stack.Attributes.SetString(ArmorQuenchModeAttribute, ArmorQuenchModeClay);
@@ -305,6 +318,8 @@ public static class QuenchableStateUtil
         }
 
         ITreeAttribute attrs = stack.Attributes;
+        // Crafted averages are explicit state, not legacy buffs to reconstruct.
+        if (attrs.HasAttribute("armorQuenchDurabilityBonus")) return;
         string mode = attrs.GetString(ArmorQuenchModeAttribute, "");
         bool hasDirect = attrs.GetBool(ArmorDirectQuenchedAttribute, false);
         int armorLevel = attrs.GetInt("armorQuenchLevel", 0);
@@ -323,7 +338,7 @@ public static class QuenchableStateUtil
             changed = true;
         }
 
-        if (hasLegacyDurability && quenchIteration <= 0)
+        if (hasLegacyDurability && quenchIteration <= 0 && string.IsNullOrEmpty(mode))
         {
             quenchIteration = 1;
             attrs.SetInt("quenchIteration", quenchIteration);
@@ -405,11 +420,22 @@ public static class QuenchableStateUtil
         }
     }
 
+    public static bool IsArmorQuenchingEnabled(ItemStack? stack)
+    {
+        if (!IsArmorOrArmorComponent(stack) || !IsFerrous(stack)) return false;
+        if (!QuenchableStatUtil.ArmorQuenchPlateOnly) return true;
+        string code = stack!.Collectible.Code.Path;
+        return code.Contains("plate", StringComparison.Ordinal)
+            || stack.ItemAttributes?["armorQuenchConstruction"].AsString() == "plate";
+    }
+
     public static bool IsFerrous(ItemStack? stack)
     {
         string code = stack?.Collectible?.Code?.Path ?? "";
-        return code.Contains("-iron", StringComparison.Ordinal)
+        return stack?.ItemAttributes?["quenchMetal"].AsString() is "iron" or "meteoriciron" or "steel" or "meteoricsteel"
+            || code.Contains("-iron", StringComparison.Ordinal)
             || code.Contains("-meteoriciron", StringComparison.Ordinal)
+            || code.Contains("-meteoricsteel", StringComparison.Ordinal)
             || code.Contains("-steel", StringComparison.Ordinal)
             || LooksLikeSteelBackedPlatedArmor(code);
     }
@@ -500,6 +526,7 @@ public static class QuenchableStateUtil
             || path.Contains("poleaxe", StringComparison.Ordinal)
             || path.Contains("longaxe", StringComparison.Ordinal)
             || path.Contains("pike", StringComparison.Ordinal)
-            || path.Contains("dagger", StringComparison.Ordinal);
+            || path.Contains("dagger", StringComparison.Ordinal)
+            || path.Contains("quarterstaff", StringComparison.Ordinal);
     }
 }

@@ -9,7 +9,16 @@ public static class QuenchableStatUtil
 {
     // Keep legacy protection-level quench path available, but disabled for now.
     private const bool UseLegacyArmorProtectionLevelBonus = false;
-    private const float ArmorFlatReductionPerQuench = 0.20f;
+    public static bool ArmorQuenchPlateOnly { get; set; } = false;
+    public static float ArmorQuenchFlatReduction { get; set; } = 0.2f;
+    public static float ArmorQuenchDurabilityBonus { get; set; } = 0.1f;
+    public static float ArmorQuenchPenaltyReduction { get; set; } = 0.1f;
+    public static float ArmorQuenchMaxPenaltyReduction { get; set; } = 0.5f;
+    public static float ArmorQuenchBaseShatterChance { get; set; } = 0.05f;
+    public static float ArmorQuenchShatterChancePerQuench { get; set; } = 0.05f;
+    public static float ArmorQuenchTemperShatterMultiplier { get; set; } = 0.8f;
+    public static float ArmorQuenchTemperPowerMultiplier { get; set; } = 0.92f;
+
     public const float TemperShatterChanceMultiplier = 0.80f;
     public const float TemperPowerMultiplier = 0.92f;
     private const float VanillaWeaponPowerPerFirstQuench = 0.10f;
@@ -84,23 +93,34 @@ public static class QuenchableStatUtil
         return QuenchableStateUtil.GetArmorQuenchState(stack);
     }
 
-    private static float GetArmorFlatReductionBonus(ItemStack? stack)
+    public static float GetArmorDurabilityBonus(ItemStack? stack)
     {
-        if (stack?.Collectible == null || !QuenchableStateUtil.IsFerrous(stack))
+        if (stack?.Collectible == null || !QuenchableStateUtil.IsArmorQuenchingEnabled(stack)) return 0f;
+        if (stack.Attributes.HasAttribute("armorQuenchDurabilityBonus"))
+            return Math.Clamp(stack.Attributes.GetFloat("armorQuenchDurabilityBonus"), 0f, ArmorQuenchDurabilityBonus);
+        return QuenchableStateUtil.GetArmorQuenchState(stack) > 0 ? ArmorQuenchDurabilityBonus : 0f;
+    }
+
+    public static float GetArmorFlatReductionBonus(ItemStack? stack)
+    {
+        if (stack?.Collectible == null || !QuenchableStateUtil.IsArmorQuenchingEnabled(stack))
         {
             return 0f;
         }
 
+        if (stack.Attributes.HasAttribute("armorQuenchFlatBonus"))
+            return Math.Clamp(stack.Attributes.GetFloat("armorQuenchFlatBonus"), 0f, ArmorQuenchFlatReduction);
+
         if (QuenchableStateUtil.HasDirectArmorQuench(stack))
         {
-            return ArmorFlatReductionPerQuench;
+            return ArmorQuenchFlatReduction;
         }
 
         // Backward compatibility for stacks created before explicit direct flag existed.
         if (QuenchableStateUtil.GetArmorQuenchMode(stack) == QuenchableStateUtil.ArmorQuenchModeDirect
             && QuenchableStateUtil.GetArmorQuenchState(stack) > 0)
         {
-            return ArmorFlatReductionPerQuench;
+            return ArmorQuenchFlatReduction;
         }
 
         return 0f;
@@ -110,10 +130,13 @@ public static class QuenchableStatUtil
     {
         QuenchableStateUtil.SanitizeArmorQuenchBuffs(stack);
 
-        if (stack?.Collectible == null || !QuenchableStateUtil.IsFerrous(stack))
+        if (stack?.Collectible == null || !QuenchableStateUtil.IsArmorQuenchingEnabled(stack))
         {
             return 1f;
         }
+
+        if (stack.Attributes.HasAttribute("armorQuenchPenaltyBonus"))
+            return 1f - Math.Clamp(stack.Attributes.GetFloat("armorQuenchPenaltyBonus"), 0f, ArmorQuenchMaxPenaltyReduction);
 
         string mode = QuenchableStateUtil.GetArmorQuenchMode(stack);
         bool isClayPath = mode == QuenchableStateUtil.ArmorQuenchModeClay;
@@ -139,7 +162,7 @@ public static class QuenchableStatUtil
 
         // Each clay-quench step reduces armor penalties by 10%, capped at 50%.
         // Tempering follows vanilla's tradeoff curve: the risk goes down more than the buff does.
-        return Math.Max(1f - (effectiveQuench * 0.10f), 0.5f);
+        return 1f - Math.Min(effectiveQuench * ArmorQuenchPenaltyReduction, ArmorQuenchMaxPenaltyReduction);
     }
 
     public static float GetTemperPowerFactor(ItemStack? stack)
@@ -155,7 +178,7 @@ public static class QuenchableStatUtil
             return 1f;
         }
 
-        return MathF.Pow(TemperPowerMultiplier, temperIteration);
+        return MathF.Pow(ArmorQuenchTemperPowerMultiplier, temperIteration);
     }
 
     private static float GetBuffMultiplier(ItemStack stack, string statCode)

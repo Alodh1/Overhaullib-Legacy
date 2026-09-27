@@ -58,7 +58,6 @@ public class BowClient : RangeWeaponClient
         ArcheringCompat = new(api);
         AimingStats = Stats.Aiming.ToStats();
         AmmoSelector = ammoSelector;
-        TwoHanded = Stats.TwoHanded;
 
         Settings = api.ModLoader.GetModSystem<CombatOverhaulSystem>().Settings;
 
@@ -117,6 +116,8 @@ public class BowClient : RangeWeaponClient
     private EntityPlayer? ArcheringDrawPlayer;
     private bool ArcheringDrawMainHand;
     protected bool AfterLoad = false;
+
+    protected override bool RequiresEmptyOtherHand(bool mainHand, EntityPlayer player) => Settings.BowTwoHanded;
 
     [ActionEventHandler(EnumEntityAction.RightMouseDown, ActionState.Active)]
     protected virtual bool Load(ItemSlot slot, EntityPlayer player, ref int state, ActionEventData eventData, bool mainHand, AttackDirection direction)

@@ -66,6 +66,16 @@ public class ClothesSlot : ItemSlotCharacter, IClickableSlot
         return itemStack;
     }
 
+    public override int TryPutInto(ItemSlot sinkSlot, ref ItemStackMoveOperation op)
+    {
+        if (TryPutIntoBagContentBeforeReload(sinkSlot, ref op, out int movedQuantity))
+        {
+            return movedQuantity;
+        }
+
+        return base.TryPutInto(sinkSlot, ref op);
+    }
+
     public override ItemStack? TakeOut(int quantity)
     {
         if (!CanTake())
@@ -107,6 +117,43 @@ public class ClothesSlot : ItemSlotCharacter, IClickableSlot
         ItemStack stack = itemSlot.Itemstack;
 
         if (stack != null) EmptyBag(stack);
+    }
+
+    private bool TryPutIntoBagContentBeforeReload(ItemSlot sinkSlot, ref ItemStackMoveOperation op, out int movedQuantity)
+    {
+        movedQuantity = 0;
+
+        if (sinkSlot is not ItemSlotBagContent || sinkSlot is ItemSlotTakeOutOnly)
+        {
+            return false;
+        }
+
+        if (sinkSlot is ItemSlotBagContentWithWildcardMatch { SourceBag: { } sourceBag } && ReferenceEquals(sourceBag, itemstack))
+        {
+            return true;
+        }
+
+        if (itemstack == null || !CanTake() || !sinkSlot.Empty || !sinkSlot.CanTakeFrom(this))
+        {
+            return false;
+        }
+
+        int quantity = Math.Min(sinkSlot.GetRemainingSlotSpace(itemstack), op.RequestedQuantity);
+        if (quantity <= 0 || quantity < itemstack.StackSize)
+        {
+            return false;
+        }
+
+        ItemStack movedStack = itemstack;
+        sinkSlot.Itemstack = movedStack;
+        movedQuantity = op.MovedQuantity = op.MovableQuantity = movedStack.StackSize;
+
+        sinkSlot.OnItemSlotModified(sinkSlot.Itemstack);
+
+        itemstack = null;
+        OnItemSlotModified(movedStack);
+
+        return true;
     }
 
     protected void EmptyBag(ItemStack stack)

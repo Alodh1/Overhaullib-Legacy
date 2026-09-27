@@ -5,6 +5,11 @@ namespace CombatOverhaul.Animations;
 
 public class Animator
 {
+    public Animator(Animation animation, SoundsSynchronizerClient? soundsManager, ParticleEffectsManager? particleEffectsManager, EntityPlayer player)
+        : this(animation, soundsManager, particleEffectsManager, player, 1)
+    {
+    }
+
     public Animator(Animation animation, SoundsSynchronizerClient? soundsManager, ParticleEffectsManager? particleEffectsManager, EntityPlayer player, float animationSpeed)
     {
         _currentAnimation = animation;
@@ -33,7 +38,7 @@ public class Animator
         _currentDuration += delta;
         TimeSpan adjustedDuration = _currentDuration * _animationSpeed;
 
-        if (_soundsManager != null) _currentAnimation.PlaySounds(_soundsManager, previousDuration, adjustedDuration);
+        if (_soundsManager != null) _currentAnimation.PlaySounds(_soundsManager, previousDuration, adjustedDuration, _animationSpeed);
         if (_particleEffectsManager != null) _currentAnimation.SpawnParticles(_player, _particleEffectsManager, previousDuration, adjustedDuration);
 
         callbacks.Clear();

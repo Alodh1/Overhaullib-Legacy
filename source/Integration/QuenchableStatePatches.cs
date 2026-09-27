@@ -14,7 +14,9 @@ internal static class QuenchablePatchGate
     [
         "claycovering-armoryparts",
         "claycovering-coblades",
-        "claycovering-cospears"
+        "claycovering-cospears",
+        "claycovering-armorcomponents",
+        "claycovering-armorcomponents-meteoricsteel"
     ];
 
     internal static bool Enabled { get; set; }
@@ -71,6 +73,23 @@ internal static class QuenchablePatchGate
     }
 }
 
+[HarmonyPatch(typeof(CollectibleBehaviorQuenchable), nameof(CollectibleBehaviorQuenchable.GetShatterChance))]
+internal static class ArmorQuenchShatterChancePatch
+{
+    [HarmonyPrepare]
+    private static bool Prepare() => QuenchablePatchGate.Prepare();
+
+    private static void Postfix(ItemStack itemstack, ref float __result)
+    {
+        if (!QuenchableStateUtil.IsArmorOrArmorComponent(itemstack)) return;
+        __result = QuenchableStateUtil.IsArmorQuenchingEnabled(itemstack)
+            ? Math.Clamp((QuenchableStatUtil.ArmorQuenchBaseShatterChance
+                + Math.Max(0, itemstack.Attributes.GetInt("quenchIteration")) * QuenchableStatUtil.ArmorQuenchShatterChancePerQuench)
+                * MathF.Pow(QuenchableStatUtil.ArmorQuenchTemperShatterMultiplier, Math.Max(0, itemstack.Attributes.GetInt("temperIteration"))), 0f, 1f)
+            : 0f;
+    }
+}
+
 [HarmonyPatch(typeof(CollectibleBehaviorQuenchable), "applyQuenchedStats")]
 internal static class QuenchableApplyQuenchedStatsPatch
 {
@@ -84,12 +103,14 @@ internal static class QuenchableApplyQuenchedStatsPatch
             return true;
         }
 
+        if (!QuenchableStateUtil.IsArmorQuenchingEnabled(itemstack)) return false;
+
         bool clayCovered = itemstack.Attributes.GetBool("clayCovered", false);
 
         // Non-clay quench: one-time only for armor flat reduction.
         if (!clayCovered)
         {
-            if (QuenchableStateUtil.HasDirectArmorQuench(itemstack))
+            if (QuenchableStatUtil.GetArmorFlatReductionBonus(itemstack) >= QuenchableStatUtil.ArmorQuenchFlatReduction && QuenchableStateUtil.HasDirectArmorQuench(itemstack))
             {
                 // Already consumed the direct quench path for this piece.
                 return false;
@@ -117,8 +138,8 @@ internal static class QuenchableApplyQuenchedStatsPatch
         int quenchIteration = itemstack.Attributes.GetInt("quenchIteration", 0);
         int temperIteration = itemstack.Attributes.GetInt("temperIteration", 0);
 
-        float baseChance = 0.05f + (quenchIteration * behavior.BreakChancePerQuench);
-        float temperedChance = baseChance * MathF.Pow(QuenchableStatUtil.TemperShatterChanceMultiplier, Math.Max(0, temperIteration));
+        float baseChance = QuenchableStatUtil.ArmorQuenchBaseShatterChance + (quenchIteration * QuenchableStatUtil.ArmorQuenchShatterChancePerQuench);
+        float temperedChance = baseChance * MathF.Pow(QuenchableStatUtil.ArmorQuenchTemperShatterMultiplier, Math.Max(0, temperIteration));
         behavior.SetShatterChance(world, itemstack, Math.Max(0f, temperedChance));
     }
 }
@@ -143,6 +164,8 @@ internal static class QuenchableApplyTemperedStatsPatch
             return true;
         }
 
+        if (!QuenchableStateUtil.IsArmorQuenchingEnabled(itemstack)) return false;
+
         int clayQuenchIteration = Math.Max(0, itemstack.Attributes.GetInt("quenchIteration", 0));
         int temperIteration = Math.Max(0, itemstack.Attributes.GetInt("temperIteration", 0));
         if (clayQuenchIteration <= 0 || temperIteration >= clayQuenchIteration)
@@ -153,6 +176,8 @@ internal static class QuenchableApplyTemperedStatsPatch
             return false;
         }
 
+        if (itemstack.Attributes.HasAttribute("armorQuenchPenaltyBonus"))
+            itemstack.Attributes.SetFloat("armorQuenchPenaltyBonus", (1f - QuenchableStatUtil.GetArmorPenaltyMultiplier(itemstack)) * QuenchableStatUtil.ArmorQuenchTemperPowerMultiplier);
         itemstack.Attributes.SetInt("temperIteration", temperIteration + 1);
 
         IWorldAccessor? world = TryGetWorld(__args);
@@ -188,58 +213,26 @@ internal static class QuenchableApplyTemperedStatsPatch
     }
 }
 
-[HarmonyPatch(typeof(GridRecipe), nameof(GridRecipe.Matches))]
-internal static class GridRecipeQuenchStateMatchPatch
+// Settled chains no longer need their heat-treatment timestamps for simulation.
+[HarmonyPatch(typeof(CollectibleObject), nameof(CollectibleObject.Equals),
+    new[] { typeof(ItemStack), typeof(ItemStack), typeof(string[]) })]
+internal static class ChainQuenchStackMatchPatch
 {
     [HarmonyPrepare]
     private static bool Prepare() => QuenchablePatchGate.Prepare();
 
-    private static void Postfix(ItemSlot[] ingredients, ref bool __result)
+    private static void Prefix(ItemStack thisStack, ItemStack otherStack, ref string[] ignoreAttributeSubTrees)
     {
-        if (!__result)
+        if (!(thisStack?.Collectible?.Code?.Path.StartsWith("metalchain-", StringComparison.Ordinal) == true
+                || thisStack?.Collectible?.Code?.Path.StartsWith("metalscale-", StringComparison.Ordinal) == true)
+            || otherStack?.Collectible != thisStack.Collectible
+            || thisStack.Attributes.GetString("metalworkingstate", "settled") != "settled"
+            || otherStack.Attributes.GetString("metalworkingstate", "settled") != "settled") return;
+
+        ignoreAttributeSubTrees = (ignoreAttributeSubTrees ?? []).Concat(new[]
         {
-            return;
-        }
-
-        int? expectedState = null;
-        bool? expectedDirect = null;
-        int? expectedClayQuenchIteration = null;
-        int? expectedClayTemperIteration = null;
-        foreach (ItemSlot slot in ingredients)
-        {
-            if (slot.Empty || !QuenchableStateUtil.IsArmorOrArmorComponent(slot.Itemstack) || !QuenchableStateUtil.IsFerrous(slot.Itemstack))
-            {
-                continue;
-            }
-
-            int state = QuenchableStateUtil.GetArmorQuenchState(slot.Itemstack);
-            expectedState ??= state;
-            if (expectedState.Value != state)
-            {
-                __result = false;
-                return;
-            }
-
-            bool direct = QuenchableStateUtil.HasDirectArmorQuench(slot.Itemstack);
-            int clayQuenchIteration = QuenchableStateUtil.GetArmorQuenchMode(slot.Itemstack) == QuenchableStateUtil.ArmorQuenchModeClay
-                ? slot.Itemstack.Attributes.GetInt("quenchIteration", 0)
-                : 0;
-            int clayTemperIteration = QuenchableStateUtil.GetArmorQuenchMode(slot.Itemstack) == QuenchableStateUtil.ArmorQuenchModeClay
-                ? slot.Itemstack.Attributes.GetInt("temperIteration", 0)
-                : 0;
-
-            expectedDirect ??= direct;
-            expectedClayQuenchIteration ??= clayQuenchIteration;
-            expectedClayTemperIteration ??= clayTemperIteration;
-
-            if (expectedDirect.Value != direct
-                || expectedClayQuenchIteration.Value != clayQuenchIteration
-                || expectedClayTemperIteration.Value != clayTemperIteration)
-            {
-                __result = false;
-                return;
-            }
-        }
+            "metalworkingstate", "statechangetotalhours", "lastinquenchrangetotalhours", "lastintemperrangetotalhours"
+        }).ToArray();
     }
 }
 
@@ -249,66 +242,37 @@ internal static class CraftedArmorQuenchStatePatch
     [HarmonyPrepare]
     private static bool Prepare() => QuenchablePatchGate.Prepare();
 
-    private static void Postfix(ItemSlot[] allInputSlots, ItemSlot outputSlot)
+    private static void Postfix(ItemSlot[] allInputSlots, ItemSlot outputSlot, IRecipeBase byRecipe)
     {
-        if (outputSlot.Empty || outputSlot.Itemstack == null)
-        {
-            return;
-        }
+        if (outputSlot.Empty || outputSlot.Itemstack == null) return;
 
         bool outputWasClayCovered = outputSlot.Itemstack.Attributes.GetBool("clayCovered", false);
-
-        int? inheritedState = null;
-        bool? inheritedDirect = null;
-        int? inheritedClayQuenchIteration = null;
-        int? inheritedClayTemperIteration = null;
-        foreach (ItemSlot slot in allInputSlots)
+        int previousMaxDurability = outputSlot.Itemstack.Collectible.GetMaxDurability(outputSlot.Itemstack);
+        if (QuenchableStateUtil.IsArmorOrArmorComponent(outputSlot.Itemstack))
         {
-            if (slot.Empty || !QuenchableStateUtil.IsArmorOrArmorComponent(slot.Itemstack) || !QuenchableStateUtil.IsFerrous(slot.Itemstack))
+            var inputs = GetConsumedArmorInputs(allInputSlots, byRecipe).ToArray();
+            int count = inputs.Sum(input => input.Quantity);
+            if (count > 0)
             {
-                continue;
-            }
-
-            int state = QuenchableStateUtil.GetArmorQuenchState(slot.Itemstack);
-            inheritedState ??= state;
-            if (inheritedState.Value != state)
-            {
-                return;
-            }
-
-            bool direct = QuenchableStateUtil.HasDirectArmorQuench(slot.Itemstack);
-            int clayQuenchIteration = QuenchableStateUtil.GetArmorQuenchMode(slot.Itemstack) == QuenchableStateUtil.ArmorQuenchModeClay
-                ? slot.Itemstack.Attributes.GetInt("quenchIteration", 0)
-                : 0;
-            int clayTemperIteration = QuenchableStateUtil.GetArmorQuenchMode(slot.Itemstack) == QuenchableStateUtil.ArmorQuenchModeClay
-                ? slot.Itemstack.Attributes.GetInt("temperIteration", 0)
-                : 0;
-
-            inheritedDirect ??= direct;
-            inheritedClayQuenchIteration ??= clayQuenchIteration;
-            inheritedClayTemperIteration ??= clayTemperIteration;
-
-            if (inheritedDirect.Value != direct
-                || inheritedClayQuenchIteration.Value != clayQuenchIteration
-                || inheritedClayTemperIteration.Value != clayTemperIteration)
-            {
-                return;
-            }
-        }
-
-        if (inheritedState.HasValue && QuenchableStateUtil.IsArmorOrArmorComponent(outputSlot.Itemstack))
-        {
-            bool hasInheritedQuenchState = inheritedState.Value > 0
-                || (inheritedDirect ?? false)
-                || (inheritedClayQuenchIteration ?? 0) > 0;
-
-            if (hasInheritedQuenchState)
-            {
-                QuenchableStateUtil.ApplyInheritedArmorQuenchState(
-                    outputSlot.Itemstack,
-                    inheritedDirect ?? false,
-                    inheritedClayQuenchIteration ?? 0,
-                    inheritedClayTemperIteration ?? 0);
+                float flat = inputs.Sum(input => QuenchableStatUtil.GetArmorFlatReductionBonus(input.Stack) * input.Quantity) / count;
+                float durability = inputs.Sum(input => QuenchableStatUtil.GetArmorDurabilityBonus(input.Stack) * input.Quantity) / count;
+                float penalty = inputs.Sum(input => (1f - QuenchableStatUtil.GetArmorPenaltyMultiplier(input.Stack)) * input.Quantity) / count;
+                int quenches = (int)MathF.Round(inputs.Sum(input => (float)input.Stack.Attributes.GetInt("quenchIteration") * input.Quantity) / count);
+                int tempers = (int)MathF.Round(inputs.Sum(input => (float)input.Stack.Attributes.GetInt("temperIteration") * input.Quantity) / count);
+                QuenchableStateUtil.ApplyInheritedArmorQuenchState(outputSlot.Itemstack, flat > 0f, quenches, tempers);
+                // A single source (including clay covering) retains its original progression.
+                if (inputs.Length > 1 || inputs[0].Stack.Attributes.HasAttribute("armorQuenchDurabilityBonus"))
+                {
+                    outputSlot.Itemstack.Attributes.SetFloat("armorQuenchFlatBonus", flat);
+                    outputSlot.Itemstack.Attributes.SetFloat("armorQuenchDurabilityBonus", durability);
+                    outputSlot.Itemstack.Attributes.SetFloat("armorQuenchPenaltyBonus", penalty);
+                }
+                if (previousMaxDurability > 0 && outputSlot.Itemstack.Attributes.HasAttribute("durability"))
+                {
+                    int maxDurability = outputSlot.Itemstack.Collectible.GetMaxDurability(outputSlot.Itemstack);
+                    float condition = Math.Clamp(outputSlot.Itemstack.Attributes.GetInt("durability") / (float)previousMaxDurability, 0f, 1f);
+                    outputSlot.Itemstack.Attributes.SetInt("durability", (int)MathF.Round(maxDurability * condition));
+                }
             }
         }
 
@@ -320,6 +284,56 @@ internal static class CraftedArmorQuenchStatePatch
 
         NormalizeCraftedWeaponQuenchState(allInputSlots, outputSlot.Itemstack);
         QuenchableStateUtil.NormalizeGenericBuffs(outputSlot.Itemstack);
+    }
+
+    private static IEnumerable<(ItemStack Stack, int Quantity)> GetConsumedArmorInputs(ItemSlot[] slots, IRecipeBase recipe)
+    {
+        if (recipe is GridRecipe grid && !grid.Shapeless && grid.ResolvedIngredients != null)
+        {
+            int width = (int)Math.Sqrt(slots.Length);
+            for (int row = 0; row <= slots.Length / width - grid.Height; row++)
+            for (int col = 0; col <= width - grid.Width; col++)
+            {
+                var matched = new List<(ItemStack Stack, int Quantity)>();
+                bool valid = true;
+                for (int index = 0; index < slots.Length; index++)
+                {
+                    int x = index % width - col;
+                    int y = index / width - row;
+                    var ingredient = x >= 0 && x < grid.Width && y >= 0 && y < grid.Height
+                        ? grid.ResolvedIngredients[y * grid.Width + x] : null;
+                    ItemStack? stack = slots[index].Itemstack;
+                    if (ingredient == null ? stack != null : stack == null || !ingredient.SatisfiesAsIngredient(stack))
+                    {
+                        valid = false;
+                        break;
+                    }
+                    if (stack != null && ingredient != null && ingredient.Consume && QuenchableStateUtil.IsArmorOrArmorComponent(stack))
+                        matched.Add((stack, ingredient.Quantity));
+                }
+                if (!valid) continue;
+                foreach (var input in matched) yield return input;
+                yield break;
+            }
+            yield break;
+        }
+
+        var ingredients = recipe.RecipeIngredients.Where(ingredient => ingredient is not CraftingRecipeIngredient { Consume: false }).ToArray();
+        int[] remaining = ingredients.Select(ingredient => ingredient.Quantity).ToArray();
+        foreach (ItemSlot slot in slots)
+        {
+            if (slot.Empty) continue;
+            int available = slot.StackSize;
+            for (int i = 0; i < ingredients.Length && available > 0; i++)
+            {
+                if (remaining[i] <= 0 || !ingredients[i].SatisfiesAsIngredient(slot.Itemstack, false)) continue;
+                int quantity = Math.Min(available, remaining[i]);
+                available -= quantity;
+                remaining[i] -= quantity;
+                if (QuenchableStateUtil.IsArmorOrArmorComponent(slot.Itemstack))
+                    yield return (slot.Itemstack, quantity);
+            }
+        }
     }
 
     private static void NormalizeCraftedWeaponQuenchState(ItemSlot[] allInputSlots, ItemStack output)
@@ -488,13 +502,13 @@ internal static class ArmorQuenchDurabilityPatch
             return;
         }
 
-        int state = QuenchableStateUtil.GetArmorQuenchState(itemstack);
-        if (state <= 0)
+        float bonus = QuenchableStatUtil.GetArmorDurabilityBonus(itemstack);
+        if (bonus <= 0)
         {
             return;
         }
 
-        __result = Math.Max(1, (int)MathF.Round(__result * 1.10f));
+        __result = Math.Max(1, (int)MathF.Round(__result * (1f + bonus)));
     }
 }
 
@@ -516,15 +530,13 @@ internal static class ArmorQuenchTooltipPatch
             return;
         }
 
-        if (QuenchableStateUtil.GetArmorQuenchState(inSlot.Itemstack) > 0)
-        {
-            AppendLineOnce(dsc, Lang.Get("combatoverhaul:quenchable-armor-durability-gain"));
-        }
+        float durabilityBonus = QuenchableStatUtil.GetArmorDurabilityBonus(inSlot.Itemstack);
+        if (durabilityBonus > 0f)
+            AppendLineOnce(dsc, Lang.Get("combatoverhaul:quenchable-armor-durability-average", (durabilityBonus * 100f).ToString("0.##")));
 
-        if (QuenchableStateUtil.HasDirectArmorQuench(inSlot.Itemstack))
-        {
-            AppendLineOnce(dsc, Lang.Get("combatoverhaul:quenchable-armor-flat-reduction-gain"));
-        }
+        float flatBonus = QuenchableStatUtil.GetArmorFlatReductionBonus(inSlot.Itemstack);
+        if (flatBonus > 0f)
+            AppendLineOnce(dsc, Lang.Get("combatoverhaul:quenchable-armor-flat-average", flatBonus.ToString("0.###")));
 
         float penaltyMultiplier = QuenchableStatUtil.GetArmorPenaltyMultiplier(inSlot.Itemstack);
         float penaltyReduction = (1f - penaltyMultiplier) * 100f;

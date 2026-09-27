@@ -40,6 +40,11 @@ public class ItemInventoryBuffer
     }
     public void Write(ItemSlot slot)
     {
+        ItemStack? itemStack = slot.Itemstack;
+        if (itemStack == null) return;
+
+        itemStack.Attributes ??= new Vintagestory.API.Datastructures.TreeAttribute();
+
         using MemoryStream memoryStream = new();
         using (BinaryWriter stream = new(memoryStream))
         {
@@ -50,8 +55,8 @@ public class ItemInventoryBuffer
             }
         }
 
-        slot.Itemstack.Attributes.RemoveAttribute(Attribute);
-        slot.Itemstack.Attributes.SetBytes(Attribute, memoryStream.ToArray());
+        itemStack.Attributes.RemoveAttribute(Attribute);
+        itemStack.Attributes.SetBytes(Attribute, memoryStream.ToArray());
         slot.MarkDirty();
     }
     public void Clear()

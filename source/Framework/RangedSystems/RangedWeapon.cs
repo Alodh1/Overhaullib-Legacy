@@ -131,7 +131,7 @@ public class RangeWeaponClient : IClientWeaponLogic
     }
     protected bool CheckForOtherHandEmpty(bool mainHand, EntityPlayer player)
     {
-        if (!TwoHanded) return true;
+        if (!RequiresEmptyOtherHand(mainHand, player)) return true;
 
         if (mainHand && !player.LeftHandItemSlot.Empty)
         {
@@ -147,6 +147,8 @@ public class RangeWeaponClient : IClientWeaponLogic
 
         return true;
     }
+
+    protected virtual bool RequiresEmptyOtherHand(bool mainHand, EntityPlayer player) => TwoHanded;
 }
 
 public class RangeWeaponServer : IServerRangedWeaponLogic

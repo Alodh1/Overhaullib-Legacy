@@ -78,7 +78,8 @@ internal static class HandbookGroupedWeaponPatches
 
     private static void OnCreatePagesAsyncPostfix(ref List<GuiHandbookPage> __result)
     {
-        if (_api == null || __result.Count == 0) return;
+        ICoreClientAPI? api = _api;
+        if (api == null || __result.Count == 0) return;
 
         Dictionary<string, List<ItemStack>> stacksByGroup = new(StringComparer.Ordinal);
         Dictionary<string, HashSet<string>> seenStacksByGroup = new(StringComparer.Ordinal);
@@ -129,7 +130,7 @@ internal static class HandbookGroupedWeaponPatches
 
             if (!insertedGroups.Add(groupPageCode)) continue;
 
-            pages.Add(new CyclingWeaponHandbookPage(_api, groupPageCode, stacks)
+            pages.Add(new CyclingWeaponHandbookPage(api, groupPageCode, stacks)
             {
                 Visible = page.Visible
             });
@@ -138,7 +139,7 @@ internal static class HandbookGroupedWeaponPatches
         __result = pages;
     }
 
-    private static void LogTooltipFailureOnce(ICoreClientAPI capi, ItemStack? stack, Exception exception)
+    private static void LogTooltipFailureOnce(ICoreClientAPI? capi, ItemStack? stack, Exception exception)
     {
         string code = stack?.Collectible?.Code?.ToString() ?? "<unknown>";
         lock (LoggedTooltipFailuresLock)
@@ -146,7 +147,7 @@ internal static class HandbookGroupedWeaponPatches
             if (!LoggedTooltipFailures.Add(code)) return;
         }
 
-        capi.Logger.Warning(
+        capi?.Logger?.Warning(
             "Skipping unsafe handbook tooltip text for grouped page stack {0}: {1}: {2}",
             code,
             exception.GetType().Name,

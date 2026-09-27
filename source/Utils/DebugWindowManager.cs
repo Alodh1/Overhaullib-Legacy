@@ -38,7 +38,6 @@ public sealed partial class DebugWindowManager : IDisposable
         _devToolsDialog = new DevToolsDialog(api, this, _editorAppState, _editorInputRouter);
         api.ModLoader.GetModSystem<ImGuiModSystem>().Draw += DrawEditor;
         _transformGizmoRenderer = new TransformGizmoRenderer(api, this);
-        _imguiAnimationViewportRenderer = new ImGuiAnimationViewportRenderer(api);
         _detachedEditorCamera = new DetachedEditorCamera(api);
         if (!standaloneDevToolsLoaded)
         {
@@ -68,10 +67,8 @@ public sealed partial class DebugWindowManager : IDisposable
         _api.ModLoader.GetModSystem<ImGuiModSystem>().Draw -= DrawEditor;
         _devToolsDialog?.TryClose();
         _transformGizmoRenderer?.Dispose();
-        _imguiAnimationViewportRenderer?.Dispose();
         _detachedEditorCamera?.Dispose();
         _transformGizmoRenderer = null;
-        _imguiAnimationViewportRenderer = null;
         _detachedEditorCamera = null;
         ClearActiveTransformGizmo();
 #endif
@@ -561,12 +558,7 @@ public sealed partial class DebugWindowManager : IDisposable
     internal EditorUiMode CurrentEditorUiMode { get; private set; } = EditorUiMode.ImGui;
     private readonly AnimationEditorHistory _animationHistory = new();
     private TransformGizmoRenderer? _transformGizmoRenderer;
-    private ImGuiAnimationViewportRenderer? _imguiAnimationViewportRenderer;
     private DetachedEditorCamera? _detachedEditorCamera;
-    private float _imguiViewportYaw;
-    private float _imguiViewportZoom = 1f;
-    private float _imguiViewportPanX;
-    private float _imguiViewportPanY;
     private ModelTransform? _activeGizmoTransform;
     private TransformGizmoContext _activeGizmoContext = TransformGizmoContext.Free;
     private BlockPos? _activeGizmoBlockPos;
@@ -593,7 +585,7 @@ public sealed partial class DebugWindowManager : IDisposable
     private int _timelineRetimingIndex = -1;
     private TimelineRetimingKind _timelineSelectedKind = TimelineRetimingKind.Player;
     private TimelineEventTrack _timelineSelectedEventTrack = TimelineEventTrack.Sound;
-    private float _timelineNudgeMs = 50;
+    private int _timelineNudgeMs = 50;
     private static readonly string[] TimelineTrackNames = new[] { "Player", "Item", "Sound", "Particle", "Callback" };
     private static readonly MethodInfo? ProcessPlayerKeyFramesMethod = typeof(Animation).GetMethod("ProcessPlayerKeyFrames", BindingFlags.NonPublic | BindingFlags.Instance, null, Type.EmptyTypes, null);
     internal TransformGizmoMode GizmoMode { get; private set; } = TransformGizmoMode.Move;
@@ -711,7 +703,6 @@ public sealed partial class DebugWindowManager : IDisposable
     {
         _currentCollider = null;
         ClearActiveTransformGizmo();
-        _imguiAnimationViewportRenderer?.SetVisible(false);
         if (CurrentEditorUiMode == EditorUiMode.ProperUi)
         {
             if (_showAnimationEditor && _devToolsDialog?.IsOpened() != true)
@@ -741,13 +732,15 @@ public sealed partial class DebugWindowManager : IDisposable
             displaySize = new NVector2(_api.Render.FrameWidth, _api.Render.FrameHeight);
         }
 
-        ImGui.SetNextWindowPos(NVector2.Zero, ImGuiCond.Always);
-        ImGui.SetNextWindowSize(displaySize, ImGuiCond.Always);
-        ImGui.SetNextWindowBgAlpha(0.96f);
-        ImGuiWindowFlags windowFlags = ImGuiWindowFlags.NoMove |
-            ImGuiWindowFlags.NoResize |
-            ImGuiWindowFlags.NoCollapse |
-            ImGuiWindowFlags.NoSavedSettings;
+        // Small, freely movable/resizable launcher window - this used to be pinned fullscreen
+        // (SetNextWindowPos/Size with ImGuiCond.Always + NoMove/NoResize). The position/size
+        // below are only defaults for the first time the window ever appears.
+        ImGui.SetNextWindowPos(new NVector2(24, 24), ImGuiCond.FirstUseEver);
+        ImGui.SetNextWindowSize(new NVector2(560, 190), ImGuiCond.FirstUseEver);
+        ImGui.SetNextWindowBgAlpha(0.45f);
+        ImGuiWindowFlags windowFlags = ImGuiWindowFlags.NoCollapse;
+
+        bool animationsTabActive = false;
 
         if (ImGui.Begin("Dev tools", ref _showAnimationEditor, windowFlags))
         {
@@ -763,7 +756,12 @@ public sealed partial class DebugWindowManager : IDisposable
             ImGui.BeginTabBar($"##main_tab_bar");
             if (ImGui.BeginTabItem($"Animations"))
             {
-                AnimationsTab(deltaSeconds);
+                animationsTabActive = true;
+                ImGui.TextDisabled("The animation editor now lives in its own windows:");
+                ImGui.BulletText("Animation browser");
+                ImGui.BulletText("Animation properties");
+                ImGui.BulletText("Timeline / dope sheet");
+                ImGui.TextDisabled("Drag their title bars to move them, their edges to resize them.");
                 ImGui.EndTabItem();
             }
             if (ImGui.BeginTabItem($"Transforms"))
@@ -847,6 +845,14 @@ public sealed partial class DebugWindowManager : IDisposable
             DrawSourceSavePopup();
 
             ImGui.End();
+        }
+
+        if (animationsTabActive)
+        {
+            DrawAnimationBrowserWindow(displaySize, deltaSeconds);
+            DrawAnimationPropertiesWindow(displaySize);
+            DrawAnimationTimelineWindow(displaySize);
+            FinalizeAnimationEditorFrame();
         }
 
         _detachedEditorCamera?.Update(deltaSeconds, _showAnimationEditor);
@@ -999,8 +1005,48 @@ public sealed partial class DebugWindowManager : IDisposable
         ImGui.Text($"FOV: {ClientSettings.FieldOfView * fovMultiplier}");
     }
 
-    private void AnimationsTab(float deltaSeconds)
+    private enum AnimationWindowSlot
     {
+        Browser,
+        Properties,
+        Timeline
+    }
+
+    // Default positions/sizes for the animator's windows, applied only via ImGuiCond.FirstUseEver -
+    // i.e. only the very first time each window appears. After that the user's own move/resize
+    // sticks (ImGui persists it in its ini settings), same as any other floating ImGui window.
+    private static (NVector2 pos, NVector2 size) GetAnimationWindowLayout(NVector2 displaySize, AnimationWindowSlot slot)
+    {
+        const float margin = 24f;
+        const float launcherReservedHeight = 210f;
+
+        float browserWidth = Math.Clamp(displaySize.X * 0.22f, 320f, 420f);
+        float propertiesWidth = Math.Clamp(displaySize.X * 0.32f, 420f, 620f);
+        float timelineHeight = Math.Clamp(displaySize.Y * 0.24f, 220f, 340f);
+        float topHeight = Math.Max(320f, displaySize.Y - launcherReservedHeight - timelineHeight - margin * 3f);
+
+        return slot switch
+        {
+            AnimationWindowSlot.Browser => (new NVector2(margin, launcherReservedHeight), new NVector2(browserWidth, topHeight)),
+            AnimationWindowSlot.Properties => (new NVector2(margin * 2f + browserWidth, launcherReservedHeight), new NVector2(propertiesWidth, topHeight)),
+            _ => (new NVector2(margin, launcherReservedHeight + topHeight + margin), new NVector2(browserWidth + propertiesWidth + margin, timelineHeight)),
+        };
+    }
+
+    private void DrawAnimationBrowserWindow(NVector2 displaySize, float deltaSeconds)
+    {
+        (NVector2 pos, NVector2 size) = GetAnimationWindowLayout(displaySize, AnimationWindowSlot.Browser);
+        ImGui.SetNextWindowPos(pos, ImGuiCond.FirstUseEver);
+        ImGui.SetNextWindowSize(size, ImGuiCond.FirstUseEver);
+        ImGui.SetNextWindowSizeConstraints(new NVector2(260, 200), new NVector2(4000, 4000));
+        ImGui.SetNextWindowBgAlpha(0.45f);
+
+        if (!ImGui.Begin("Animation browser##animator-browser", ImGuiWindowFlags.None))
+        {
+            ImGui.End();
+            return;
+        }
+
         string[] codes = _animationsManager.Animations.Keys.ToArray();
         if (codes.Length == 0)
         {
@@ -1009,25 +1055,10 @@ public sealed partial class DebugWindowManager : IDisposable
             {
                 CreateAnimationGui();
             }
+            ImGui.End();
             return;
         }
 
-        NVector2 available = ImGui.GetContentRegionAvail();
-        float spacingX = ImGui.GetStyle().ItemSpacing.X;
-        float spacingY = ImGui.GetStyle().ItemSpacing.Y;
-        float bottomHeight = Math.Clamp(available.Y * 0.27f, 230f, 360f);
-        float topHeight = Math.Max(360f, available.Y - bottomHeight - spacingY);
-        float leftWidth = Math.Clamp(available.X * 0.22f, 280f, 430f);
-        float rightWidth = Math.Clamp(available.X * 0.28f, 360f, 540f);
-        float centerWidth = available.X - leftWidth - rightWidth - spacingX * 2f;
-        if (centerWidth < 520f)
-        {
-            leftWidth = Math.Clamp(available.X * 0.20f, 240f, 330f);
-            rightWidth = Math.Clamp(available.X * 0.25f, 300f, 420f);
-            centerWidth = Math.Max(360f, available.X - leftWidth - rightWidth - spacingX * 2f);
-        }
-
-        ImGui.BeginChild("##animation-left-panel", new NVector2(leftWidth, topHeight), true);
         ImGui.SeparatorText("Animations");
         ImGui.InputTextWithHint("##animations-filter", "supports wildcards", ref _animationsFilter, 200);
         EditorsUtils.FilterElements(_animationsFilter, _animationsManager.Animations.Keys, out IEnumerable<string> filteredEnumerable, out _);
@@ -1093,27 +1124,41 @@ public sealed partial class DebugWindowManager : IDisposable
             _api.World.Player.Entity.ActiveHandItemSlot.Itemstack?.Collectible?.GetCollectibleBehavior<AnimatableAttachable>(true)?.SetSwitchModels(_api.World.Player.Entity.EntityId, false);
         }
 
+        string liveAnimationCode = codes[_selectedAnimationIndex];
+        Animation liveAnimation = _animationsManager.Animations[liveAnimationCode];
+        ImGui.SeparatorText("Live player");
+        ImGui.TextDisabled("The selected frame is applied to your in-world player.");
+        DrawAnimationPlaybackControls(liveAnimationCode, liveAnimation, deltaSeconds);
+
         if (ImGui.CollapsingHeader("Add animation"))
         {
             CreateAnimationGui();
         }
-        ImGui.EndChild();
 
-        ImGui.SameLine();
+        ImGui.End();
+    }
 
+    private void DrawAnimationPropertiesWindow(NVector2 displaySize)
+    {
+        string[] codes = _animationsManager.Animations.Keys.ToArray();
+        if (codes.Length == 0) return;
+
+        if (_selectedAnimationIndex < 0 || _selectedAnimationIndex >= codes.Length) _selectedAnimationIndex = 0;
         string selectedAnimationCode = codes[_selectedAnimationIndex];
         Animation selectedAnimation = _animationsManager.Animations[selectedAnimationCode];
 
-        ImGui.BeginChild("##animation-center-panel", new NVector2(centerWidth, topHeight), true);
-        ImGui.TextWrapped(selectedAnimationCode);
-        DrawAnimationPlaybackControls(selectedAnimationCode, selectedAnimation, deltaSeconds);
-        NVector2 centerAvailable = ImGui.GetContentRegionAvail();
-        DrawImGuiAnimationViewport(selectedAnimationCode, new NVector2(centerAvailable.X, Math.Max(260f, centerAvailable.Y)));
-        ImGui.EndChild();
+        (NVector2 pos, NVector2 size) = GetAnimationWindowLayout(displaySize, AnimationWindowSlot.Properties);
+        ImGui.SetNextWindowPos(pos, ImGuiCond.FirstUseEver);
+        ImGui.SetNextWindowSize(size, ImGuiCond.FirstUseEver);
+        ImGui.SetNextWindowSizeConstraints(new NVector2(320, 240), new NVector2(4000, 4000));
+        ImGui.SetNextWindowBgAlpha(0.45f);
 
-        ImGui.SameLine();
+        if (!ImGui.Begin("Animation properties##animator-properties", ImGuiWindowFlags.None))
+        {
+            ImGui.End();
+            return;
+        }
 
-        ImGui.BeginChild("##animation-right-panel", new NVector2(rightWidth, topHeight), true);
         ImGui.SeparatorText("Tools");
         ImGui.TextWrapped(GetAnimationSourceText(selectedAnimationCode));
         DrawAnimationHistoryControls(selectedAnimationCode);
@@ -1143,14 +1188,45 @@ public sealed partial class DebugWindowManager : IDisposable
         selectedAnimation.Edit(selectedAnimationCode);
         DrawRigPoseEditor(selectedAnimationCode, selectedAnimation);
         TrackAnimationEditorChanges(selectedAnimationCode, beforeEdit, beforeEditSerialized, selectedAnimation, "Editor edit");
-        ImGui.EndChild();
 
-        ImGui.BeginChild("##animation-bottom-panel", new NVector2(available.X, bottomHeight), true);
-        selectedAnimation = _animationsManager.Animations[selectedAnimationCode];
+        ImGui.End();
+    }
+
+    private void DrawAnimationTimelineWindow(NVector2 displaySize)
+    {
+        string[] codes = _animationsManager.Animations.Keys.ToArray();
+        if (codes.Length == 0) return;
+
+        if (_selectedAnimationIndex < 0 || _selectedAnimationIndex >= codes.Length) _selectedAnimationIndex = 0;
+        string selectedAnimationCode = codes[_selectedAnimationIndex];
+        Animation selectedAnimation = _animationsManager.Animations[selectedAnimationCode];
+
+        (NVector2 pos, NVector2 size) = GetAnimationWindowLayout(displaySize, AnimationWindowSlot.Timeline);
+        ImGui.SetNextWindowPos(pos, ImGuiCond.FirstUseEver);
+        ImGui.SetNextWindowSize(size, ImGuiCond.FirstUseEver);
+        ImGui.SetNextWindowSizeConstraints(new NVector2(420, 160), new NVector2(6000, 4000));
+        ImGui.SetNextWindowBgAlpha(0.45f);
+
+        if (!ImGui.Begin("Timeline / dope sheet##animator-timeline", ImGuiWindowFlags.None))
+        {
+            ImGui.End();
+            return;
+        }
+
         DrawAnimationTimeline(selectedAnimationCode, selectedAnimation);
-        ImGui.EndChild();
 
-        selectedAnimation = _animationsManager.Animations[selectedAnimationCode];
+        ImGui.End();
+    }
+
+    private void FinalizeAnimationEditorFrame()
+    {
+        string[] codes = _animationsManager.Animations.Keys.ToArray();
+        if (codes.Length == 0) return;
+
+        if (_selectedAnimationIndex < 0 || _selectedAnimationIndex >= codes.Length) _selectedAnimationIndex = 0;
+        string selectedAnimationCode = codes[_selectedAnimationIndex];
+        Animation selectedAnimation = _animationsManager.Animations[selectedAnimationCode];
+
         if (_showAnimationEditor)
         {
             SetEditorFrameOverride(selectedAnimation.StillPlayerFrame(selectedAnimation._playerFrameIndex, selectedAnimation._frameProgress));
@@ -1343,65 +1419,6 @@ public sealed partial class DebugWindowManager : IDisposable
         }
     }
 
-    private void DrawImGuiAnimationViewport(string animationCode, NVector2 requestedSize = default)
-    {
-        NVector2 available = requestedSize.X > 0 && requestedSize.Y > 0
-            ? requestedSize
-            : ImGui.GetContentRegionAvail();
-        float width = Math.Max(420f, available.X);
-        float height = requestedSize.X > 0 && requestedSize.Y > 0
-            ? Math.Max(240f, available.Y)
-            : Math.Clamp(ImGui.GetIO().DisplaySize.Y * 0.42f, 280f, Math.Max(280f, available.Y * 0.58f));
-        NVector2 size = new(width, height);
-
-        ImGui.InvisibleButton($"##animation-viewport-{animationCode}", size);
-        NVector2 min = ImGui.GetItemRectMin();
-        NVector2 max = ImGui.GetItemRectMax();
-        bool hovered = ImGui.IsItemHovered();
-
-        if (hovered)
-        {
-            NVector2 delta = ImGui.GetIO().MouseDelta;
-            bool pan = ImGui.IsMouseDragging(ImGuiMouseButton.Middle) ||
-                (ImGui.IsMouseDragging(ImGuiMouseButton.Right) &&
-                    (ImGui.IsKeyDown(ImGuiKey.LeftShift) || ImGui.IsKeyDown(ImGuiKey.RightShift)));
-            if (pan)
-            {
-                _imguiViewportPanX = Math.Clamp(_imguiViewportPanX + delta.X, -size.X, size.X);
-                _imguiViewportPanY = Math.Clamp(_imguiViewportPanY + delta.Y, -size.Y, size.Y);
-            }
-            else if (ImGui.IsMouseDragging(ImGuiMouseButton.Right))
-            {
-                _imguiViewportYaw += delta.X * 0.01f;
-            }
-
-            float wheel = ImGui.GetIO().MouseWheel;
-            if (Math.Abs(wheel) > 0.001f)
-            {
-                _imguiViewportZoom = Math.Clamp(_imguiViewportZoom + wheel * 0.06f, 0.55f, 1.85f);
-            }
-        }
-
-        ImDrawListPtr drawList = ImGui.GetWindowDrawList();
-        uint background = ImGui.ColorConvertFloat4ToU32(new NVector4(0.055f, 0.052f, 0.045f, 1f));
-        uint border = ImGui.ColorConvertFloat4ToU32(new NVector4(0.55f, 0.49f, 0.38f, 1f));
-        uint text = ImGui.ColorConvertFloat4ToU32(new NVector4(0.86f, 0.82f, 0.72f, 1f));
-        drawList.AddRectFilled(min, max, background, 4f);
-        drawList.AddRect(min, max, border, 4f);
-        drawList.AddText(new NVector2(min.X + 12f, min.Y + 10f), text, $"Preview: {animationCode}");
-        drawList.AddText(new NVector2(min.X + 12f, min.Y + 30f), text, "RMB rotates. MMB or Shift+RMB pans. Mouse wheel zooms.");
-
-        _imguiAnimationViewportRenderer?.SetViewport(
-            min.X,
-            min.Y,
-            Math.Max(1f, max.X - min.X),
-            Math.Max(1f, max.Y - min.Y),
-            _imguiViewportYaw,
-            _imguiViewportZoom,
-            _imguiViewportPanX,
-            _imguiViewportPanY);
-    }
-
     private void DrawAnimationValidationPanel(string animationCode, Animation animation)
     {
         List<AnimationValidationMessage> messages = BuildAnimationValidationMessages(animation);
@@ -1573,7 +1590,7 @@ public sealed partial class DebugWindowManager : IDisposable
         }
 
         ClampEditorPlaybackRange(animation);
-        _editorPlaybackTimeMs = Math.Clamp(_editorPlaybackTimeMs, GetEditorLoopStartMs(animation), GetEditorLoopEndMs(animation));
+        _editorPlaybackTimeMs = AnimationTimelineTiming.ClampPlaybackTime(_editorPlaybackTimeMs, GetEditorLoopStartMs(animation), GetEditorLoopEndMs(animation));
     }
 
     private void StartEditorPlayback(string animationCode, Animation animation)
@@ -1613,7 +1630,7 @@ public sealed partial class DebugWindowManager : IDisposable
         _editorPlaybackPaused = true;
         double startMs = GetEditorLoopStartMs(animation);
         double endMs = GetEditorLoopEndMs(animation);
-        _editorPlaybackTimeMs = Math.Clamp(GetEditorFrameTimeMs(animation) + direction * 50.0, startMs, endMs);
+        _editorPlaybackTimeMs = AnimationTimelineTiming.ClampPlaybackTime(GetEditorFrameTimeMs(animation) + direction * 50.0, startMs, endMs);
         ApplyEditorPlaybackTime(animation, _editorPlaybackTimeMs);
     }
 
@@ -1837,13 +1854,19 @@ public sealed partial class DebugWindowManager : IDisposable
     {
         if (keyframeIndex < 0 || keyframeIndex >= animation.PlayerKeyFrames.Count) return;
 
-        double minMs = keyframeIndex == 0 ? 0 : animation.PlayerKeyFrames[keyframeIndex - 1].Time.TotalMilliseconds + 1;
-        double maxMs = keyframeIndex == animation.PlayerKeyFrames.Count - 1
-            ? Math.Max(minMs, animation.PlayerKeyFrames[keyframeIndex].Time.TotalMilliseconds)
-            : animation.PlayerKeyFrames[keyframeIndex + 1].Time.TotalMilliseconds - 1;
-        double timeMs = Math.Clamp(requestedTimeMs, minMs, Math.Max(minMs, maxMs));
-
         PLayerKeyFrame frame = animation.PlayerKeyFrames[keyframeIndex];
+        double previousTimeMs = keyframeIndex == 0
+            ? double.NaN
+            : animation.PlayerKeyFrames[keyframeIndex - 1].Time.TotalMilliseconds;
+        double nextTimeMs = keyframeIndex == animation.PlayerKeyFrames.Count - 1
+            ? double.NaN
+            : animation.PlayerKeyFrames[keyframeIndex + 1].Time.TotalMilliseconds;
+        double timeMs = AnimationTimelineTiming.ClampPlayerKeyframeTime(
+            requestedTimeMs,
+            frame.Time.TotalMilliseconds,
+            previousTimeMs,
+            nextTimeMs);
+
         animation.PlayerKeyFrames[keyframeIndex] = new PLayerKeyFrame(frame.Frame, TimeSpan.FromMilliseconds(timeMs), frame.EasingFunction, frame.EasingType, frame.FrameProgressRange);
         animation._playerFrameIndex = keyframeIndex;
         animation._frameProgress = 0;
@@ -1869,9 +1892,9 @@ public sealed partial class DebugWindowManager : IDisposable
 
         bool canRetiming = CanRetimingTimelineSelection(animation);
         if (!canRetiming) ImGui.BeginDisabled();
-        float selectedTimeMs = canRetiming ? (float)GetSelectedTimelineMarkerTimeMs(animation) : 0;
+        int selectedTimeMs = canRetiming ? AnimationTimelineTiming.ToManualInputMilliseconds(GetSelectedTimelineMarkerTimeMs(animation)) : 0;
         ImGui.SetNextItemWidth(150);
-        if (ImGui.InputFloat("Selected time ms##timeline-actions", ref selectedTimeMs, 1, Math.Max(1, _timelineNudgeMs), "%.0f"))
+        if (ImGui.InputInt("Selected time ms##timeline-actions", ref selectedTimeMs, 1, Math.Max(1, _timelineNudgeMs)))
         {
             BeginTimelineActionEdit(animationCode, animation, $"Retiming {selection}");
             RetimingTimelineSelection(animation, selectedTimeMs);
@@ -1884,7 +1907,7 @@ public sealed partial class DebugWindowManager : IDisposable
 
         ImGui.SameLine();
         ImGui.SetNextItemWidth(90);
-        if (ImGui.InputFloat("Nudge ms##timeline-actions", ref _timelineNudgeMs, 1, 50, "%.0f"))
+        if (ImGui.InputInt("Nudge ms##timeline-actions", ref _timelineNudgeMs, 1, 50))
         {
             _timelineNudgeMs = Math.Max(1, _timelineNudgeMs);
         }
@@ -2487,7 +2510,7 @@ public sealed partial class DebugWindowManager : IDisposable
         {
             case TimelineEventTrack.Sound:
                 SoundFrame sound = animation.SoundFrames[index];
-                animation.SoundFrames[index] = new SoundFrame(sound.Code, fraction, sound.RandomizePitch, sound.Range, sound.Volume, sound.Synchronize);
+                animation.SoundFrames[index] = new SoundFrame(sound.Code, fraction, sound.RandomizePitch, sound.Range, sound.Volume, sound.Synchronize, sound.Pitch, sound.PitchFollowsAnimationSpeed);
                 animation._soundsFrameIndex = index;
                 break;
             case TimelineEventTrack.Particle:
@@ -2550,7 +2573,7 @@ public sealed partial class DebugWindowManager : IDisposable
         {
             case TimelineEventTrack.Sound:
                 SoundFrame sound = animation.SoundFrames[sourceIndex];
-                animation.SoundFrames.Insert(insertIndex, new SoundFrame(sound.Code, fraction, sound.RandomizePitch, sound.Range, sound.Volume, sound.Synchronize));
+                animation.SoundFrames.Insert(insertIndex, new SoundFrame(sound.Code, fraction, sound.RandomizePitch, sound.Range, sound.Volume, sound.Synchronize, sound.Pitch, sound.PitchFollowsAnimationSpeed));
                 animation._soundsFrameIndex = insertIndex;
                 break;
             case TimelineEventTrack.Particle:

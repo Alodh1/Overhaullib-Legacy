@@ -34,6 +34,16 @@ public class EntityCOArmorStand : EntityHumanoid
         invbh = GetBehavior<EntityBehaviorCOArmorStandInventory>();
     }
 
+    public override void OnEntitySpawn()
+    {
+        base.OnEntitySpawn();
+
+        if (World.Side == EnumAppSide.Client)
+        {
+            (Properties.Client.Renderer as EntityShapeRenderer)?.DoRenderHeldItem = false;
+        }
+    }
+
     public override void OnInteract(EntityAgent byEntity, ItemSlot slot, Vec3d hitPosition, EnumInteractMode mode)
     {
         if (!Alive || mode == EnumInteractMode.Attack)

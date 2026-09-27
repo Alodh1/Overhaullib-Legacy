@@ -1,8 +1,6 @@
 #if DEBUG
 using Vintagestory.API.Config;
 using Vintagestory.API.Client;
-using ImGuiNET;
-using Vintagestory.API.MathTools;
 
 namespace CombatOverhaul.Animations.EditorUI;
 
@@ -12,18 +10,8 @@ internal sealed class DevToolsDialog : GuiDialog
     private readonly DebugWindowManager _manager;
     private readonly EditorAppState _state;
     private readonly EditorInputRouter _inputRouter;
-    private readonly Matrixf _viewportLightMatrix = new();
-    private readonly Vec4f _viewportLightPosition = new(1f, -1f, 0f, 0f);
-    private ElementBounds? _viewportSceneBounds;
     private double _lastWindowWidth;
     private double _lastWindowHeight;
-    private float _viewportYaw;
-    private float _viewportZoom = 1f;
-    private float _viewportPanX;
-    private float _viewportPanY;
-    private int _lastViewportMouseX;
-    private int _lastViewportMouseY;
-    private bool _lastViewportMouseInScene;
 
     public DevToolsDialog(ICoreClientAPI capi, DebugWindowManager manager, EditorAppState state, EditorInputRouter inputRouter) : base(capi)
     {
@@ -60,7 +48,6 @@ internal sealed class DevToolsDialog : GuiDialog
 
         base.OnRenderGUI(deltaTime);
         _manager.UpdateProperDevTools(deltaTime);
-        RenderAnimationViewport(deltaTime);
     }
 
     internal void RecomposeIfOpen()
@@ -74,7 +61,6 @@ internal sealed class DevToolsDialog : GuiDialog
     private void ComposeDialog()
     {
         ClearComposers();
-        _viewportSceneBounds = null;
 
         double windowWidth = WindowWidth;
         double windowHeight = WindowHeight;
@@ -86,8 +72,6 @@ internal sealed class DevToolsDialog : GuiDialog
             .WithChild(rootBounds);
 
         SingleComposer = capi.Gui.CreateCompo(ComposerKey, dialogBounds);
-        ElementBounds backgroundBounds = rootBounds.FlatCopy();
-        SingleComposer.AddShadedDialogBG(backgroundBounds, true);
         SingleComposer.AddDialogTitleBar("Dev tools", () => TryClose());
 
         ComposeToolbar();
@@ -129,26 +113,21 @@ internal sealed class DevToolsDialog : GuiDialog
         double left = EditorTheme.Padding;
         double leftPanelWidth = Math.Min(EditorTheme.LeftPanelWidth, Math.Max(210, windowWidth * 0.18));
         double rightPanelWidth = Math.Min(EditorTheme.RightPanelWidth, Math.Max(240, windowWidth * 0.20));
-        double centerLeft = left + leftPanelWidth + EditorTheme.Gap;
         double rightLeft = windowWidth - EditorTheme.Padding - rightPanelWidth;
-        double centerWidth = rightLeft - centerLeft - EditorTheme.Gap;
 
         ElementBounds browser = ElementBounds.Fixed(left, top, leftPanelWidth, mainHeight);
-        ElementBounds viewport = ElementBounds.Fixed(centerLeft, top, centerWidth, mainHeight);
         ElementBounds properties = ElementBounds.Fixed(rightLeft, top, rightPanelWidth, mainHeight);
         ElementBounds timeline = ElementBounds.Fixed(left, bottomTop, windowWidth - EditorTheme.Padding * 2, bottomPanelHeight);
 
         if (_state.SelectedTab == DevToolsTab.Animations)
         {
             ComposeAnimationBrowser(browser);
-            ComposeViewportPanel(viewport);
             ComposeAnimationProperties(properties);
             ComposeTimelinePanel(timeline);
             return;
         }
 
         AddPanel(browser, $"{GetTabLabel(_state.SelectedTab)} browser", GetBrowserText());
-        AddPanel(viewport, $"{GetTabLabel(_state.SelectedTab)} viewport", GetViewportText());
         AddPanel(properties, $"{GetTabLabel(_state.SelectedTab)} properties", GetPropertiesText());
         AddPanel(timeline, $"{GetTabLabel(_state.SelectedTab)} timeline", GetTimelineText());
     }
@@ -173,44 +152,38 @@ internal sealed class DevToolsDialog : GuiDialog
             SingleComposer.AddButton(label, () => Run(state => _manager.SelectProperAnimation(state, localCode)), ElementBounds.Fixed(bounds.fixedX + 10, y, bounds.fixedWidth - 20, buttonHeight), EditorTheme.ButtonFont, EnumButtonStyle.Normal, $"animation-row-{row++}");
             y += buttonHeight + 4;
         }
+
+        ComposeLivePlayerControls(bounds, y + 8);
     }
 
-    private void ComposeViewportPanel(ElementBounds bounds)
+    private void ComposeLivePlayerControls(ElementBounds bounds, double y)
     {
-        AddPanelFrame(bounds, "Viewport");
-        double controlsHeight = 150;
-        double sceneHeight = Math.Max(120, bounds.fixedHeight - controlsHeight - 54);
-        _viewportSceneBounds = ElementBounds.Fixed(bounds.fixedX + 10, bounds.fixedY + 38, bounds.fixedWidth - 20, sceneHeight);
-        SingleComposer.AddInset(_viewportSceneBounds, 1);
-
         double x = bounds.fixedX + 10;
-        double y = _viewportSceneBounds.fixedY + _viewportSceneBounds.fixedHeight + 10;
-        double width = 78;
+        double width = (bounds.fixedWidth - 26) / 2;
         double height = 24;
-        SingleComposer.AddButton("Play", () => Run(state => _manager.ProperPlay(state)), ElementBounds.Fixed(x, y, width, height), EditorTheme.ButtonFont, EnumButtonStyle.Normal, "playback-play"); x += width + 6;
-        SingleComposer.AddButton("Pause", () => Run(state => _manager.ProperTogglePause(state)), ElementBounds.Fixed(x, y, width, height), EditorTheme.ButtonFont, EnumButtonStyle.Normal, "playback-pause"); x += width + 6;
-        SingleComposer.AddButton("Frame <", () => Run(state => _manager.ProperStepFrame(state, -1)), ElementBounds.Fixed(x, y, width, height), EditorTheme.ButtonFont, EnumButtonStyle.Normal, "playback-frame-prev"); x += width + 6;
-        SingleComposer.AddButton("Frame >", () => Run(state => _manager.ProperStepFrame(state, 1)), ElementBounds.Fixed(x, y, width, height), EditorTheme.ButtonFont, EnumButtonStyle.Normal, "playback-frame-next");
+        SingleComposer.AddDynamicText("Live player", EditorTheme.HeaderFont, ElementBounds.Fixed(x, y, bounds.fixedWidth - 20, height), "live-player-header");
 
-        x = bounds.fixedX + 10;
+        y += height + 6;
+        SingleComposer.AddButton("Play", () => Run(state => _manager.ProperPlay(state)), ElementBounds.Fixed(x, y, width, height), EditorTheme.ButtonFont, EnumButtonStyle.Normal, "playback-play");
+        SingleComposer.AddButton("Pause", () => Run(state => _manager.ProperTogglePause(state)), ElementBounds.Fixed(x + width + 6, y, width, height), EditorTheme.ButtonFont, EnumButtonStyle.Normal, "playback-pause");
+
         y += height + 8;
-        SingleComposer.AddButton("Key <", () => Run(state => _manager.ProperStepKeyframe(state, -1)), ElementBounds.Fixed(x, y, width, height), EditorTheme.ButtonFont, EnumButtonStyle.Normal, "playback-key-prev"); x += width + 6;
-        SingleComposer.AddButton("Key >", () => Run(state => _manager.ProperStepKeyframe(state, 1)), ElementBounds.Fixed(x, y, width, height), EditorTheme.ButtonFont, EnumButtonStyle.Normal, "playback-key-next"); x += width + 6;
-        SingleComposer.AddButton("Speed -", () => Run(state => _manager.ProperAdjustPlaybackSpeed(state, -0.1f)), ElementBounds.Fixed(x, y, width, height), EditorTheme.ButtonFont, EnumButtonStyle.Normal, "playback-speed-down"); x += width + 6;
-        SingleComposer.AddButton("Speed +", () => Run(state => _manager.ProperAdjustPlaybackSpeed(state, 0.1f)), ElementBounds.Fixed(x, y, width, height), EditorTheme.ButtonFont, EnumButtonStyle.Normal, "playback-speed-up");
+        SingleComposer.AddButton("Frame <", () => Run(state => _manager.ProperStepFrame(state, -1)), ElementBounds.Fixed(x, y, width, height), EditorTheme.ButtonFont, EnumButtonStyle.Normal, "playback-frame-prev");
+        SingleComposer.AddButton("Frame >", () => Run(state => _manager.ProperStepFrame(state, 1)), ElementBounds.Fixed(x + width + 6, y, width, height), EditorTheme.ButtonFont, EnumButtonStyle.Normal, "playback-frame-next");
 
-        x = bounds.fixedX + 10;
-        y += height + 16;
-        SingleComposer.AddDynamicText("Camera", EditorTheme.HeaderFont, ElementBounds.Fixed(x, y, 86, height), "camera-header");
-        x += 86;
-        AddCameraButton("First", EditorCameraMode.FirstPerson, x, y); x += width + 6;
-        AddCameraButton("Orbit", EditorCameraMode.Orbit, x, y); x += width + 6;
-        AddCameraButton("Detach", EditorCameraMode.Detached, x, y);
+        y += height + 8;
+        SingleComposer.AddButton("Key <", () => Run(state => _manager.ProperStepKeyframe(state, -1)), ElementBounds.Fixed(x, y, width, height), EditorTheme.ButtonFont, EnumButtonStyle.Normal, "playback-key-prev");
+        SingleComposer.AddButton("Key >", () => Run(state => _manager.ProperStepKeyframe(state, 1)), ElementBounds.Fixed(x + width + 6, y, width, height), EditorTheme.ButtonFont, EnumButtonStyle.Normal, "playback-key-next");
 
-        x = bounds.fixedX + 10;
-        y += height + 10;
-        SingleComposer.AddButton("Third person", () => Run(state => _manager.ProperToggleThirdPersonAnimations(state)), ElementBounds.Fixed(x, y, 128, height), EditorTheme.ButtonFont, EnumButtonStyle.Normal, "third-person-toggle");
-        SingleComposer.AddButton("Render offset", () => Run(state => _manager.ProperToggleRenderingOffset(state)), ElementBounds.Fixed(x + 136, y, 128, height), EditorTheme.ButtonFont, EnumButtonStyle.Normal, "render-offset-toggle");
+        y += height + 12;
+        double cameraWidth = (bounds.fixedWidth - 32) / 3;
+        AddCameraButton("First", EditorCameraMode.FirstPerson, x, y, cameraWidth);
+        AddCameraButton("Orbit", EditorCameraMode.Orbit, x + cameraWidth + 6, y, cameraWidth);
+        AddCameraButton("Detach", EditorCameraMode.Detached, x + (cameraWidth + 6) * 2, y, cameraWidth);
+
+        y += height + 8;
+        SingleComposer.AddButton("Third person", () => Run(state => _manager.ProperToggleThirdPersonAnimations(state)), ElementBounds.Fixed(x, y, width, height), EditorTheme.ButtonFont, EnumButtonStyle.Normal, "third-person-toggle");
+        SingleComposer.AddButton("Render offset", () => Run(state => _manager.ProperToggleRenderingOffset(state)), ElementBounds.Fixed(x + width + 6, y, width, height), EditorTheme.ButtonFont, EnumButtonStyle.Normal, "render-offset-toggle");
     }
 
     private void ComposeAnimationProperties(ElementBounds bounds)
@@ -269,74 +242,6 @@ internal sealed class DevToolsDialog : GuiDialog
         SingleComposer.AddDynamicText(_state.StatusText, EditorTheme.MutedFont, footerBounds.FlatCopy().FixedGrow(-8, -2), "status-footer");
     }
 
-    private void RenderAnimationViewport(float deltaTime)
-    {
-        if (_state.SelectedTab != DevToolsTab.Animations || _viewportSceneBounds == null) return;
-        if (capi.World?.Player?.Entity == null) return;
-        if (_viewportSceneBounds.InnerWidth <= 32 || _viewportSceneBounds.InnerHeight <= 32) return;
-
-        UpdateViewportInput();
-
-        float size = (float)Math.Min(_viewportSceneBounds.InnerHeight * 0.82, _viewportSceneBounds.InnerWidth * 0.58) * _viewportZoom;
-        if (size <= 1) return;
-
-        double posX = _viewportSceneBounds.renderX + _viewportSceneBounds.InnerWidth / 2 - size * 0.30 + _viewportPanX;
-        double posY = _viewportSceneBounds.renderY + _viewportSceneBounds.InnerHeight / 2 - size * 0.52 + _viewportPanY;
-        double posZ = GuiElement.scaled(250);
-
-        capi.Render.GlPushMatrix();
-        if (focused)
-        {
-            capi.Render.GlTranslate(0f, 0f, 150f);
-        }
-
-        capi.Render.GlRotate(-12f, 1f, 0f, 0f);
-        _viewportLightMatrix.Identity();
-        _viewportLightMatrix.RotateXDeg(-12f);
-        Vec4f light = _viewportLightMatrix.TransformVector(_viewportLightPosition);
-        capi.Render.CurrentActiveShader?.Uniform("lightPosition", light.X, light.Y, light.Z);
-
-        capi.Render.PushScissor(_viewportSceneBounds, false);
-        capi.Render.RenderEntityToGui(deltaTime, capi.World.Player.Entity, posX, posY, posZ, _viewportYaw, size, ColorUtil.WhiteArgb);
-        capi.Render.PopScissor();
-
-        capi.Render.CurrentActiveShader?.Uniform("lightPosition", 0.7071068f, -0.7071068f, 0f);
-        capi.Render.GlPopMatrix();
-    }
-
-    private void UpdateViewportInput()
-    {
-        if (_viewportSceneBounds == null) return;
-
-        int mouseX = capi.Input.MouseX;
-        int mouseY = capi.Input.MouseY;
-        bool inScene = _viewportSceneBounds.PointInside(mouseX, mouseY);
-        int deltaX = _lastViewportMouseInScene ? mouseX - _lastViewportMouseX : 0;
-        int deltaY = _lastViewportMouseInScene ? mouseY - _lastViewportMouseY : 0;
-        _lastViewportMouseX = mouseX;
-        _lastViewportMouseY = mouseY;
-        _lastViewportMouseInScene = inScene;
-
-        if (!inScene) return;
-
-        bool shift = capi.Input.KeyboardKeyStateRaw[(int)GlKeys.ShiftLeft] || capi.Input.KeyboardKeyStateRaw[(int)GlKeys.ShiftRight];
-        if (capi.Input.MouseButton.Middle || (shift && capi.Input.MouseButton.Right))
-        {
-            _viewportPanX = Math.Clamp(_viewportPanX + deltaX, (float)-_viewportSceneBounds.InnerWidth, (float)_viewportSceneBounds.InnerWidth);
-            _viewportPanY = Math.Clamp(_viewportPanY + deltaY, (float)-_viewportSceneBounds.InnerHeight, (float)_viewportSceneBounds.InnerHeight);
-        }
-        else if (capi.Input.MouseButton.Right)
-        {
-            _viewportYaw += deltaX * 0.01f;
-        }
-
-        float wheel = ImGui.GetIO().MouseWheel;
-        if (Math.Abs(wheel) > 0.001f)
-        {
-            _viewportZoom = Math.Clamp(_viewportZoom + wheel * 0.06f, 0.55f, 1.85f);
-        }
-    }
-
     private bool WindowSizeChanged()
     {
         return Math.Abs(WindowWidth - _lastWindowWidth) > 0.5 || Math.Abs(WindowHeight - _lastWindowHeight) > 0.5;
@@ -369,10 +274,10 @@ internal sealed class DevToolsDialog : GuiDialog
         return ElementBounds.Fixed(panelBounds.fixedX + 10, panelBounds.fixedY + top, panelBounds.fixedWidth - 20, height);
     }
 
-    private void AddCameraButton(string label, EditorCameraMode mode, double x, double y)
+    private void AddCameraButton(string label, EditorCameraMode mode, double x, double y, double width)
     {
         string display = _state.CameraMode == mode ? $"* {label}" : label;
-        SingleComposer.AddButton(display, () => Run(state => _manager.ProperSetCameraMode(state, mode)), ElementBounds.Fixed(x, y, 78, 24), EditorTheme.ButtonFont, EnumButtonStyle.Normal, $"camera-{mode}");
+        SingleComposer.AddButton(display, () => Run(state => _manager.ProperSetCameraMode(state, mode)), ElementBounds.Fixed(x, y, width, 24), EditorTheme.ButtonFont, EnumButtonStyle.Normal, $"camera-{mode}");
     }
 
     private bool SelectTab(DevToolsTab tab)
@@ -418,11 +323,6 @@ internal sealed class DevToolsDialog : GuiDialog
             DevToolsTab.GenericDisplay => "Generic display tools are still in ImGui fallback.",
             _ => "Browser."
         };
-    }
-
-    private string GetViewportText()
-    {
-        return "This proper UI panel is not ported yet. Use ImGui fallback for the full tool.";
     }
 
     private string GetPropertiesText()

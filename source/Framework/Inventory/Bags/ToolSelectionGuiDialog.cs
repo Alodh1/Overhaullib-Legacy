@@ -8,7 +8,7 @@ namespace CombatOverhaul.Armor;
 public class ToolSelectionGuiDialog : GuiDialog
 {
     private const double OverlayDrawOrder = 0.21;
-    private const double BottomOffset = -170;
+    private const double BottomOffset = -190;
 
     public ToolSelectionGuiDialog(ICoreClientAPI api, ToolBagSelectionSystemClient system) : base(api)
     {

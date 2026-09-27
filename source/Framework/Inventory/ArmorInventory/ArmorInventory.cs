@@ -726,7 +726,9 @@ public class ArmorInventory : InventoryCharacter
 
     private void RefreshWearableStats()
     {
-        EntityPlayer? player = Owner as EntityPlayer ?? Player?.Entity;
-        player?.GetBehavior<WearableStatsBehavior>()?.RefreshStatsNow();
+        EntityPlayer? player = Player?.Entity;
+        if (player?.SidedProperties == null) return;
+
+        player.GetBehavior<WearableStatsBehavior>()?.RefreshStatsNow();
     }
 }

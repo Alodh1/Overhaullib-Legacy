@@ -71,6 +71,16 @@ public sealed class Settings
     public float EntityProtectionMultiplier { get; set; } = 0.5f;
 
     public float WeaponQuenchDamageMultiplier { get; set; } = 1.0f;
+    public bool ArmorQuenchPlateOnly { get; set; } = false;
+    public float ArmorQuenchFlatReduction { get; set; } = 0.2f;
+    public float ArmorQuenchDurabilityBonus { get; set; } = 0.1f;
+    public float ArmorQuenchPenaltyReduction { get; set; } = 0.1f;
+    public float ArmorQuenchMaxPenaltyReduction { get; set; } = 0.5f;
+    public float ArmorQuenchBaseShatterChance { get; set; } = 0.05f;
+    public float ArmorQuenchShatterChancePerQuench { get; set; } = 0.05f;
+    public float ArmorQuenchTemperShatterMultiplier { get; set; } = 0.8f;
+    public float ArmorQuenchTemperPowerMultiplier { get; set; } = 0.92f;
+
 
     public bool RangedWeaponsDamageSupport { get; set; } = true;
 
@@ -79,6 +89,11 @@ public sealed class Settings
     public float FueledItemUpdateInGameHours { get; set; } = 0.1f;
 
     public bool ShortEntityInfo { get; set; } = true;
+
+    public bool SlowDiagnosticsEnabled { get; set; } = false;
+    public int SlowDiagnosticsNetworkThresholdMs { get; set; } = 50;
+    public int SlowDiagnosticsRangedStatusThresholdMs { get; set; } = 10;
+    public int SlowDiagnosticsLogCooldownMs { get; set; } = 5000;
 }
 
 [ProtoBuf.ProtoContract(ImplicitFields = ProtoBuf.ImplicitFields.AllPublic)]
@@ -101,6 +116,16 @@ public sealed class ServerGameplaySettingsPacket
     public bool SecondChanceAvailable { get; set; }
     public float EntityProtectionMultiplier { get; set; }
     public float WeaponQuenchDamageMultiplier { get; set; }
+    public bool ArmorQuenchPlateOnly { get; set; }
+    public float ArmorQuenchFlatReduction { get; set; }
+    public float ArmorQuenchDurabilityBonus { get; set; }
+    public float ArmorQuenchPenaltyReduction { get; set; }
+    public float ArmorQuenchMaxPenaltyReduction { get; set; }
+    public float ArmorQuenchBaseShatterChance { get; set; }
+    public float ArmorQuenchShatterChancePerQuench { get; set; }
+    public float ArmorQuenchTemperShatterMultiplier { get; set; }
+    public float ArmorQuenchTemperPowerMultiplier { get; set; }
+
     public bool RangedWeaponsDamageSupport { get; set; }
     public float FueledItemUpdateInGameHours { get; set; }
 
@@ -123,6 +148,16 @@ public sealed class ServerGameplaySettingsPacket
         SecondChanceAvailable = settings.SecondChanceAvailable,
         EntityProtectionMultiplier = settings.EntityProtectionMultiplier,
         WeaponQuenchDamageMultiplier = settings.WeaponQuenchDamageMultiplier,
+        ArmorQuenchPlateOnly = settings.ArmorQuenchPlateOnly,
+        ArmorQuenchFlatReduction = settings.ArmorQuenchFlatReduction,
+        ArmorQuenchDurabilityBonus = settings.ArmorQuenchDurabilityBonus,
+        ArmorQuenchPenaltyReduction = settings.ArmorQuenchPenaltyReduction,
+        ArmorQuenchMaxPenaltyReduction = settings.ArmorQuenchMaxPenaltyReduction,
+        ArmorQuenchBaseShatterChance = settings.ArmorQuenchBaseShatterChance,
+        ArmorQuenchShatterChancePerQuench = settings.ArmorQuenchShatterChancePerQuench,
+        ArmorQuenchTemperShatterMultiplier = settings.ArmorQuenchTemperShatterMultiplier,
+        ArmorQuenchTemperPowerMultiplier = settings.ArmorQuenchTemperPowerMultiplier,
+
         RangedWeaponsDamageSupport = settings.RangedWeaponsDamageSupport,
         FueledItemUpdateInGameHours = settings.FueledItemUpdateInGameHours
     };
@@ -146,6 +181,16 @@ public sealed class ServerGameplaySettingsPacket
         settings.SecondChanceAvailable = SecondChanceAvailable;
         settings.EntityProtectionMultiplier = EntityProtectionMultiplier;
         settings.WeaponQuenchDamageMultiplier = WeaponQuenchDamageMultiplier;
+        settings.ArmorQuenchPlateOnly = ArmorQuenchPlateOnly;
+        settings.ArmorQuenchFlatReduction = ArmorQuenchFlatReduction;
+        settings.ArmorQuenchDurabilityBonus = ArmorQuenchDurabilityBonus;
+        settings.ArmorQuenchPenaltyReduction = ArmorQuenchPenaltyReduction;
+        settings.ArmorQuenchMaxPenaltyReduction = ArmorQuenchMaxPenaltyReduction;
+        settings.ArmorQuenchBaseShatterChance = ArmorQuenchBaseShatterChance;
+        settings.ArmorQuenchShatterChancePerQuench = ArmorQuenchShatterChancePerQuench;
+        settings.ArmorQuenchTemperShatterMultiplier = ArmorQuenchTemperShatterMultiplier;
+        settings.ArmorQuenchTemperPowerMultiplier = ArmorQuenchTemperPowerMultiplier;
+
         settings.RangedWeaponsDamageSupport = RangedWeaponsDamageSupport;
         settings.FueledItemUpdateInGameHours = FueledItemUpdateInGameHours;
     }

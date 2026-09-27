@@ -191,72 +191,44 @@ public class MeleeWeaponClient : IClientWeaponLogic, IHasDynamicMoveAnimations, 
     public AnimationRequestByCode? GetIdleAnimation(EntityPlayer player, ItemSlot slot, bool mainHand)
     {
         EnsureStance(player, mainHand);
-        return GetStance<MeleeWeaponStance>(mainHand) switch
-        {
-            MeleeWeaponStance.MainHand => Stats?.OneHandedStance?.IdleAnimation == null ? null : new(Stats.OneHandedStance.IdleAnimation, 1, 1, MeleeWeaponClient.AnimationCategory(mainHand), TimeSpan.FromSeconds(0.2), TimeSpan.FromSeconds(0.2), false),
-            MeleeWeaponStance.OffHand => Stats?.OffHandStance?.IdleAnimation == null ? null : new(Stats.OffHandStance.IdleAnimation, 1, 1, MeleeWeaponClient.AnimationCategory(mainHand), TimeSpan.FromSeconds(0.2), TimeSpan.FromSeconds(0.2), false),
-            MeleeWeaponStance.TwoHanded => Stats?.TwoHandedStance?.IdleAnimation == null ? null : new(Stats.TwoHandedStance.IdleAnimation, 1, 1, MeleeWeaponClient.AnimationCategory(mainHand), TimeSpan.FromSeconds(0.2), TimeSpan.FromSeconds(0.2), false),
-            _ => null
-        };
+        string? animation = GetStanceStats(player, mainHand)?.IdleAnimation;
+        return animation == null ? null : new(animation, 1, 1, AnimationCategory(mainHand), TimeSpan.FromSeconds(0.2), TimeSpan.FromSeconds(0.2), false);
     }
     public AnimationRequestByCode? GetReadyAnimation(EntityPlayer player, ItemSlot slot, bool mainHand)
     {
         EnsureStance(player, mainHand);
-        return GetStance<MeleeWeaponStance>(mainHand) switch
-        {
-            MeleeWeaponStance.MainHand => Stats?.OneHandedStance?.ReadyAnimation == null ? null : new(Stats.OneHandedStance.ReadyAnimation, 1, 1, MeleeWeaponClient.AnimationCategory(mainHand), TimeSpan.FromSeconds(0.2), TimeSpan.FromSeconds(0.2), false),
-            MeleeWeaponStance.OffHand => Stats?.OffHandStance?.ReadyAnimation == null ? null : new(Stats.OffHandStance.ReadyAnimation, 1, 1, MeleeWeaponClient.AnimationCategory(mainHand), TimeSpan.FromSeconds(0.2), TimeSpan.FromSeconds(0.2), false),
-            MeleeWeaponStance.TwoHanded => Stats?.TwoHandedStance?.ReadyAnimation == null ? null : new(Stats.TwoHandedStance.ReadyAnimation, 1, 1, MeleeWeaponClient.AnimationCategory(mainHand), TimeSpan.FromSeconds(0.2), TimeSpan.FromSeconds(0.2), false),
-            _ => null,
-        };
+        string? animation = GetStanceStats(player, mainHand)?.ReadyAnimation;
+        return animation == null ? null : new(animation, 1, 1, AnimationCategory(mainHand), TimeSpan.FromSeconds(0.2), TimeSpan.FromSeconds(0.2), false);
     }
     public AnimationRequestByCode? GetWalkAnimation(EntityPlayer player, ItemSlot slot, bool mainHand)
     {
         EnsureStance(player, mainHand);
-        return GetStance<MeleeWeaponStance>(mainHand) switch
-        {
-            MeleeWeaponStance.MainHand => Stats?.OneHandedStance?.WalkAnimation == null ? null : new(Stats.OneHandedStance.WalkAnimation, 1, 1, MeleeWeaponClient.AnimationCategory(mainHand), TimeSpan.FromSeconds(0.2), TimeSpan.FromSeconds(0.2), false),
-            MeleeWeaponStance.OffHand => Stats?.OffHandStance?.WalkAnimation == null ? null : new(Stats.OffHandStance.WalkAnimation, 1, 1, MeleeWeaponClient.AnimationCategory(mainHand), TimeSpan.FromSeconds(0.2), TimeSpan.FromSeconds(0.2), false),
-            MeleeWeaponStance.TwoHanded => Stats?.TwoHandedStance?.WalkAnimation == null ? null : new(Stats.TwoHandedStance.WalkAnimation, 1, 1, MeleeWeaponClient.AnimationCategory(mainHand), TimeSpan.FromSeconds(0.2), TimeSpan.FromSeconds(0.2), false),
-            _ => null
-        };
+        string? animation = GetStanceStats(player, mainHand)?.WalkAnimation;
+        return animation == null ? null : new(animation, 1, 1, AnimationCategory(mainHand), TimeSpan.FromSeconds(0.2), TimeSpan.FromSeconds(0.2), false);
     }
     public AnimationRequestByCode? GetRunAnimation(EntityPlayer player, ItemSlot slot, bool mainHand)
     {
         EnsureStance(player, mainHand);
-        return GetStance<MeleeWeaponStance>(mainHand) switch
-        {
-            MeleeWeaponStance.MainHand => Stats?.OneHandedStance?.RunAnimation == null ? null : new(Stats.OneHandedStance.RunAnimation, 1, 1, MeleeWeaponClient.AnimationCategory(mainHand), TimeSpan.FromSeconds(0.2), TimeSpan.FromSeconds(0.2), false),
-            MeleeWeaponStance.OffHand => Stats?.OffHandStance?.RunAnimation == null ? null : new(Stats.OffHandStance.RunAnimation, 1, 1, MeleeWeaponClient.AnimationCategory(mainHand), TimeSpan.FromSeconds(0.2), TimeSpan.FromSeconds(0.2), false),
-            MeleeWeaponStance.TwoHanded => Stats?.TwoHandedStance?.RunAnimation == null ? null : new(Stats.TwoHandedStance.RunAnimation, 1, 1, MeleeWeaponClient.AnimationCategory(mainHand), TimeSpan.FromSeconds(0.2), TimeSpan.FromSeconds(0.2), false),
-            _ => null
-        };
+        string? animation = GetStanceStats(player, mainHand)?.RunAnimation;
+        return animation == null ? null : new(animation, 1, 1, AnimationCategory(mainHand), TimeSpan.FromSeconds(0.2), TimeSpan.FromSeconds(0.2), false);
     }
     public AnimationRequestByCode? GetSwimAnimation(EntityPlayer player, ItemSlot slot, bool mainHand)
     {
         EnsureStance(player, mainHand);
-        return GetStance<MeleeWeaponStance>(mainHand) switch
-        {
-            MeleeWeaponStance.MainHand => Stats?.OneHandedStance?.SwimAnimation == null ? null : new(Stats.OneHandedStance.SwimAnimation, 1, 1, MeleeWeaponClient.AnimationCategory(mainHand), TimeSpan.FromSeconds(0.2), TimeSpan.FromSeconds(0.2), false),
-            MeleeWeaponStance.OffHand => Stats?.OffHandStance?.SwimAnimation == null ? null : new(Stats.OffHandStance.SwimAnimation, 1, 1, MeleeWeaponClient.AnimationCategory(mainHand), TimeSpan.FromSeconds(0.2), TimeSpan.FromSeconds(0.2), false),
-            MeleeWeaponStance.TwoHanded => Stats?.TwoHandedStance?.SwimAnimation == null ? null : new(Stats.TwoHandedStance.SwimAnimation, 1, 1, MeleeWeaponClient.AnimationCategory(mainHand), TimeSpan.FromSeconds(0.2), TimeSpan.FromSeconds(0.2), false),
-            _ => null
-        };
+        string? animation = GetStanceStats(player, mainHand)?.SwimAnimation;
+        return animation == null ? null : new(animation, 1, 1, AnimationCategory(mainHand), TimeSpan.FromSeconds(0.2), TimeSpan.FromSeconds(0.2), false);
     }
     public AnimationRequestByCode? GetSwimIdleAnimation(EntityPlayer player, ItemSlot slot, bool mainHand)
     {
         EnsureStance(player, mainHand);
-        return GetStance<MeleeWeaponStance>(mainHand) switch
-        {
-            MeleeWeaponStance.MainHand => Stats?.OneHandedStance?.SwimIdleAnimation == null ? null : new(Stats.OneHandedStance.SwimIdleAnimation, 1, 1, MeleeWeaponClient.AnimationCategory(mainHand), TimeSpan.FromSeconds(0.2), TimeSpan.FromSeconds(0.2), false),
-            MeleeWeaponStance.OffHand => Stats?.OffHandStance?.SwimIdleAnimation == null ? null : new(Stats.OffHandStance.SwimIdleAnimation, 1, 1, MeleeWeaponClient.AnimationCategory(mainHand), TimeSpan.FromSeconds(0.2), TimeSpan.FromSeconds(0.2), false),
-            MeleeWeaponStance.TwoHanded => Stats?.TwoHandedStance?.SwimIdleAnimation == null ? null : new(Stats.TwoHandedStance.SwimIdleAnimation, 1, 1, MeleeWeaponClient.AnimationCategory(mainHand), TimeSpan.FromSeconds(0.2), TimeSpan.FromSeconds(0.2), false),
-            _ => null
-        };
+        string? animation = GetStanceStats(player, mainHand)?.SwimIdleAnimation;
+        return animation == null ? null : new(animation, 1, 1, AnimationCategory(mainHand), TimeSpan.FromSeconds(0.2), TimeSpan.FromSeconds(0.2), false);
     }
 
     public virtual void OnSelected(ItemSlot slot, EntityPlayer player, bool mainHand, ref int state)
     {
+        if (mainHand) MainHandAttackCounter = 0;
+        else OffHandAttackCounter = 0;
         EnsureStance(player, mainHand);
         SetState(MeleeWeaponState.Idle, mainHand);
         SetSpeedPenalty(mainHand, player);
@@ -648,8 +620,8 @@ public class MeleeWeaponClient : IClientWeaponLogic, IHasDynamicMoveAnimations, 
             dsc.AppendLine(Lang.Get("combatoverhaul:iteminfo-melee-weapon-parryStats", $"{blockTier:F0}", bodyParts, Lang.Get("combatoverhaul:iteminfo-melee-weapon-offhanded-block")));
         }
     }
-    public bool RestrictRightHandAction() => !CheckState(true, MeleeWeaponState.Idle, MeleeWeaponState.Aiming, MeleeWeaponState.StartingAim, MeleeWeaponState.Cooldown) && GetStance<MeleeWeaponStance>(true) != MeleeWeaponStance.OffHandDualWield;
-    public bool RestrictLeftHandAction() => !CheckState(false, MeleeWeaponState.Idle, MeleeWeaponState.Aiming, MeleeWeaponState.StartingAim, MeleeWeaponState.Cooldown) && GetStance<MeleeWeaponStance>(false) != MeleeWeaponStance.MainHandDualWield;
+    public bool RestrictRightHandAction() => !CheckState(true, MeleeWeaponState.Idle, MeleeWeaponState.Aiming, MeleeWeaponState.StartingAim, MeleeWeaponState.Cooldown) && GetStance<MeleeWeaponStance>(true) != MeleeWeaponStance.MainHandDualWield;
+    public bool RestrictLeftHandAction() => !CheckState(false, MeleeWeaponState.Idle, MeleeWeaponState.Aiming, MeleeWeaponState.StartingAim, MeleeWeaponState.Cooldown) && GetStance<MeleeWeaponStance>(false) != MeleeWeaponStance.OffHandDualWield;
 
     public void PlayReadyAnimation(bool mainHand)
     {
@@ -952,7 +924,7 @@ public class MeleeWeaponClient : IClientWeaponLogic, IHasDynamicMoveAnimations, 
             animationSpeed: animationSpeed,
             category: AnimationCategory(mainHand));
 
-        if (mainHand && IsCurrentAttackOneHanded(stats))
+        if (mainHand && IsCurrentAttackOneHanded(stats) && !IsDualDaggerLoadout(player))
         {
             TryPlayLinkedOffhandDaggerAnimation(player, attackAnimation, animationSpeed);
         }
@@ -1398,15 +1370,6 @@ public class MeleeWeaponClient : IClientWeaponLogic, IHasDynamicMoveAnimations, 
         if (!CheckState(mainHand, MeleeWeaponState.Idle))
         {
             MeleeAttackSystem.UpdateAttackStatus(player, MeleeAttackStatus.End, mainHand);
-        }
-
-        if (mainHand)
-        {
-            MainHandAttackCounter = 0;
-        }
-        else
-        {
-            OffHandAttackCounter = 0;
         }
 
         return true;
@@ -2370,7 +2333,7 @@ public class MeleeWeaponClient : IClientWeaponLogic, IHasDynamicMoveAnimations, 
             if (directional.Values.FirstOrDefault() is MeleeAttack anyAttack) return anyAttack;
         }
 
-        if (MainHandDualWieldHandleAttacks.TryGetValue(dualWieldKey, out MeleeAttack? handleAttack)) return handleAttack;
+        if (MainHandDualWieldAttacks.TryGetValue(dualWieldKey, out MeleeAttack? dualAttack)) return dualAttack;
 
         return OneHandedAttack;
     }
@@ -2383,7 +2346,7 @@ public class MeleeWeaponClient : IClientWeaponLogic, IHasDynamicMoveAnimations, 
             if (directional.Values.FirstOrDefault() is MeleeAttack anyAttack) return anyAttack;
         }
 
-        if (OffHandDualWieldHandleAttacks.TryGetValue(dualWieldKey, out MeleeAttack? handleAttack)) return handleAttack;
+        if (OffHandDualWieldAttacks.TryGetValue(dualWieldKey, out MeleeAttack? dualAttack)) return dualAttack;
 
         return OffHandAttack ?? OneHandedAttack;
     }

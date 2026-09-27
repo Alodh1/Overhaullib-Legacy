@@ -1,3 +1,4 @@
+using CombatOverhaul.Integration;
 using CombatOverhaul.Utils;
 using Vintagestory.API.Client;
 using Vintagestory.API.Common;
@@ -239,6 +240,7 @@ public partial class ActionListener : IDisposable
     }
     private void UpdateVanillaShieldRmbBridge(bool on)
     {
+        if (!ShieldAutoPatcher.IsCombatOverhaulEnabled(_clientApi)) return;
         if (_clientApi.World?.Player?.Entity is not EntityPlayer player) return;
 
         // Only bridge RMB to Ctrl for shields still using the real vanilla ItemShield class.

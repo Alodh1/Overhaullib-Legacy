@@ -1,0 +1,908 @@
+[
+  {
+    "op": "add",
+    "file": "game:recipes/grid/claycovering-armorcomponents.json",
+    "path": "/-",
+    "dependsOn": [
+      {
+        "modid": "combatoverhaulfork"
+      },
+      {
+        "modid": "armoryfork"
+      }
+    ],
+    "value": {
+      "ingredientPattern": "TC",
+      "ingredients": {
+        "T": {
+          "type": "item",
+          "code": "armory:part-quarterstaffhead-iron"
+        },
+        "C": {
+          "type": "item",
+          "code": "game:clay-fire"
+        }
+      },
+      "name": "claycovering-armoryparts",
+      "shapeless": true,
+      "copyAttributesFrom": "T",
+      "width": 2,
+      "height": 1,
+      "output": {
+        "type": "item",
+        "code": "armory:part-quarterstaffhead-iron",
+        "attributes": {
+          "clayCovered": true
+        }
+      }
+    }
+  },
+  {
+    "op": "add",
+    "file": "game:recipes/grid/claycovering-armorcomponents.json",
+    "path": "/-",
+    "dependsOn": [
+      {
+        "modid": "combatoverhaulfork"
+      },
+      {
+        "modid": "armoryfork"
+      }
+    ],
+    "value": {
+      "ingredientPattern": "TC",
+      "ingredients": {
+        "T": {
+          "type": "item",
+          "code": "armory:part-quarterstaffhead-meteoriciron"
+        },
+        "C": {
+          "type": "item",
+          "code": "game:clay-fire"
+        }
+      },
+      "name": "claycovering-armoryparts",
+      "shapeless": true,
+      "copyAttributesFrom": "T",
+      "width": 2,
+      "height": 1,
+      "output": {
+        "type": "item",
+        "code": "armory:part-quarterstaffhead-meteoriciron",
+        "attributes": {
+          "clayCovered": true
+        }
+      }
+    }
+  },
+  {
+    "op": "add",
+    "file": "game:recipes/grid/claycovering-armorcomponents.json",
+    "path": "/-",
+    "dependsOn": [
+      {
+        "modid": "combatoverhaulfork"
+      },
+      {
+        "modid": "armoryfork"
+      }
+    ],
+    "value": {
+      "ingredientPattern": "TC",
+      "ingredients": {
+        "T": {
+          "type": "item",
+          "code": "armory:part-quarterstaffhead-steel"
+        },
+        "C": {
+          "type": "item",
+          "code": "game:clay-fire"
+        }
+      },
+      "name": "claycovering-armoryparts",
+      "shapeless": true,
+      "copyAttributesFrom": "T",
+      "width": 2,
+      "height": 1,
+      "output": {
+        "type": "item",
+        "code": "armory:part-quarterstaffhead-steel",
+        "attributes": {
+          "clayCovered": true
+        }
+      }
+    }
+  },
+  {
+    "op": "add",
+    "file": "game:recipes/grid/claycovering-armorcomponents.json",
+    "path": "/-",
+    "dependsOn": [
+      {
+        "modid": "combatoverhaulfork"
+      },
+      {
+        "modid": "armoryfork"
+      }
+    ],
+    "value": {
+      "ingredientPattern": "TC",
+      "ingredients": {
+        "T": {
+          "type": "item",
+          "code": "armory:part-helmetplate-iron-open"
+        },
+        "C": {
+          "type": "item",
+          "code": "game:clay-fire"
+        }
+      },
+      "name": "claycovering-armoryparts",
+      "shapeless": true,
+      "copyAttributesFrom": "T",
+      "width": 2,
+      "height": 1,
+      "output": {
+        "type": "item",
+        "code": "armory:part-helmetplate-iron-open",
+        "attributes": {
+          "clayCovered": true
+        }
+      }
+    }
+  },
+  {
+    "op": "add",
+    "file": "game:recipes/grid/claycovering-armorcomponents.json",
+    "path": "/-",
+    "dependsOn": [
+      {
+        "modid": "combatoverhaulfork"
+      },
+      {
+        "modid": "armoryfork"
+      }
+    ],
+    "value": {
+      "ingredientPattern": "TC",
+      "ingredients": {
+        "T": {
+          "type": "item",
+          "code": "armory:part-helmetplate-meteoriciron-open"
+        },
+        "C": {
+          "type": "item",
+          "code": "game:clay-fire"
+        }
+      },
+      "name": "claycovering-armoryparts",
+      "shapeless": true,
+      "copyAttributesFrom": "T",
+      "width": 2,
+      "height": 1,
+      "output": {
+        "type": "item",
+        "code": "armory:part-helmetplate-meteoriciron-open",
+        "attributes": {
+          "clayCovered": true
+        }
+      }
+    }
+  },
+  {
+    "op": "add",
+    "file": "game:recipes/grid/claycovering-armorcomponents.json",
+    "path": "/-",
+    "dependsOn": [
+      {
+        "modid": "combatoverhaulfork"
+      },
+      {
+        "modid": "armoryfork"
+      }
+    ],
+    "value": {
+      "ingredientPattern": "TC",
+      "ingredients": {
+        "T": {
+          "type": "item",
+          "code": "armory:part-helmetplate-steel-open"
+        },
+        "C": {
+          "type": "item",
+          "code": "game:clay-fire"
+        }
+      },
+      "name": "claycovering-armoryparts",
+      "shapeless": true,
+      "copyAttributesFrom": "T",
+      "width": 2,
+      "height": 1,
+      "output": {
+        "type": "item",
+        "code": "armory:part-helmetplate-steel-open",
+        "attributes": {
+          "clayCovered": true
+        }
+      }
+    }
+  },
+  {
+    "op": "add",
+    "file": "game:recipes/grid/claycovering-armorcomponents.json",
+    "path": "/-",
+    "dependsOn": [
+      {
+        "modid": "combatoverhaulfork"
+      },
+      {
+        "modid": "armoryfork"
+      }
+    ],
+    "value": {
+      "ingredientPattern": "TC",
+      "ingredients": {
+        "T": {
+          "type": "item",
+          "code": "armory:part-helmetplate-iron-light"
+        },
+        "C": {
+          "type": "item",
+          "code": "game:clay-fire"
+        }
+      },
+      "name": "claycovering-armoryparts",
+      "shapeless": true,
+      "copyAttributesFrom": "T",
+      "width": 2,
+      "height": 1,
+      "output": {
+        "type": "item",
+        "code": "armory:part-helmetplate-iron-light",
+        "attributes": {
+          "clayCovered": true
+        }
+      }
+    }
+  },
+  {
+    "op": "add",
+    "file": "game:recipes/grid/claycovering-armorcomponents.json",
+    "path": "/-",
+    "dependsOn": [
+      {
+        "modid": "combatoverhaulfork"
+      },
+      {
+        "modid": "armoryfork"
+      }
+    ],
+    "value": {
+      "ingredientPattern": "TC",
+      "ingredients": {
+        "T": {
+          "type": "item",
+          "code": "armory:part-helmetplate-meteoriciron-light"
+        },
+        "C": {
+          "type": "item",
+          "code": "game:clay-fire"
+        }
+      },
+      "name": "claycovering-armoryparts",
+      "shapeless": true,
+      "copyAttributesFrom": "T",
+      "width": 2,
+      "height": 1,
+      "output": {
+        "type": "item",
+        "code": "armory:part-helmetplate-meteoriciron-light",
+        "attributes": {
+          "clayCovered": true
+        }
+      }
+    }
+  },
+  {
+    "op": "add",
+    "file": "game:recipes/grid/claycovering-armorcomponents.json",
+    "path": "/-",
+    "dependsOn": [
+      {
+        "modid": "combatoverhaulfork"
+      },
+      {
+        "modid": "armoryfork"
+      }
+    ],
+    "value": {
+      "ingredientPattern": "TC",
+      "ingredients": {
+        "T": {
+          "type": "item",
+          "code": "armory:part-helmetplate-steel-light"
+        },
+        "C": {
+          "type": "item",
+          "code": "game:clay-fire"
+        }
+      },
+      "name": "claycovering-armoryparts",
+      "shapeless": true,
+      "copyAttributesFrom": "T",
+      "width": 2,
+      "height": 1,
+      "output": {
+        "type": "item",
+        "code": "armory:part-helmetplate-steel-light",
+        "attributes": {
+          "clayCovered": true
+        }
+      }
+    }
+  },
+  {
+    "op": "add",
+    "file": "game:recipes/grid/claycovering-armorcomponents.json",
+    "path": "/-",
+    "dependsOn": [
+      {
+        "modid": "combatoverhaulfork"
+      },
+      {
+        "modid": "armoryfork"
+      }
+    ],
+    "value": {
+      "ingredientPattern": "TC",
+      "ingredients": {
+        "T": {
+          "type": "item",
+          "code": "armory:part-helmetplate-iron-vanilla"
+        },
+        "C": {
+          "type": "item",
+          "code": "game:clay-fire"
+        }
+      },
+      "name": "claycovering-armoryparts",
+      "shapeless": true,
+      "copyAttributesFrom": "T",
+      "width": 2,
+      "height": 1,
+      "output": {
+        "type": "item",
+        "code": "armory:part-helmetplate-iron-vanilla",
+        "attributes": {
+          "clayCovered": true
+        }
+      }
+    }
+  },
+  {
+    "op": "add",
+    "file": "game:recipes/grid/claycovering-armorcomponents.json",
+    "path": "/-",
+    "dependsOn": [
+      {
+        "modid": "combatoverhaulfork"
+      },
+      {
+        "modid": "armoryfork"
+      }
+    ],
+    "value": {
+      "ingredientPattern": "TC",
+      "ingredients": {
+        "T": {
+          "type": "item",
+          "code": "armory:part-helmetplate-meteoriciron-vanilla"
+        },
+        "C": {
+          "type": "item",
+          "code": "game:clay-fire"
+        }
+      },
+      "name": "claycovering-armoryparts",
+      "shapeless": true,
+      "copyAttributesFrom": "T",
+      "width": 2,
+      "height": 1,
+      "output": {
+        "type": "item",
+        "code": "armory:part-helmetplate-meteoriciron-vanilla",
+        "attributes": {
+          "clayCovered": true
+        }
+      }
+    }
+  },
+  {
+    "op": "add",
+    "file": "game:recipes/grid/claycovering-armorcomponents.json",
+    "path": "/-",
+    "dependsOn": [
+      {
+        "modid": "combatoverhaulfork"
+      },
+      {
+        "modid": "armoryfork"
+      }
+    ],
+    "value": {
+      "ingredientPattern": "TC",
+      "ingredients": {
+        "T": {
+          "type": "item",
+          "code": "armory:part-helmetplate-steel-vanilla"
+        },
+        "C": {
+          "type": "item",
+          "code": "game:clay-fire"
+        }
+      },
+      "name": "claycovering-armoryparts",
+      "shapeless": true,
+      "copyAttributesFrom": "T",
+      "width": 2,
+      "height": 1,
+      "output": {
+        "type": "item",
+        "code": "armory:part-helmetplate-steel-vanilla",
+        "attributes": {
+          "clayCovered": true
+        }
+      }
+    }
+  },
+  {
+    "op": "add",
+    "file": "game:recipes/grid/claycovering-armorcomponents.json",
+    "path": "/-",
+    "dependsOn": [
+      {
+        "modid": "combatoverhaulfork"
+      }
+    ],
+    "value": {
+      "ingredientPattern": "TC",
+      "ingredients": {
+        "T": {
+          "type": "item",
+          "code": "game:metalchain-iron"
+        },
+        "C": {
+          "type": "item",
+          "code": "game:clay-fire"
+        }
+      },
+      "name": "claycovering-armoryparts",
+      "shapeless": true,
+      "copyAttributesFrom": "T",
+      "width": 2,
+      "height": 1,
+      "output": {
+        "type": "item",
+        "code": "game:metalchain-iron",
+        "attributes": {
+          "clayCovered": true
+        }
+      }
+    }
+  },
+  {
+    "op": "add",
+    "file": "game:recipes/grid/claycovering-armorcomponents.json",
+    "path": "/-",
+    "dependsOn": [
+      {
+        "modid": "combatoverhaulfork"
+      }
+    ],
+    "value": {
+      "ingredientPattern": "TC",
+      "ingredients": {
+        "T": {
+          "type": "item",
+          "code": "game:metalchain-meteoriciron"
+        },
+        "C": {
+          "type": "item",
+          "code": "game:clay-fire"
+        }
+      },
+      "name": "claycovering-armoryparts",
+      "shapeless": true,
+      "copyAttributesFrom": "T",
+      "width": 2,
+      "height": 1,
+      "output": {
+        "type": "item",
+        "code": "game:metalchain-meteoriciron",
+        "attributes": {
+          "clayCovered": true
+        }
+      }
+    }
+  },
+  {
+    "op": "add",
+    "file": "game:recipes/grid/claycovering-armorcomponents.json",
+    "path": "/-",
+    "dependsOn": [
+      {
+        "modid": "combatoverhaulfork"
+      }
+    ],
+    "value": {
+      "ingredientPattern": "TC",
+      "ingredients": {
+        "T": {
+          "type": "item",
+          "code": "game:metalchain-steel"
+        },
+        "C": {
+          "type": "item",
+          "code": "game:clay-fire"
+        }
+      },
+      "name": "claycovering-armoryparts",
+      "shapeless": true,
+      "copyAttributesFrom": "T",
+      "width": 2,
+      "height": 1,
+      "output": {
+        "type": "item",
+        "code": "game:metalchain-steel",
+        "attributes": {
+          "clayCovered": true
+        }
+      }
+    }
+  },
+  {
+    "op": "add",
+    "file": "game:recipes/grid/claycovering-armorcomponents.json",
+    "path": "/-",
+    "dependsOn": [
+      {
+        "modid": "combatoverhaulfork"
+      }
+    ],
+    "value": {
+      "ingredientPattern": "TC",
+      "ingredients": {
+        "T": {
+          "type": "item",
+          "code": "game:metalscale-iron"
+        },
+        "C": {
+          "type": "item",
+          "code": "game:clay-fire"
+        }
+      },
+      "name": "claycovering-armoryparts",
+      "shapeless": true,
+      "copyAttributesFrom": "T",
+      "width": 2,
+      "height": 1,
+      "output": {
+        "type": "item",
+        "code": "game:metalscale-iron",
+        "attributes": {
+          "clayCovered": true
+        }
+      }
+    }
+  },
+  {
+    "op": "add",
+    "file": "game:recipes/grid/claycovering-armorcomponents.json",
+    "path": "/-",
+    "dependsOn": [
+      {
+        "modid": "combatoverhaulfork"
+      }
+    ],
+    "value": {
+      "ingredientPattern": "TC",
+      "ingredients": {
+        "T": {
+          "type": "item",
+          "code": "game:metalscale-meteoriciron"
+        },
+        "C": {
+          "type": "item",
+          "code": "game:clay-fire"
+        }
+      },
+      "name": "claycovering-armoryparts",
+      "shapeless": true,
+      "copyAttributesFrom": "T",
+      "width": 2,
+      "height": 1,
+      "output": {
+        "type": "item",
+        "code": "game:metalscale-meteoriciron",
+        "attributes": {
+          "clayCovered": true
+        }
+      }
+    }
+  },
+  {
+    "op": "add",
+    "file": "game:recipes/grid/claycovering-armorcomponents.json",
+    "path": "/-",
+    "dependsOn": [
+      {
+        "modid": "combatoverhaulfork"
+      }
+    ],
+    "value": {
+      "ingredientPattern": "TC",
+      "ingredients": {
+        "T": {
+          "type": "item",
+          "code": "game:metalscale-steel"
+        },
+        "C": {
+          "type": "item",
+          "code": "game:clay-fire"
+        }
+      },
+      "name": "claycovering-armoryparts",
+      "shapeless": true,
+      "copyAttributesFrom": "T",
+      "width": 2,
+      "height": 1,
+      "output": {
+        "type": "item",
+        "code": "game:metalscale-steel",
+        "attributes": {
+          "clayCovered": true
+        }
+      }
+    }
+  },
+  {
+    "op": "add",
+    "file": "game:recipes/grid/claycovering-armorcomponents-meteoricsteel.json",
+    "path": "/-",
+    "dependsOn": [
+      {
+        "modid": "combatoverhaulfork"
+      },
+      {
+        "modid": "armoryfork"
+      },
+      {
+        "modid": "meteoricsteel"
+      }
+    ],
+    "value": {
+      "ingredientPattern": "TC",
+      "ingredients": {
+        "T": {
+          "type": "item",
+          "code": "armory:part-quarterstaffhead-meteoricsteel"
+        },
+        "C": {
+          "type": "item",
+          "code": "game:clay-fire"
+        }
+      },
+      "name": "claycovering-armoryparts",
+      "shapeless": true,
+      "copyAttributesFrom": "T",
+      "width": 2,
+      "height": 1,
+      "output": {
+        "type": "item",
+        "code": "armory:part-quarterstaffhead-meteoricsteel",
+        "attributes": {
+          "clayCovered": true
+        }
+      }
+    }
+  },
+  {
+    "op": "add",
+    "file": "game:recipes/grid/claycovering-armorcomponents-meteoricsteel.json",
+    "path": "/-",
+    "dependsOn": [
+      {
+        "modid": "combatoverhaulfork"
+      },
+      {
+        "modid": "armoryfork"
+      },
+      {
+        "modid": "meteoricsteel"
+      }
+    ],
+    "value": {
+      "ingredientPattern": "TC",
+      "ingredients": {
+        "T": {
+          "type": "item",
+          "code": "armory:part-helmetplate-meteoricsteel-open"
+        },
+        "C": {
+          "type": "item",
+          "code": "game:clay-fire"
+        }
+      },
+      "name": "claycovering-armoryparts",
+      "shapeless": true,
+      "copyAttributesFrom": "T",
+      "width": 2,
+      "height": 1,
+      "output": {
+        "type": "item",
+        "code": "armory:part-helmetplate-meteoricsteel-open",
+        "attributes": {
+          "clayCovered": true
+        }
+      }
+    }
+  },
+  {
+    "op": "add",
+    "file": "game:recipes/grid/claycovering-armorcomponents-meteoricsteel.json",
+    "path": "/-",
+    "dependsOn": [
+      {
+        "modid": "combatoverhaulfork"
+      },
+      {
+        "modid": "armoryfork"
+      },
+      {
+        "modid": "meteoricsteel"
+      }
+    ],
+    "value": {
+      "ingredientPattern": "TC",
+      "ingredients": {
+        "T": {
+          "type": "item",
+          "code": "armory:part-helmetplate-meteoricsteel-light"
+        },
+        "C": {
+          "type": "item",
+          "code": "game:clay-fire"
+        }
+      },
+      "name": "claycovering-armoryparts",
+      "shapeless": true,
+      "copyAttributesFrom": "T",
+      "width": 2,
+      "height": 1,
+      "output": {
+        "type": "item",
+        "code": "armory:part-helmetplate-meteoricsteel-light",
+        "attributes": {
+          "clayCovered": true
+        }
+      }
+    }
+  },
+  {
+    "op": "add",
+    "file": "game:recipes/grid/claycovering-armorcomponents-meteoricsteel.json",
+    "path": "/-",
+    "dependsOn": [
+      {
+        "modid": "combatoverhaulfork"
+      },
+      {
+        "modid": "armoryfork"
+      },
+      {
+        "modid": "meteoricsteel"
+      }
+    ],
+    "value": {
+      "ingredientPattern": "TC",
+      "ingredients": {
+        "T": {
+          "type": "item",
+          "code": "armory:part-helmetplate-meteoricsteel-vanilla"
+        },
+        "C": {
+          "type": "item",
+          "code": "game:clay-fire"
+        }
+      },
+      "name": "claycovering-armoryparts",
+      "shapeless": true,
+      "copyAttributesFrom": "T",
+      "width": 2,
+      "height": 1,
+      "output": {
+        "type": "item",
+        "code": "armory:part-helmetplate-meteoricsteel-vanilla",
+        "attributes": {
+          "clayCovered": true
+        }
+      }
+    }
+  },
+  {
+    "op": "add",
+    "file": "game:recipes/grid/claycovering-armorcomponents-meteoricsteel.json",
+    "path": "/-",
+    "dependsOn": [
+      {
+        "modid": "combatoverhaulfork"
+      },
+      {
+        "modid": "meteoricsteel"
+      }
+    ],
+    "value": {
+      "ingredientPattern": "TC",
+      "ingredients": {
+        "T": {
+          "type": "item",
+          "code": "game:metalchain-meteoricsteel"
+        },
+        "C": {
+          "type": "item",
+          "code": "game:clay-fire"
+        }
+      },
+      "name": "claycovering-armoryparts",
+      "shapeless": true,
+      "copyAttributesFrom": "T",
+      "width": 2,
+      "height": 1,
+      "output": {
+        "type": "item",
+        "code": "game:metalchain-meteoricsteel",
+        "attributes": {
+          "clayCovered": true
+        }
+      }
+    }
+  },
+  {
+    "op": "add",
+    "file": "game:recipes/grid/claycovering-armorcomponents-meteoricsteel.json",
+    "path": "/-",
+    "dependsOn": [
+      {
+        "modid": "combatoverhaulfork"
+      },
+      {
+        "modid": "meteoricsteel"
+      }
+    ],
+    "value": {
+      "ingredientPattern": "TC",
+      "ingredients": {
+        "T": {
+          "type": "item",
+          "code": "game:metalscale-meteoricsteel"
+        },
+        "C": {
+          "type": "item",
+          "code": "game:clay-fire"
+        }
+      },
+      "name": "claycovering-armoryparts",
+      "shapeless": true,
+      "copyAttributesFrom": "T",
+      "width": 2,
+      "height": 1,
+      "output": {
+        "type": "item",
+        "code": "game:metalscale-meteoricsteel",
+        "attributes": {
+          "clayCovered": true
+        }
+      }
+    }
+  }
+]
